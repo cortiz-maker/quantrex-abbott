@@ -589,13 +589,13 @@ export default function QuantrexAbbott() {
           ))}
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:11,color:C.muted}}>{sesion?.nombre}</span>
-            <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{sessionStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
+            <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{localStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
           </div>
         </nav>
       </header>
       <main style={S.main}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
-        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{sessionStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
+        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=CHOFERES.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
@@ -1598,11 +1598,15 @@ function MapaTramo({ sol, solicitudes }) {
   }
 
   async function calcular() {
-    const origen = getOrigen();
-    if (!origen || !sol.direccion) return;
+    if (!sol.direccion) return;
     setCalculando(true);
+    const origen = getOrigen() || ORIGEN_PUDAHUEL;
     const result = await calcularTramo(origen, sol.direccion + ", Chile");
-    setTramo(result ? { ...result, origen } : null);
+    if(result) {
+      setTramo({ ...result, origen });
+    } else {
+      setTramo({km:"N/D", tiempo:"N/D", mapaUrl:null, origen});
+    }
     setCalculando(false);
   }
 
