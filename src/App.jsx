@@ -82,57 +82,10 @@ const USUARIOS = [
 
 
 // ── Cálculo de distancia Google Maps ──────────────────────────────────────
-async function calcularDistanciaKm(origen, destino) {
-  try {
-    const apiUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origen)}&destinations=${encodeURIComponent(destino)}&mode=driving&language=es&key=${GOOGLE_MAPS_API_KEY}`;
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
-    const res = await fetch(proxyUrl);
-    if (!res.ok) return null;
-    const raw = await res.json();
-    const data = raw.contents ? JSON.parse(raw.contents) : raw;
-    const element = data.rows?.[0]?.elements?.[0];
-    if (element?.status === "OK") {
-      return {
-        distancia: (element.distance.value / 1000).toFixed(1),
-        duracion: element.duration.text,
-        texto: element.distance.text,
-      };
-    }
-    return null;
-  } catch { return null; }
-}
 
 
-// ── Cálculo CO2 mensual ────────────────────────────────────────────────────
-async function calcularKmDesdePudahuel(direccionDestino) {
-  try {
-    // Usar Google Maps Routes API via proxy
-    const origen = encodeURIComponent(ORIGEN_PUDAHUEL);
-    const destino = encodeURIComponent(direccionDestino + ", Chile");
-    const apiUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origen}&destinations=${destino}&mode=driving&language=es&key=${GOOGLE_MAPS_API_KEY}`;
-    
-    // Intentar con múltiples proxies
-    const proxies = [
-      `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`,
-      `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`,
-    ];
-    
-    for (const proxyUrl of proxies) {
-      try {
-        const res = await fetch(proxyUrl, {timeout: 8000});
-        if (!res.ok) continue;
-        const raw = await res.json();
-        // allorigins devuelve {contents: "..."}
-        const data = raw.contents ? JSON.parse(raw.contents) : raw;
-        const element = data.rows?.[0]?.elements?.[0];
-        if (element?.status === "OK") {
-          return parseFloat((element.distance.value / 1000).toFixed(1));
-        }
-      } catch { continue; }
-    }
-    return null;
-  } catch { return null; }
-}
+
+
 
 
 // ── Mapa estático Google Maps ──────────────────────────────────────────────
@@ -178,6 +131,41 @@ function generarOT(solicitudes) {
   const correlativo = String(solicitudes.length + 1).padStart(3, "0");
   return `QX-${correlativo}`;
 }
+
+
+// ── Cálculo distancia ──────────────────────────────────────────────────────
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLon = (lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+    Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*
+    Math.sin(dLon/2)*Math.sin(dLon/2);
+  return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1.3).toFixed(1); // factor 1.3 para estimar ruta real
+}
+
+async function geocodificar(direccion) {
+  try {
+    const query = encodeURIComponent(direccion + ", Chile");
+    const url = `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`;
+    const res = await fetch(url, {headers:{"User-Agent":"quantrex-abbott/1.0"}});
+    const data = await res.json();
+    if(data && data[0]) return {lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon)};
+    return null;
+  } catch { return null; }
+}
+
+// Coordenadas fijas de Pudahuel (Av. Los Alerces)
+const PUDAHUEL_COORDS = {lat: -33.4372, lon: -70.7558};
+
+async function calcularKmDesdePudahuel(direccionDestino) {
+  try {
+    const dest = await geocodificar(direccionDestino);
+    if(!dest) return null;
+    return parseFloat(haversineKm(PUDAHUEL_COORDS.lat, PUDAHUEL_COORDS.lon, dest.lat, dest.lon));
+  } catch { return null; }
+}
+
 
 // ── Período ────────────────────────────────────────────────────────────────
 function getPeriodoActual() {
