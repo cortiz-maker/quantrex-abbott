@@ -150,6 +150,14 @@ async function calcularTramo(origen, destino) {
   } catch { return null; }
 }
 
+
+// ── Generador OT automático ────────────────────────────────────────────────
+function generarOT(solicitudes) {
+  // Contador global correlativo basado en total de solicitudes
+  const correlativo = String(solicitudes.length + 1).padStart(3, "0");
+  return `QX-${correlativo}`;
+}
+
 // ── Período ────────────────────────────────────────────────────────────────
 function getPeriodoActual() {
   const hoy = new Date(); const mes = hoy.getMonth();
@@ -223,7 +231,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
     const kmSol = s.kmDesdePudahuel||"";
     // CO2 individual = km × 1000kg
     const co2Sol = kmSol ? (parseFloat(kmSol) * PESO_BASE_KG).toFixed(0) : "";
-    return [i+1,s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
+    return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
       s.usuarioDT||"", s.ppuAsignada||"", nro,
@@ -241,14 +249,14 @@ function exportToExcel(solicitudes, nombreArchivo) {
   const totalDescNP=totalNP*DESCUENTO_DIA;
   const granTotal=totalCobro+COBRO_M1+COBRO_M2-totalDescNP;
 
-  const headers=["N°","Fecha","Hora","Cliente","Destino","Tipo","Estado","Prioridad",
+  const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","Total Cobros",
     "Chofer","Veh. NP","Motivo NP","Descuento NP"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
-  ws1["!cols"]=[{wch:5},{wch:12},{wch:8},{wch:35},{wch:20},{wch:28},{wch:13},{wch:10},
+  ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:28},{wch:13},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},
     {wch:10},{wch:22},{wch:12},{wch:14},{wch:13},{wch:14},{wch:18},{wch:14},
     {wch:13},{wch:25},{wch:14}];
@@ -377,7 +385,8 @@ export default function QuantrexAbbott() {
     if(!form.canalSolicitud){setFormError("Debes seleccionar un canal de solicitud.");return;}
     setFormError(""); setSaving(true);
     const autoTransito = form.ppuAsignada && form.usuarioDT ? "en_proceso" : "pendiente";
-    const nueva={...form,id:Date.now().toString(),status:autoTransito,
+    const otGenerada = generarOT(solicitudes);
+    const nueva={...form,id:Date.now().toString(),status:autoTransito,ot:form.ot||otGenerada,
       createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const upd=[nueva,...solicitudes]; setSolicitudes(upd); await saveSolicitudes(upd);
     setSaving(false); setForm({...EMPTY_FORM,
@@ -497,7 +506,7 @@ export default function QuantrexAbbott() {
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
             onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion}
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
-        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes}/>)
+        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
@@ -786,10 +795,12 @@ function SolicitudRow({sol,onSelect}){
     <div style={{...S.row,cursor:onSelect?"pointer":"default"}} onClick={()=>onSelect&&onSelect(sol.id)}>
       <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color}}>{tm.icon}</div>
       <div style={S.rowBody}>
-        <div style={S.rowTitle}>{sol.titulo}</div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          {sol.ot&&<span style={{fontSize:11,fontWeight:800,color:C.cyan,background:C.cyan+"18",padding:"2px 7px",borderRadius:6}}>{sol.ot}</span>}
+          <span style={S.rowTitle}>{sol.titulo}</span>
+        </div>
         <div style={S.rowMeta}>
           <span style={{color:C.textSecondary}}>{tm.label}</span>
-          {sol.guia&&<span style={{color:C.muted}}> · {sol.guia}</span>}
           <span style={{color:C.muted}}> · {sol.fecha}</span>
           {sol.noPresentacion&&<span style={{color:C.danger}}> · NP</span>}
         </div>
@@ -875,8 +886,10 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
             <option value="">-- Seleccionar --</option>
             {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
           </select></div>
-        <div style={S.fGroup}><label style={S.label}>N° Guía</label>
-          <input style={S.input} value={editForm.guia} onChange={fe("guia")}/></div>
+        <div style={S.fGroup}><label style={S.label}>OT Quantrex</label>
+          <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={editForm.ot||""} readOnly/></div>
+        <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
+          <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={editForm.documentos||""} onChange={fe("documentos")}/></div>
         <div style={S.fGroup}><label style={S.label}>Solicitante *</label>
           <select style={S.input} value={editForm.solicitante} onChange={fe("solicitante")}>
             <option value="">-- Seleccionar --</option>
@@ -949,7 +962,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         {[["Dirección",sol.direccion],["Contacto",sol.contacto],["N° Guía",sol.guia],
           ["Prioridad",sol.prioridad==="urgente"?"🔴 Urgente":"🟡 Normal"],
           ["Solicitante",sol.solicitante],["Canal",sol.canalSolicitud],
-          ["Usuario DT",sol.usuarioDT],["PPU Asignada",sol.ppuAsignada],["Chofer",sol.choferAsignado]
+          ["Usuario DT",sol.usuarioDT],["OT Quantrex",sol.ot],["PPU Asignada",sol.ppuAsignada],["Chofer",sol.choferAsignado]
         ].filter(([,v])=>v).map(([l,v])=>(
           <div key={l} style={S.detailField}><div style={S.fieldLabel}>{l}</div><div style={S.fieldValue}>{v}</div></div>
         ))}
@@ -959,6 +972,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         <div style={{...S.fieldLabel,color:C.danger}}>No presentación · {sol.vehiculoNP}</div>
         <div style={S.fieldValue}>{sol.motivoNP} <span style={{color:C.danger,fontWeight:700}}>· Descuento: ${Math.round(2840000/30).toLocaleString("es-CL")}</span></div>
       </div>}
+      {sol.documentos&&<div style={S.detailBlock}><div style={S.fieldLabel}>N° Guías / Documentos Cliente</div><div style={S.fieldValue}>{sol.documentos}</div></div>}
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
@@ -1092,7 +1106,7 @@ function LogEstados({log,solId,onEditLog,esAdmin=true}){
 }
 
 // ── FormNueva ──────────────────────────────────────────────────────────────
-function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT}){
+function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[]}){
   const f=k=>e=>setForm(p=>{
     const u={...p,[k]:e.target.value};
     if(k==="tipo")u.prioridad=PRIORIDAD_DEFAULT[e.target.value]||"normal";
@@ -1125,6 +1139,16 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
               return [...base,...subs];
             })}
           </select></div>
+        {/* Alerta cliente con solicitudes activas hoy */}
+        {form.titulo&&(()=>{
+          const hoy=new Date().toISOString().split("T")[0];
+          const activas=solicitudes.filter(s=>s.titulo===form.titulo&&s.fecha===hoy&&s.status!=="cancelada"&&s.status!=="completada");
+          return activas.length>0?(<div style={{...S.fGroup,gridColumn:"1/-1"}}>
+            <div style={{background:C.warning+"22",border:"1px solid "+C.warning,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.warning,fontWeight:600}}>
+              ⚠ Este cliente ya tiene {activas.length} solicitud(es) activa(s) hoy. Se generará una nueva OT.
+            </div>
+          </div>):null;
+        })()}
         {form.titulo==="000-2 - Dhl Atlantis"&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
           <select style={S.input} value={form.destino} onChange={e=>{
@@ -1183,8 +1207,10 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
             <option value="">-- Seleccionar --</option>
             {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
           </select></div>
-        <div style={S.fGroup}><label style={S.label}>N° Guía / Documento</label>
-          <input style={S.input} placeholder="Ej: GD-20260526-001" value={form.guia} onChange={f("guia")}/></div>
+        <div style={S.fGroup}><label style={S.label}>OT Quantrex</label>
+          <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={form.ot||"Se genera automáticamente"} readOnly/></div>
+        <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
+          <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={form.documentos} onChange={f("documentos")}/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Descripción</label>
           <textarea style={{...S.input,minHeight:60,resize:"vertical"}} placeholder="Detalle de la carga..." value={form.descripcion} onChange={f("descripcion")}/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas internas Quantrex</label>
