@@ -63,9 +63,12 @@ const USUARIOS = [
 // ── Cálculo de distancia Google Maps ──────────────────────────────────────
 async function calcularDistanciaKm(origen, destino) {
   try {
-    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origen}&destinations=${destino}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
-    const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`);
-    const data = await res.json();
+    const apiUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origen)}&destinations=${encodeURIComponent(destino)}&mode=driving&language=es&key=${GOOGLE_MAPS_API_KEY}`;
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+    const res = await fetch(proxyUrl);
+    if (!res.ok) return null;
+    const raw = await res.json();
+    const data = raw.contents ? JSON.parse(raw.contents) : raw;
     const element = data.rows?.[0]?.elements?.[0];
     if (element?.status === "OK") {
       return {
@@ -82,12 +85,66 @@ async function calcularDistanciaKm(origen, destino) {
 // ── Cálculo CO2 mensual ────────────────────────────────────────────────────
 async function calcularKmDesdePudahuel(direccionDestino) {
   try {
-    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(ORIGEN_PUDAHUEL)}&destinations=${encodeURIComponent(direccionDestino)}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
-    const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`);
-    const data = await res.json();
+    // Usar Google Maps Routes API via proxy
+    const origen = encodeURIComponent(ORIGEN_PUDAHUEL);
+    const destino = encodeURIComponent(direccionDestino + ", Chile");
+    const apiUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origen}&destinations=${destino}&mode=driving&language=es&key=${GOOGLE_MAPS_API_KEY}`;
+    
+    // Intentar con múltiples proxies
+    const proxies = [
+      `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`,
+      `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`,
+    ];
+    
+    for (const proxyUrl of proxies) {
+      try {
+        const res = await fetch(proxyUrl, {timeout: 8000});
+        if (!res.ok) continue;
+        const raw = await res.json();
+        // allorigins devuelve {contents: "..."}
+        const data = raw.contents ? JSON.parse(raw.contents) : raw;
+        const element = data.rows?.[0]?.elements?.[0];
+        if (element?.status === "OK") {
+          return parseFloat((element.distance.value / 1000).toFixed(1));
+        }
+      } catch { continue; }
+    }
+    return null;
+  } catch { return null; }
+}
+
+
+// ── Mapa estático Google Maps ──────────────────────────────────────────────
+function getMapaTramoUrl(origen, destino) {
+  const base = "https://maps.googleapis.com/maps/api/staticmap";
+  const params = new URLSearchParams({
+    size: "600x200",
+    maptype: "roadmap",
+    markers: `color:blue|label:A|${origen}`,
+    path: `weight:4|color:0x00AEEFff|${origen}|${destino}`,
+    key: GOOGLE_MAPS_API_KEY,
+    language: "es",
+    region: "CL",
+  });
+  // Agregar marcador destino
+  return `${base}?${params.toString()}&markers=color:red|label:B|${encodeURIComponent(destino)}`;
+}
+
+async function calcularTramo(origen, destino) {
+  try {
+    const apiUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origen)}&destinations=${encodeURIComponent(destino)}&mode=driving&language=es&key=${GOOGLE_MAPS_API_KEY}`;
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+    const res = await fetch(proxyUrl);
+    if (!res.ok) return null;
+    const raw = await res.json();
+    const data = raw.contents ? JSON.parse(raw.contents) : raw;
     const element = data.rows?.[0]?.elements?.[0];
     if (element?.status === "OK") {
-      return parseFloat((element.distance.value / 1000).toFixed(1));
+      return {
+        km: (element.distance.value / 1000).toFixed(1),
+        tiempo: element.duration.text,
+        mapaUrl: getMapaTramoUrl(origen, destino),
+      };
     }
     return null;
   } catch { return null; }
@@ -159,13 +216,20 @@ function exportToExcel(solicitudes, nombreArchivo) {
     if(!esOH){contN[fecha]=(contN[fecha]||0)+1; esSpot=contN[fecha]>6;}
     const cSpot=esSpot?PRECIO_SPOT:0, cOH=esOH?PRECIO_OVERNIGHT:0;
     const motivoOH=esOH?[antes830?"Hora antes 08:30":null,logTarde?"Log después 17:00":null].filter(Boolean).join(" / "):"";
+    // Tiempo en punto solo para carga_ol, li_retiro, li_devol
+    const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
+    const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
+    // Km desde Pudahuel (guardado en la solicitud si se calculó)
+    const kmSol = s.kmDesdePudahuel||"";
+    // CO2 individual = km × 1000kg
+    const co2Sol = kmSol ? (parseFloat(kmSol) * PESO_BASE_KG).toFixed(0) : "";
     return [i+1,s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
       s.usuarioDT||"", s.ppuAsignada||"", nro,
       (s.statusLog||[]).map(e=>(e.fechaHora||"").split(" ")[1]||"").join(" | "),
       esSpot?"Sí":"No", cSpot||"", esOH?"Sí":"No", motivoOH, cOH||"", (cSpot+cOH)||"",
-      s.choferAsignado||"",
+      s.choferAsignado||"", tiempoEnPunto, kmSol, co2Sol,
       s.noPresentacion?(s.vehiculoNP||""):"", s.noPresentacion?(s.motivoNP||""):"",
       s.noPresentacion?DESCUENTO_DIA:""];
   });
@@ -186,7 +250,8 @@ function exportToExcel(solicitudes, nombreArchivo) {
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
   ws1["!cols"]=[{wch:5},{wch:12},{wch:8},{wch:35},{wch:20},{wch:28},{wch:13},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},
-    {wch:10},{wch:22},{wch:12},{wch:14},{wch:13},{wch:25},{wch:14}];
+    {wch:10},{wch:22},{wch:12},{wch:14},{wch:13},{wch:14},{wch:18},{wch:14},
+    {wch:13},{wch:25},{wch:14}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
 
   const periodoNombre=nombreArchivo.replace("Quantrex_Abbott_","").replace(".xlsx","").replace("_"," ");
@@ -217,9 +282,14 @@ function exportToExcel(solicitudes, nombreArchivo) {
   }
   r2.push(["Total Pre Cierre","",granTotal]);
   r2.push([]);
+  const totalKmExcel = rows.reduce((acc,r)=>acc+(parseFloat(r[22])||0),0).toFixed(1);
+  const totalKgExcel = solicitudes.length * PESO_BASE_KG;
+  const totalCO2Excel = (parseFloat(totalKmExcel)*totalKgExcel).toFixed(0);
   r2.push(["Total solicitudes período:",solicitudes.length]);
   r2.push(["Base peso por entrega:","1.000 kg"]);
-  r2.push(["Nota CO₂:","Ver cálculo en Dashboard: Σkm × Σkg"]);
+  r2.push(["Total KG transportados:",totalKgExcel.toLocaleString("es-CL")+" kg"]);
+  r2.push(["Total km recorridos (período):",parseFloat(totalKmExcel)>0?totalKmExcel+" km":"Pendiente cálculo"]);
+  r2.push(["CO₂ período (km × kg):",parseFloat(totalCO2Excel)>0?totalCO2Excel:"Pendiente cálculo km"]);
   r2.push(["Solicitudes SPOT Extra:",totalSpot]);
   r2.push(["Solicitudes Overnight:",totalOH]);
   const ws2=XLSX.utils.aoa_to_sheet(r2);
@@ -350,7 +420,7 @@ export default function QuantrexAbbott() {
     setSolicitudes(upd); await saveSolicitudes(upd); showToast("Log actualizado.");
   }
 
-  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null){
+  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null){
     const now = new Date();
     const fechaHora = now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
     // Obtener geolocalización
@@ -367,7 +437,9 @@ export default function QuantrexAbbott() {
       return {...s, status:nuevoEstado, updatedAt:now.toISOString(),
         statusLog:[...(s.statusLog||[]),entry], geoEntrega:geoStr, horaEntrega:fechaHora,
         fotoEntrega:fotoBase64||null, horaLlegada:horaLlegada||null, tiempoEnPunto:tiempoEnPunto||null,
-        coordsEntrega:geoStr!=="Sin geolocalización"?geoStr:null};
+        coordsEntrega:geoStr!=="Sin geolocalización"?geoStr:null,
+        firmaReceptor:firmaData?.dataUrl||null, nombreReceptor:firmaData?.nombre||null,
+        rechazoFirma:firmaData?.rechazo||false};
     });
     setSolicitudes(upd); await saveSolicitudes(upd);
     showToast(statusLabel+" registrado.");
@@ -389,7 +461,8 @@ export default function QuantrexAbbott() {
   const stats={total:solicitudesPeriodo.length,
     pendiente:solicitudesPeriodo.filter(s=>s.status==="pendiente").length,
     en_proceso:solicitudesPeriodo.filter(s=>s.status==="en_proceso").length,
-    completada:solicitudesPeriodo.filter(s=>s.status==="completada").length};
+    completada:solicitudesPeriodo.filter(s=>s.status==="completada").length,
+    no_entregado:solicitudesPeriodo.filter(s=>s.status==="no_entregado").length};
 
   const excelNombre=`Quantrex_Abbott_${new Date().toISOString().split("T")[0]}.xlsx`;
 
@@ -401,7 +474,7 @@ export default function QuantrexAbbott() {
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
         </div>
         <nav style={S.nav}>
-          {[["dashboard","Panel"],["lista","Solicitudes"],...(sesion?.perfil==="admin"?[["cierres","Cierres"],["clientes","Clientes"]]:[]),["nueva","+ Nueva"]].map(([v,l])=>(
+          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(sesion?.perfil==="admin"?[["cierres","Cierres"],["clientes","Clientes"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
               onClick={()=>setView(v)}>{l}</button>
           ))}
@@ -423,10 +496,10 @@ export default function QuantrexAbbott() {
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
             onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion}
-            onExport={()=>exportToExcel(solicitudes,excelNombre)}/>)
+            onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
-            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion}/>)
+            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
             onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
@@ -616,9 +689,23 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           </div>
         ))}
       </div>
+      {stats.no_entregado>0&&(
+        <div style={{background:"#F9731611",border:"1px solid #F97316",borderRadius:12,padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#F97316",letterSpacing:1.5,textTransform:"uppercase"}}>⚠ No Entregados — Requieren atención</div>
+          <div style={{display:"flex",alignItems:"center",gap:16}}>
+            <div style={{fontSize:36,fontWeight:900,color:"#F97316"}}>{stats.no_entregado}</div>
+            <div style={{fontSize:13,color:C.textSecondary}}>solicitud(es) marcadas como No Entregado en el período activo</div>
+          </div>
+          <button style={{...S.exportBtn,fontSize:12,borderColor:"#F97316",color:"#F97316",alignSelf:"flex-start"}}
+            onClick={()=>setView("lista")}>
+            Ver solicitudes →
+          </button>
+        </div>
+      )}
       {esAdmin&&<ResumenMes solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<ResumenKmDia solicitudes={solicitudes}/>}
+      {esAdmin&&<ResumenRutasDia solicitudes={solicitudes}/>}
       {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo}/>}
       {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap"}}><div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div><div style={{fontSize:12,color:C.textSecondary}}>✓ <strong style={{color:C.success}}>{solicitudesPeriodo.filter(s=>s.status==="completada").length}</strong> completadas</div><div style={{fontSize:12,color:C.textSecondary}}>🚚 <strong style={{color:C.info}}>{solicitudesPeriodo.filter(s=>s.status==="en_proceso").length}</strong> en tránsito</div></div>}
       <div style={S.sectionTitle}>Solicitudes recientes</div>
@@ -713,7 +800,7 @@ function SolicitudRow({sol,onSelect}){
 }
 
 // ── Detalle ────────────────────────────────────────────────────────────────
-function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion}){
+function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[]}){
   const esAdmin=sesion?.perfil==="admin";
   const tm=TYPE_META[sol.tipo]||{label:sol.tipo,icon:"·",color:"#6B8CAE"};
   const sm=STATUS_META[sol.status]||{label:sol.status,color:"#6B8CAE"};
@@ -875,6 +962,17 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
+      {esAdmin&&<MapaTramo sol={sol} solicitudes={solicitudes} />}
+      {(sol.firmaReceptor||sol.rechazoFirma)&&(
+        <div style={S.detailBlock}>
+          <div style={S.fieldLabel}>{sol.rechazoFirma?"Rechazo de firma":"Firma del receptor"}</div>
+          {sol.nombreReceptor&&<div style={{fontSize:13,color:C.textPrimary,marginBottom:6}}>👤 {sol.nombreReceptor}</div>}
+          {sol.rechazoFirma
+            ?<div style={{background:C.danger+"22",border:"1px solid "+C.danger+"44",borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>✗ El receptor se negó a firmar digitalmente</div>
+            :<img src={sol.firmaReceptor} alt="Firma receptor" style={{maxWidth:280,borderRadius:8,border:"1px solid "+C.border,background:"#f9f9f9"}}/>
+          }
+        </div>
+      )}
       {sol.horaEntrega&&(
         <div style={S.detailBlock}>
           <div style={S.fieldLabel}>Registro de entrega</div>
@@ -1350,6 +1448,190 @@ function AdminClientes({clientes,onSave,setView}){
   );
 }
 
+
+// ── Mapa tramo en detalle solicitud ───────────────────────────────────────
+function MapaTramo({ sol, solicitudes }) {
+  const [tramo, setTramo] = useState(null);
+  const [calculando, setCalculando] = useState(false);
+
+  // Determinar origen: Pudahuel o la solicitud anterior del mismo día y chofer
+  function getOrigen() {
+    if (!sol.fecha || !sol.direccion) return null;
+    const mismaFecha = solicitudes
+      .filter(s => s.fecha === sol.fecha && s.id !== sol.id && s.status === "completada")
+      .sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt));
+    
+    const idx = mismaFecha.findIndex(s => {
+      // La solicitud anterior a la actual
+      return new Date(s.updatedAt) < new Date(sol.updatedAt);
+    });
+    
+    const anterior = mismaFecha.filter(s => new Date(s.updatedAt) < new Date(sol.updatedAt)).pop();
+    if (anterior?.direccion) return anterior.direccion + ", Chile";
+    return ORIGEN_PUDAHUEL;
+  }
+
+  async function calcular() {
+    const origen = getOrigen();
+    if (!origen || !sol.direccion) return;
+    setCalculando(true);
+    const result = await calcularTramo(origen, sol.direccion + ", Chile");
+    setTramo(result ? { ...result, origen } : null);
+    setCalculando(false);
+  }
+
+  if (!sol.direccion) return null;
+
+  return (
+    <div style={S.detailBlock}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <div style={S.fieldLabel}>Ruta del tramo</div>
+        {!tramo&&<button style={{...S.exportBtn,fontSize:11,padding:"4px 10px"}} disabled={calculando} onClick={calcular}>
+          {calculando?"Calculando...":"🗺 Ver ruta"}
+        </button>}
+      </div>
+      {tramo?(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",gap:10}}>
+            <div style={{background:C.navy,borderRadius:8,padding:"8px 12px",flex:1,border:"1px solid "+C.border}}>
+              <div style={{fontSize:10,color:C.muted,fontWeight:700}}>DISTANCIA</div>
+              <div style={{fontSize:18,fontWeight:900,color:C.cyan}}>{tramo.km} km</div>
+            </div>
+            <div style={{background:C.navy,borderRadius:8,padding:"8px 12px",flex:1,border:"1px solid "+C.border}}>
+              <div style={{fontSize:10,color:C.muted,fontWeight:700}}>TIEMPO EST.</div>
+              <div style={{fontSize:18,fontWeight:900,color:C.warning}}>{tramo.tiempo}</div>
+            </div>
+          </div>
+          <div style={{fontSize:11,color:C.muted}}>
+            📍 {tramo.origen === ORIGEN_PUDAHUEL ? "Desde Pudahuel" : "Desde entrega anterior"}
+          </div>
+          <img
+            src={tramo.mapaUrl}
+            alt="Mapa del tramo"
+            style={{width:"100%",borderRadius:10,border:"1px solid "+C.border}}
+            onError={e=>e.target.style.display="none"}
+          />
+          <a href={`https://www.google.com/maps/dir/${encodeURIComponent(tramo.origen)}/${encodeURIComponent(sol.direccion+", Chile")}`}
+            target="_blank" rel="noreferrer"
+            style={{display:"inline-flex",alignItems:"center",gap:6,background:C.cyan+"22",border:"1px solid "+C.cyan,color:C.cyan,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,textDecoration:"none"}}>
+            🗺 Abrir en Google Maps
+          </a>
+        </div>
+      ):null}
+    </div>
+  );
+}
+
+
+// ── Modal Firma Receptor ───────────────────────────────────────────────────
+function ModalFirma({ solId, onGuardar, onCerrar }) {
+  const canvasRef = useRef(null);
+  const [dibujando, setDibujando] = useState(false);
+  const [nombre, setNombre] = useState("");
+  const [hayFirma, setHayFirma] = useState(false);
+  const [modo, setModo] = useState("firma"); // firma | rechazo
+
+  function getPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches?.[0] || e;
+    return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+  }
+
+  function iniciar(e) {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const pos = getPos(e, canvas);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    setDibujando(true);
+  }
+
+  function dibujar(e) {
+    e.preventDefault();
+    if (!dibujando) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const pos = getPos(e, canvas);
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#0D1F3C";
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    setHayFirma(true);
+  }
+
+  function terminar(e) { e.preventDefault(); setDibujando(false); }
+
+  function limpiar() {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHayFirma(false);
+  }
+
+  function guardar() {
+    if (modo === "rechazo") {
+      onGuardar({ rechazo: true, nombre: nombre||"Anónimo", dataUrl: null });
+      return;
+    }
+    if (!hayFirma) return;
+    const dataUrl = canvasRef.current.toDataURL("image/png");
+    onGuardar({ rechazo: false, nombre: nombre||"Receptor", dataUrl });
+  }
+
+  return (
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#000000CC",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:16,padding:20,width:"100%",maxWidth:420,display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:16,fontWeight:800,color:C.navy}}>Firma del receptor</div>
+          <button style={{background:"transparent",border:"none",fontSize:20,cursor:"pointer",color:C.muted}} onClick={onCerrar}>✕</button>
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <button style={{flex:1,padding:"8px",borderRadius:8,border:"2px solid "+(modo==="firma"?"#7C3AED":"#ddd"),background:modo==="firma"?"#7C3AED22":"transparent",color:modo==="firma"?"#7C3AED":C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}}
+            onClick={()=>setModo("firma")}>✍️ Firma</button>
+          <button style={{flex:1,padding:"8px",borderRadius:8,border:"2px solid "+(modo==="rechazo"?C.danger:"#ddd"),background:modo==="rechazo"?C.danger+"22":"transparent",color:modo==="rechazo"?C.danger:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}}
+            onClick={()=>setModo("rechazo")}>✗ No quiso firmar</button>
+        </div>
+
+        {modo==="firma"?(
+          <>
+            <div style={{fontSize:12,color:C.muted}}>El receptor dibuja su firma con el dedo:</div>
+            <div style={{border:"2px solid #ddd",borderRadius:10,overflow:"hidden",background:"#f9f9f9",touchAction:"none"}}>
+              <canvas ref={canvasRef} width={380} height={160} style={{display:"block",width:"100%",touchAction:"none"}}
+                onMouseDown={iniciar} onMouseMove={dibujar} onMouseUp={terminar} onMouseLeave={terminar}
+                onTouchStart={iniciar} onTouchMove={dibujar} onTouchEnd={terminar}/>
+            </div>
+            <button style={{background:"transparent",border:"1px solid #ddd",borderRadius:8,padding:"6px 12px",fontSize:12,color:C.muted,cursor:"pointer",alignSelf:"flex-start"}}
+              onClick={limpiar}>Limpiar firma</button>
+          </>
+        ):(
+          <div style={{background:C.danger+"11",border:"1px solid "+C.danger+"44",borderRadius:10,padding:"12px",fontSize:13,color:C.danger,fontWeight:600}}>
+            Se registrará que el receptor se negó a firmar digitalmente.
+          </div>
+        )}
+
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <label style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase"}}>Nombre del receptor</label>
+          <input style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,outline:"none"}}
+            placeholder="Nombre completo" value={nombre} onChange={e=>setNombre(e.target.value)}/>
+        </div>
+
+        <div style={{display:"flex",gap:10}}>
+          <button style={{flex:1,background:"transparent",border:"1px solid #ddd",borderRadius:8,padding:"11px",fontWeight:600,fontSize:14,cursor:"pointer",color:C.muted}}
+            onClick={onCerrar}>Cancelar</button>
+          <button style={{flex:1,background:modo==="rechazo"?C.danger:"#7C3AED",color:"#fff",border:"none",borderRadius:8,padding:"11px",fontWeight:800,fontSize:14,cursor:"pointer",opacity:(modo==="firma"&&!hayFirma)?0.4:1}}
+            disabled={modo==="firma"&&!hayFirma} onClick={guardar}>
+            {modo==="rechazo"?"Registrar rechazo":"Guardar firma"}
+          </button>
+        </div>
+      </div>
+    </div>
+
+  );
+}
+
 // ── Login Chofer ───────────────────────────────────────────────────────────
 function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver}){
   return(
@@ -1383,6 +1665,9 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   );
   const [cargando,setCargando]=useState(null);
   const [fotos,setFotos]=useState({});
+  const [errorFoto,setErrorFoto]=useState(null);
+  const [firmas,setFirmas]=useState({}); // {solId: {dataUrl, nombre, rechazo}}
+  const [modalFirma,setModalFirma]=useState(null); // solId activo
   const [llegadas,setLlegadas]=useState({}); // {solId: {hora, timestamp, geo}}
   const [tiempos,setTiempos]=useState({}); // {solId: segundosTranscurridos}
   const timerRef=useRef({});
@@ -1445,6 +1730,19 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   }
 
   async function cerrar(id, estado){
+    // Validar foto obligatoria
+    if(!fotos[id]){
+      setErrorFoto(id);
+      setTimeout(()=>setErrorFoto(null),3000);
+      return;
+    }
+    // Validar firma obligatoria
+    if(!firmas[id]){
+      setErrorFoto(id+"firma");
+      setTimeout(()=>setErrorFoto(null),3000);
+      return;
+    }
+    setErrorFoto(null);
     setCargando(id+estado);
     // Calcular tiempo en punto
     const llegada=llegadas[id];
@@ -1452,14 +1750,16 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
     const tiempoStr=tiempoEnPunto!==null?formatTiempo(tiempoEnPunto):null;
     // Detener cronómetro
     if(timerRef.current[id]){clearInterval(timerRef.current[id]);delete timerRef.current[id];}
-    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr);
+    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr, firmas[id]||null);
     setFotos(p=>{const n={...p};delete n[id];return n;});
+    setFirmas(p=>{const n={...p};delete n[id];return n;});
     setLlegadas(p=>{const n={...p};delete n[id];return n;});
     setTiempos(p=>{const n={...p};delete n[id];return n;});
     setCargando(null);
   }
 
   return(
+    <>
     <div style={S.section}>
       <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div>
@@ -1513,12 +1813,23 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
             )}
             {/* Captura de foto */}
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <button style={{background:C.navySurface,border:"1px solid "+C.border,color:C.textSecondary,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}
+              <button style={{background:fotos[s.id]?C.success+"22":C.danger+"22",border:"1px solid "+(fotos[s.id]?C.success:C.danger),color:fotos[s.id]?C.success:C.danger,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,width:"100%",justifyContent:"center"}}
                 onClick={()=>capturarFoto(s.id)}>
-                📷 {fotos[s.id]?"Foto tomada ✓":"Tomar foto"}
+                📷 {fotos[s.id]?"Foto tomada ✓":"Tomar foto (obligatorio)"}
               </button>
               {fotos[s.id]&&<img src={fotos[s.id]} alt="preview" style={{width:48,height:48,borderRadius:8,objectFit:"cover",border:"2px solid "+C.success}}/>}
             </div>
+            {errorFoto===s.id&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>
+              📷 Debes tomar una foto del documento antes de registrar la entrega.
+            </div>}
+            {/* Firma del receptor */}
+            <button style={{background:firmas[s.id]?C.success+"22":"#7C3AED22",border:"1px solid "+(firmas[s.id]?C.success:"#7C3AED"),color:firmas[s.id]?C.success:"#A78BFA",borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
+              onClick={()=>setModalFirma(s.id)}>
+              ✍️ {firmas[s.id]?(firmas[s.id].rechazo?"Rechazo registrado ✓":"Firma tomada ✓"):"Firma del receptor (obligatorio)"}
+            </button>
+            {errorFoto===s.id+"firma"&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>
+              ✍️ Debes registrar la firma o el rechazo del receptor.
+            </div>}
             <div style={{display:"flex",gap:10}}>
               <button style={{flex:1,background:C.success+"22",border:"1px solid "+C.success,color:C.success,borderRadius:10,padding:"12px",fontWeight:800,fontSize:14,cursor:"pointer",opacity:cargando?0.6:1}}
                 disabled={!!cargando} onClick={()=>cerrar(s.id,"completada")}>
@@ -1533,6 +1844,10 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
         );
       })}
     </div>
+    {modalFirma&&<ModalFirma solId={modalFirma}
+      onGuardar={f=>{setFirmas(p=>({...p,[modalFirma]:f}));setModalFirma(null);}}
+      onCerrar={()=>setModalFirma(null)}/>}
+    </>
   );
 }
 
@@ -1544,67 +1859,60 @@ function ResumenKmDia({ solicitudes }) {
 
   const hoy = new Date().toISOString().split("T")[0];
   const solsHoy = solicitudes.filter(s =>
-    s.fecha === hoy && s.coordsEntrega && s.status === "completada"
+    s.fecha === hoy && s.direccion && s.status === "completada"
   );
 
   async function calcularKmRuta() {
-    if (solsHoy.length < 2) return;
+    if (solsHoy.length === 0) return;
     setCalculando(true);
     let totalKm = 0;
     const tramos = [];
-    for (let i = 0; i < solsHoy.length - 1; i++) {
-      const origen = solsHoy[i].coordsEntrega;
-      const destino = solsHoy[i+1].coordsEntrega;
-      const result = await calcularDistanciaKm(origen, destino);
-      if (result) {
-        totalKm += parseFloat(result.distancia);
-        tramos.push({
-          de: solsHoy[i].titulo,
-          a: solsHoy[i+1].titulo,
-          km: result.distancia,
-          duracion: result.duracion,
-        });
+    for (const s of solsHoy) {
+      const km = await calcularKmDesdePudahuel(s.direccion);
+      if (km !== null) {
+        totalKm += km;
+        tramos.push({ titulo: s.titulo, direccion: s.direccion, km });
       }
     }
-    setKmData({ totalKm: totalKm.toFixed(1), tramos });
+    setKmData({ totalKm: totalKm.toFixed(1), tramos, nSols: solsHoy.length });
     setCalculando(false);
   }
 
-  if (solsHoy.length < 2) return null;
+  if (solsHoy.length === 0) return null;
 
   return (
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Kilómetros del día</div>
         {!kmData&&<button style={{...S.exportBtn,fontSize:11}} disabled={calculando} onClick={calcularKmRuta}>
-          {calculando?"Calculando...":"🗺 Calcular ruta"}
+          {calculando?"Calculando...":"🗺 Calcular km"}
         </button>}
       </div>
       {kmData?(
         <>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <div style={{background:C.navy,borderRadius:10,padding:"12px 16px",border:"1px solid "+C.cyan+"44",flex:1}}>
-              <div style={{fontSize:11,color:C.muted}}>Total recorrido</div>
+              <div style={{fontSize:11,color:C.muted}}>Total recorrido hoy</div>
               <div style={{fontSize:28,fontWeight:900,color:C.cyan}}>{kmData.totalKm} km</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>desde Pudahuel</div>
             </div>
             <div style={{background:C.navy,borderRadius:10,padding:"12px 16px",border:"1px solid "+C.border,flex:1}}>
               <div style={{fontSize:11,color:C.muted}}>Entregas completadas</div>
-              <div style={{fontSize:28,fontWeight:900,color:C.success}}>{solsHoy.length}</div>
+              <div style={{fontSize:28,fontWeight:900,color:C.success}}>{kmData.nSols}</div>
             </div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {kmData.tramos.map((t,i)=>(
               <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.textSecondary}}>
                 <span style={{color:C.cyan}}>→</span>
-                <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.de} → {t.a}</span>
+                <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.titulo}</span>
                 <span style={{color:C.textPrimary,fontWeight:700,flexShrink:0}}>{t.km} km</span>
-                <span style={{color:C.muted,flexShrink:0}}>({t.duracion})</span>
               </div>
             ))}
           </div>
         </>
       ):(
-        <div style={{fontSize:12,color:C.muted}}>{solsHoy.length} entregas completadas hoy con GPS registrado. Presiona para calcular la ruta total.</div>
+        <div style={{fontSize:12,color:C.muted}}>{solsHoy.length} entrega(s) completada(s) hoy. Presiona para calcular km desde Pudahuel.</div>
       )}
     </div>
   );
@@ -1673,6 +1981,94 @@ function ResumenCO2({ solicitudes }) {
         </>
       ):(
         <div style={{fontSize:12,color:C.muted}}>{solsConDireccion.length} entregas completadas. Presiona para calcular el CO₂ del período.</div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Resumen rutas del día en Dashboard ───────────────────────────────────
+function ResumenRutasDia({ solicitudes }) {
+  const [rutas, setRutas] = useState(null);
+  const [calculando, setCalculando] = useState(false);
+
+  const hoy = new Date().toISOString().split("T")[0];
+  const solsHoy = solicitudes
+    .filter(s => s.fecha === hoy && s.direccion && s.status === "completada")
+    .sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt));
+
+  async function calcularRutas() {
+    if (solsHoy.length === 0) return;
+    setCalculando(true);
+    const tramos = [];
+    let totalKm = 0;
+
+    for (let i = 0; i < solsHoy.length; i++) {
+      const origen = i === 0 ? ORIGEN_PUDAHUEL : solsHoy[i-1].direccion + ", Chile";
+      const destino = solsHoy[i].direccion + ", Chile";
+      const result = await calcularTramo(origen, destino);
+      if (result) {
+        totalKm += parseFloat(result.km);
+        tramos.push({
+          de: i === 0 ? "Pudahuel (origen)" : solsHoy[i-1].titulo,
+          a: solsHoy[i].titulo,
+          direccionA: solsHoy[i].direccion,
+          km: result.km,
+          tiempo: result.tiempo,
+          mapaUrl: result.mapaUrl,
+        });
+      }
+    }
+    setRutas({ tramos, totalKm: totalKm.toFixed(1) });
+    setCalculando(false);
+  }
+
+  if (solsHoy.length === 0) return null;
+
+  return (
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Rutas del día</div>
+        {!rutas&&<button style={{...S.exportBtn,fontSize:11}} disabled={calculando} onClick={calcularRutas}>
+          {calculando?"Calculando rutas...":"🗺 Ver rutas del día"}
+        </button>}
+      </div>
+
+      {rutas?(
+        <>
+          <div style={{background:C.navy,borderRadius:10,padding:"12px 16px",border:"1px solid "+C.cyan+"44",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:11,color:C.muted}}>Total recorrido hoy</div>
+              <div style={{fontSize:24,fontWeight:900,color:C.cyan}}>{rutas.totalKm} km</div>
+            </div>
+            <div style={{fontSize:11,color:C.muted,textAlign:"right"}}>
+              {rutas.tramos.length} tramo(s)<br/>{solsHoy.length} entrega(s)
+            </div>
+          </div>
+
+          {rutas.tramos.map((t, i) => (
+            <div key={i} style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border,display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                <span style={{color:C.cyan,fontWeight:700}}>Tramo {i+1}</span>
+                <span style={{color:C.muted}}>{t.de}</span>
+                <span style={{color:C.cyan}}>→</span>
+                <span style={{color:C.textPrimary,fontWeight:600,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.a}</span>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <div style={{background:C.navySurface,borderRadius:8,padding:"6px 10px",fontSize:12,fontWeight:700,color:C.cyan}}>{t.km} km</div>
+                <div style={{background:C.navySurface,borderRadius:8,padding:"6px 10px",fontSize:12,fontWeight:700,color:C.warning}}>{t.tiempo}</div>
+              </div>
+              <img src={t.mapaUrl} alt={"Tramo "+(i+1)} style={{width:"100%",borderRadius:8,border:"1px solid "+C.border}} onError={e=>e.target.style.display="none"}/>
+              <a href={`https://www.google.com/maps/dir/${encodeURIComponent(i===0?ORIGEN_PUDAHUEL:rutas.tramos[i-1].direccionA+", Chile")}/${encodeURIComponent(t.direccionA+", Chile")}`}
+                target="_blank" rel="noreferrer"
+                style={{display:"inline-flex",alignItems:"center",gap:6,color:C.cyan,fontSize:11,fontWeight:700,textDecoration:"none"}}>
+                🗺 Abrir en Google Maps
+              </a>
+            </div>
+          ))}
+        </>
+      ):(
+        <div style={{fontSize:12,color:C.muted}}>{solsHoy.length} entrega(s) completada(s) hoy. Presiona para ver las rutas.</div>
       )}
     </div>
   );
