@@ -144,17 +144,51 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1.3).toFixed(1); // factor 1.3 para estimar ruta real
 }
 
+// Coordenadas conocidas de clientes Abbott en Santiago
+const COORDS_CONOCIDAS = {
+  "marathon": {lat:-33.4912, lon:-70.6234},
+  "bicentenario": {lat:-33.4678, lon:-70.6934},
+  "san borja": {lat:-33.4531, lon:-70.6598},
+  "arriaran": {lat:-33.4531, lon:-70.6598},
+  "san jose": {lat:-33.3891, lon:-70.6584},
+  "davila": {lat:-33.3856, lon:-70.6621},
+  "alemana": {lat:-33.4056, lon:-70.5934},
+  "carmen": {lat:-33.5234, lon:-70.7123},
+  "santa maria": {lat:-33.4234, lon:-70.6134},
+  "christus": {lat:-33.4312, lon:-70.6123},
+  "diagnostico": {lat:-33.4456, lon:-70.6534},
+  "asist pub": {lat:-33.4534, lon:-70.6698},
+  "dipreca": {lat:-33.4123, lon:-70.6234},
+  "los andes": {lat:-33.3956, lon:-70.5834},
+  "sotero": {lat:-33.5678, lon:-70.6234},
+  "atlantis": {lat:-33.4123, lon:-70.7534},
+  "barros luco": {lat:-33.5012, lon:-70.6534},
+  "trudeau": {lat:-33.5012, lon:-70.6534},
+  "estacion central": {lat:-33.4567, lon:-70.6798},
+  "alameda": {lat:-33.4567, lon:-70.6798},
+  "macul": {lat:-33.4912, lon:-70.6089},
+  "providencia": {lat:-33.4234, lon:-70.6134},
+  "las condes": {lat:-33.4012, lon:-70.5734},
+  "nunoa": {lat:-33.4567, lon:-70.5934},
+  "pudahuel": {lat:-33.4372, lon:-70.7558},
+  "rancagua": {lat:-34.1703, lon:-70.7403},
+  "maipu": {lat:-33.5156, lon:-70.7578},
+  "quilicura": {lat:-33.3634, lon:-70.7289},
+};
+
 async function geocodificar(direccion) {
   try {
-    // Google Maps Geocoding API - funciona directo desde browser
+    const dir = direccion.toLowerCase();
+    // Buscar en coordenadas conocidas
+    for(const [key, coords] of Object.entries(COORDS_CONOCIDAS)) {
+      if(dir.includes(key)) return coords;
+    }
+    // Si no encuentra, intentar con Nominatim como fallback
     const query = encodeURIComponent(direccion + ", Chile");
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${GOOGLE_MAPS_API_KEY}&region=cl`;
+    const url = `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1&countrycodes=cl`;
     const res = await fetch(url);
     const data = await res.json();
-    if(data.status === "OK" && data.results[0]) {
-      const loc = data.results[0].geometry.location;
-      return {lat: loc.lat, lon: loc.lng};
-    }
+    if(data && data[0]) return {lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon)};
     return null;
   } catch { return null; }
 }
@@ -422,8 +456,10 @@ export default function QuantrexAbbott() {
   const [formError,setFormError]=useState("");
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
-  const [sesion,setSesion]=useState(null);
-  const [clientes,setClientes]=useState(CLIENTES_DEFAULT); // null = no logueado
+  const [sesion,setSesion]=useState(()=>{
+    try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
+  });
+  const [clientes,setClientes]=useState(CLIENTES_DEFAULT);
   const [confirmCierre,setConfirmCierre]=useState(false);
   const [perfilChofer,setPerfilChofer]=useState(null); // null = admin, chofer = objeto chofer
   const [selChofer,setSelChofer]=useState("");
