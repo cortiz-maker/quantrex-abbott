@@ -238,7 +238,18 @@ async function saveSolicitud(s) {
       cancelado_por:s.canceladoPor||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
       updated_at:new Date().toISOString(),
     };
-    await sbFetch("POST","solicitudes",row,"?on_conflict=id");
+    // UPSERT - insert o update si ya existe
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Prefer": "resolution=merge-duplicates",
+      },
+      body: JSON.stringify(row),
+    });
+    if(!res.ok) { const e=await res.text(); console.error("saveSolicitud error:",e); }
   } catch(e) { console.error(e); }
 }
 async function deleteSolicitud(id) {
@@ -590,13 +601,13 @@ export default function QuantrexAbbott() {
           ))}
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:11,color:C.muted}}>{sesion?.nombre}</span>
-            <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>setSesion(null)}>Salir</button>
+            <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{sessionStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
           </div>
         </nav>
       </header>
       <main style={S.main}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
-        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
+        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{sessionStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=CHOFERES.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
