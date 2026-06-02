@@ -146,11 +146,15 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 async function geocodificar(direccion) {
   try {
+    // Google Maps Geocoding API - funciona directo desde browser
     const query = encodeURIComponent(direccion + ", Chile");
-    const url = `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`;
-    const res = await fetch(url, {headers:{"User-Agent":"quantrex-abbott/1.0"}});
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${GOOGLE_MAPS_API_KEY}&region=cl`;
+    const res = await fetch(url);
     const data = await res.json();
-    if(data && data[0]) return {lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon)};
+    if(data.status === "OK" && data.results[0]) {
+      const loc = data.results[0].geometry.location;
+      return {lat: loc.lat, lon: loc.lng};
+    }
     return null;
   } catch { return null; }
 }
