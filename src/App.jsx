@@ -39,6 +39,27 @@ const EMPTY_FORM = {
   destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[],
 };
 
+
+// ── Supabase Config ────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://euvwfbnbmefqpakbbzni.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1dndmYm5ibWVmcXBha2Jiem5pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjY0ODksImV4cCI6MjA5NjAwMjQ4OX0.g4MZSgs7yF3fJljIbF-C582g-Bvbn0RSML1lYGGlIaQ";
+
+async function sbFetch(method, table, body=null, query="") {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`,
+      "Prefer": method==="POST"?"return=representation":"",
+    },
+    body: body ? JSON.stringify(body) : null,
+  });
+  if (!res.ok) { const e=await res.text(); console.error("Supabase error:",e); return null; }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
 const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
 const PESO_BASE_KG = 1000; // kg por solicitud (base contractual)
@@ -175,28 +196,105 @@ function fechaEnPeriodo(fechaStr, inicio, fin) {
 
 // ── Storage ────────────────────────────────────────────────────────────────
 async function loadSolicitudes() {
-  try { const r = localStorage.getItem("abbott:solicitudes"); return r ? JSON.parse(r) : []; } catch { return []; }
+  try {
+    const data = await sbFetch("GET","solicitudes","","?order=created_at.desc");
+    if(!data) return [];
+    return data.map(s=>({
+      id:s.id, ot:s.ot, fecha:s.fecha, hora:s.hora, tipo:s.tipo, titulo:s.titulo,
+      descripcion:s.descripcion, direccion:s.direccion, contacto:s.contacto, guia:s.guia,
+      prioridad:s.prioridad, notas:s.notas, solicitante:s.solicitante,
+      canalSolicitud:s.canal_solicitud, usuarioDT:s.usuario_dt, ppuAsignada:s.ppu_asignada,
+      destino:s.destino, choferAsignado:s.chofer_asignado, documentos:s.documentos,
+      status:s.status, statusLog:s.status_log||[],
+      noPresentacion:s.no_presentacion, vehiculoNP:s.vehiculo_np, motivoNP:s.motivo_np,
+      geoEntrega:s.geo_entrega, horaEntrega:s.hora_entrega, horaLlegada:s.hora_llegada,
+      tiempoEnPunto:s.tiempo_en_punto, coordsEntrega:s.coords_entrega,
+      fotoEntrega:s.foto_entrega, firmaReceptor:s.firma_receptor,
+      nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
+      canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
+      updatedAt:s.updated_at, createdAt:s.created_at,
+    }));
+  } catch(e) { console.error(e); return []; }
 }
 async function saveSolicitudes(data) {
-  try { localStorage.setItem("abbott:solicitudes", JSON.stringify(data)); } catch {}
+  // No se usa - guardamos individualmente
+}
+async function saveSolicitud(s) {
+  try {
+    const row = {
+      id:s.id, ot:s.ot||null, fecha:s.fecha||null, hora:s.hora||null, tipo:s.tipo||null,
+      titulo:s.titulo||null, descripcion:s.descripcion||null, direccion:s.direccion||null,
+      contacto:s.contacto||null, guia:s.guia||null, prioridad:s.prioridad||null,
+      notas:s.notas||null, solicitante:s.solicitante||null, canal_solicitud:s.canalSolicitud||null,
+      usuario_dt:s.usuarioDT||null, ppu_asignada:s.ppuAsignada||null, destino:s.destino||null,
+      chofer_asignado:s.choferAsignado||null, documentos:s.documentos||null,
+      status:s.status||"pendiente", status_log:s.statusLog||[],
+      no_presentacion:s.noPresentacion||false, vehiculo_np:s.vehiculoNP||null,
+      motivo_np:s.motivoNP||null, geo_entrega:s.geoEntrega||null,
+      hora_entrega:s.horaEntrega||null, hora_llegada:s.horaLlegada||null,
+      tiempo_en_punto:s.tiempoEnPunto||null, coords_entrega:s.coordsEntrega||null,
+      foto_entrega:s.fotoEntrega||null, firma_receptor:s.firmaReceptor||null,
+      nombre_receptor:s.nombreReceptor||null, rechazo_firma:s.rechazoFirma||false,
+      cancelado_por:s.canceladoPor||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
+      updated_at:new Date().toISOString(),
+    };
+    await sbFetch("POST","solicitudes",row,"?on_conflict=id");
+  } catch(e) { console.error(e); }
+}
+async function deleteSolicitud(id) {
+  try { await sbFetch("DELETE","solicitudes",null,`?id=eq.${id}`); } catch(e) { console.error(e); }
 }
 async function loadCierres() {
-  try { const r = localStorage.getItem("abbott:cierres"); return r ? JSON.parse(r) : []; } catch { return []; }
+  try {
+    const data = await sbFetch("GET","cierres","","?order=cerrado_en.desc");
+    if(!data) return [];
+    return data.map(c=>({
+      id:c.id, nombre:c.nombre, fechaInicio:c.fecha_inicio, fechaFin:c.fecha_fin,
+      total:c.total, completadas:c.completadas, cerradoEn:c.cerrado_en,
+      solicitudes:c.solicitudes||[],
+    }));
+  } catch(e) { return []; }
 }
 async function saveCierres(data) {
-  try { localStorage.setItem("abbott:cierres", JSON.stringify(data)); } catch {}
+  try {
+    for(const c of data) {
+      const row = {
+        id:c.id, nombre:c.nombre, fecha_inicio:c.fechaInicio, fecha_fin:c.fechaFin,
+        total:c.total, completadas:c.completadas, cerrado_en:c.cerradoEn,
+        solicitudes:c.solicitudes||[],
+      };
+      await sbFetch("POST","cierres",row,"?on_conflict=id");
+    }
+  } catch(e) { console.error(e); }
 }
 async function loadPeriodo() {
-  try { const r = localStorage.getItem("abbott:periodo"); return r ? JSON.parse(r) : null; } catch { return null; }
+  try {
+    const data = await sbFetch("GET","periodo","","?id=eq.activo");
+    if(!data||!data.length) return null;
+    return {inicio:data[0].inicio, fin:data[0].fin, nombre:data[0].nombre};
+  } catch(e) { return null; }
 }
 async function savePeriodo(data) {
-  try { localStorage.setItem("abbott:periodo", JSON.stringify(data)); } catch {}
+  try {
+    if(!data) {
+      await sbFetch("DELETE","periodo",null,"?id=eq.activo");
+      return;
+    }
+    const row = {id:"activo", inicio:data.inicio, fin:data.fin, nombre:data.nombre};
+    await sbFetch("POST","periodo",row,"?on_conflict=id");
+  } catch(e) { console.error(e); }
 }
 async function loadClientes() {
-  try { const r = localStorage.getItem("abbott:clientes"); return r ? JSON.parse(r) : null; } catch { return null; }
+  try {
+    const data = await sbFetch("GET","clientes","","?id=eq.lista");
+    if(!data||!data.length) return null;
+    return data[0].data||null;
+  } catch(e) { return null; }
 }
 async function saveClientes(data) {
-  try { localStorage.setItem("abbott:clientes", JSON.stringify(data)); } catch {}
+  try {
+    await sbFetch("POST","clientes",{id:"lista",data:data},"?on_conflict=id");
+  } catch(e) { console.error(e); }
 }
 
 // ── Excel ─────────────────────────────────────────────────────────────────
@@ -388,7 +486,7 @@ export default function QuantrexAbbott() {
     const otGenerada = generarOT(solicitudes);
     const nueva={...form,id:Date.now().toString(),status:autoTransito,ot:form.ot||otGenerada,
       createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-    const upd=[nueva,...solicitudes]; setSolicitudes(upd); await saveSolicitudes(upd);
+    const upd=[nueva,...solicitudes]; setSolicitudes(upd); await saveSolicitud(nueva);
     setSaving(false); setForm({...EMPTY_FORM,
       fecha:new Date().toISOString().split("T")[0],
       hora:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false})});
@@ -420,8 +518,9 @@ export default function QuantrexAbbott() {
       updatedSol = {...updatedSol, status:newStatus,
         statusLog:[...(updatedSol.statusLog||[]),{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",fechaHora,canceladoPor:null}]};
     }
-    const upd=solicitudes.map(s=>s.id===updatedSol.id?{...updatedSol,updatedAt:new Date().toISOString()}:s);
-    setSolicitudes(upd); await saveSolicitudes(upd); showToast("Solicitud actualizada.");
+    const solActualizada={...updatedSol,updatedAt:new Date().toISOString()};
+    const upd=solicitudes.map(s=>s.id===updatedSol.id?solActualizada:s);
+    setSolicitudes(upd); await saveSolicitud(solActualizada); showToast("Solicitud actualizada.");
   }
 
   async function handleEditLog(id,updatedLog){
@@ -450,7 +549,9 @@ export default function QuantrexAbbott() {
         firmaReceptor:firmaData?.dataUrl||null, nombreReceptor:firmaData?.nombre||null,
         rechazoFirma:firmaData?.rechazo||false};
     });
-    setSolicitudes(upd); await saveSolicitudes(upd);
+    setSolicitudes(upd);
+    const solUpd=upd.find(s=>s.id===id);
+    if(solUpd) await saveSolicitud(solUpd);
     showToast(statusLabel+" registrado.");
   }
 
