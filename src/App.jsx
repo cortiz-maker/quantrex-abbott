@@ -16,10 +16,11 @@ const TYPE_META = {
 };
 
 const STATUS_META = {
-  pendiente:  { label:"Pendiente",   color:"#F59E0B" },
-  en_proceso: { label:"En Tránsito", color:"#00AEEF" },
-  completada: { label:"Completada",  color:"#22C55E" },
-  cancelada:  { label:"Cancelada",   color:"#EF4444" },
+  pendiente:       { label:"Pendiente",      color:"#F59E0B" },
+  en_proceso:      { label:"En Tránsito",    color:"#00AEEF" },
+  completada:      { label:"Completada",     color:"#22C55E" },
+  no_entregado:    { label:"No Entregado",   color:"#F97316" },
+  cancelada:       { label:"Cancelada",      color:"#EF4444" },
 };
 
 const PRIORIDAD_DEFAULT = {
@@ -35,10 +36,62 @@ const EMPTY_FORM = {
   hora: new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}),
   contacto:"", guia:"", prioridad:"urgente", notas:"",
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
-  destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", statusLog:[],
+  destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[],
 };
 
-const CLIENTES_ABBOTT = [{"id":"000-2","nombre":"Dhl Atlantis","direccion":"","notas":"Cita XX:XX hrs Andenes 32-33"},{"id":"17004950-0","nombre":"Warner Payamares","direccion":"Marathon 5187, Macul","notas":"Dpto 41, Torre 7"},{"id":"19.684.207-1","nombre":"Felipe Moya Pineda / Dpto 305 / Torre 1","direccion":"Portezuelo de los azules 6975, Puente Alto","notas":""},{"id":"53.125.850-9","nombre":"Comunidad Hospital Del Profesor","direccion":"Avenida Libertador Bernardo O'Higgins 4860, Estación Central, Santiago","notas":"Bodega Hemodinamia Piso 1"},{"id":"60.910.000-1","nombre":"Hospital Clinico U de Chile","direccion":"Santos Dumontt 999, Independencia","notas":""},{"id":"61.101.030-3","nombre":"Hospital Militar De Santiago","direccion":"Av Alcalde Fdo Castillo v 9100, La Reina","notas":"5to Piso, Pabellon Hemodinamia"},{"id":"61.103.007-K","nombre":"Hosp Gral Dr Raul Yazigi","direccion":"Av Las Condes 8631, Las Condes","notas":"Entregar en Hemodinamia Piso 2"},{"id":"61513003-6","nombre":"Dipreca Fondo Hospital","direccion":"Vital Apoquindo 1200, Las condes","notas":"3er Piso Consignacion"},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"El Litre 1012, Valparaiso","notas":""},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"San Ignacio 725, Valparaiso","notas":""},{"id":"61.602.138-9","nombre":"Hospital Rancagua","direccion":"Av. Libertador Bernardo O'Higgins 3065, Rancagua, O'Higgins","notas":""},{"id":"61.602.189-3","nombre":"Hosp Guillermo Grant Benavente","direccion":"San Martin 1436, Concepcion","notas":"Entregar a Warner Payamares"},{"id":"61606602-1","nombre":"Hosp Dr Gustavo Fricke","direccion":"Alvarez 1532, Viña Del Mar","notas":""},{"id":"61.606.903-9","nombre":"HOSP BASE CURICO","direccion":"Archipielago Juan Fernandez 1890, Curico","notas":""},{"id":"61.608.002-4","nombre":"Hospital San Jose","direccion":"Calle San Jose 1030, Santiago Independencia","notas":"Bodega Central"},{"id":"61608004-0","nombre":"Hospital Roberto del Rio","direccion":"Profesor Zanartu 1085, Independencia","notas":"Bodega Central"},{"id":"61.608.101-2","nombre":"Hosp Barros Luco Trudeau","direccion":"Gran Avenida 3204, San Miguel","notas":"Entrega en Equipos Medicos"},{"id":"61608204-3","nombre":"Hospital San Juan de Dios","direccion":"Huerfanos 3255, Santiago","notas":"1er Piso Pabellon Hemodinamia"},{"id":"61.608.402-K","nombre":"Inst Nacional Del Torax","direccion":"Jose Manuel Infante 717, Providencia","notas":"Bodega General"},{"id":"61.608.408-9","nombre":"Hospital Calvo Mackenna","direccion":"Antonio Varas 248, Providencia","notas":""},{"id":"61608502-6","nombre":"Hospital Sotero del Rio","direccion":"Avenida Concha y Toro 3459, Puente alto","notas":"3er Piso, Pabellon 16"},{"id":"61.608.602-2","nombre":"Hosp Urgencia  Asist Pubica","direccion":"Portugal 125, Santiago","notas":"Pabellon 3,  Angiografía 3er piso"},{"id":"61.608.604-9","nombre":"Hospital San Borja De Arriaran","direccion":"Santa Rosa 1234, Santiago","notas":""},{"id":"61980320-5","nombre":"Hospital del Carmen","direccion":"Camino A Rinconada 1201 &, El Olimpo, Maipú, Región Metropolitana","notas":""},{"id":"71.494.700-1","nombre":"Fundacion Diabetes Juvenil","direccion":"Calle Valparaiso 507, Viña del mar","notas":"Piso 2"},{"id":"71.614.000-8","nombre":"Clinica Univer Los Andes","direccion":"Av Plaza 2501, Las Condes","notas":"2do Piso Hemodinamia"},{"id":"76.044.959-8","nombre":"Arlab S.A","direccion":"Alferez Real 1380, Providencia","notas":"Entrega en Bodega"},{"id":"76242774-5","nombre":"Clinica BUPA Santiago S.A.","direccion":"Av. Departamental 1455, La Florida, Region Metropolitana","notas":"Piso -1 Consignacion"},{"id":"76.336.093-3","nombre":"Clinica Meds La Dehesa Spa","direccion":"Jose Alcalde Delano 10581","notas":""},{"id":"76.363.205-9","nombre":"Clinica Ensenada Spa","direccion":"Av Fermin Vivaceta 957, Independencia","notas":"Bodega General"},{"id":"76.871.990-K","nombre":"Nueva Clinica Cordillera Ph S.A","direccion":"Alejandro Fleming  7885, Las Condes","notas":""},{"id":"77.067.168-K","nombre":"Frimed Spa","direccion":"CAMINO LO BOZA 107, Pudahuel","notas":"BODEGA A-08"},{"id":"77487960-9","nombre":"Importadora Y Exportadora CAMIR SPA","direccion":"Perez Valenzuela 1098, Providencia","notas":""},{"id":"78.040.520-1","nombre":"Clin Avansalud Providencia S.A","direccion":"Av Salvador 130, Providencia","notas":""},{"id":"78.800.870-8","nombre":"M Kaplan Y Cia Ltda","direccion":"Marchant Pereira 174, Providencia","notas":""},{"id":"81.378.300-2","nombre":"Abbott Laboratories De Chile","direccion":"Los Militares 4777, Las Condes","notas":"Piso 7 o 8"},{"id":"81698900-0","nombre":"Pontificia Universidad Catolica","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"90.753.000-0","nombre":"Clinica Santa Maria Spa","direccion":"AV Santa Maria 410, Providencia","notas":"Entrega: 4 piso torre C - Pabellón Hemodinamia."},{"id":"92.051.000-0","nombre":"Inst De Diagnostico S.A","direccion":"AV SANTA MARIA 1810, PROVIDENCIA","notas":"Entrega 5to piso Hemodinamia"},{"id":"92.999.000-5","nombre":"Imp. y Distrib.Arquimed S.A","direccion":"Arturo Prat 828, Santiago","notas":""},{"id":"93930000-7","nombre":"Clinica Las Condes S.A.","direccion":"Estoril 450, Las condes","notas":"Piso -2 Consignacion"},{"id":"96.530.470-3","nombre":"Clinica Davila y Servs Medicos Spa","direccion":"Recoleta 464, Recoleta","notas":""},{"id":"96662450-7","nombre":"Clínica Isamédica","direccion":"Carretera El Cobre Presidente Eduardo Frei Montalva N°884, Rancagua, Región del Libertador Bernardo O´Higgins","notas":""},{"id":"96.770.100-9","nombre":"Clin Alemana De Santiago","direccion":"Vitacura 5951, Viitacura","notas":"Pabellon Hemodinamia 5to Piso"},{"id":"96774580-4","nombre":"Clinica Redsalud Mayor Temuco","direccion":"Avenida Gabriela Mistral N°01955, Temuco","notas":""},{"id":"96.885.930-7","nombre":"Clinica Bicentenario SpA","direccion":"Av. Alameda Libertador Bernardo O'Higgins 4850, Estacion Central","notas":""},{"id":"96.885.950-1","nombre":"Clin Ciudad Del Mar S A","direccion":"13 Norte 672, Viña Del Mar","notas":"Entrega en Equipos Medicos"},{"id":"96898980-4","nombre":"Clinica Vespucio SPA","direccion":"Serafin Zamora 190, La Florida, Region Metropolitana","notas":""},{"id":"99.519.620-4","nombre":"Soc De Diag Invasivo Cardiologia Spa","direccion":"Gran Avenida 3204, San Miguel","notas":"Pabellon Hemodinamia"},{"id":"99573490-7","nombre":"UC Christus Servicios Clinicos SPA","direccion":"Camino El Alba 12351, Las Condes","notas":""},{"id":"71.494.700-11","nombre":"Fundacion Diabetes Juvenil","direccion":"Lota 2344, Providencia","notas":"Bodega Central"},{"id":"99.573.490-77","nombre":"Uc Christus Servicios Clinicos Spa","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"","nombre":"Cenabast","direccion":"San Eugenio 40, Ñuñoa","notas":"Entregar a Solange Arzola"}];
+const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
+const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
+const PESO_BASE_KG = 1000; // kg por solicitud (base contractual)
+
+const CLIENTES_DEFAULT = [{"id":"000-2","nombre":"Dhl Atlantis","direccion":"","notas":"Cita XX:XX hrs Andenes 32-33"},{"id":"17004950-0","nombre":"Warner Payamares","direccion":"Marathon 5187, Macul","notas":"Dpto 41, Torre 7"},{"id":"19.684.207-1","nombre":"Felipe Moya Pineda / Dpto 305 / Torre 1","direccion":"Portezuelo de los azules 6975, Puente Alto","notas":""},{"id":"53.125.850-9","nombre":"Comunidad Hospital Del Profesor","direccion":"Avenida Libertador Bernardo O'Higgins 4860, Estación Central, Santiago","notas":"Bodega Hemodinamia Piso 1"},{"id":"60.910.000-1","nombre":"Hospital Clinico U de Chile","direccion":"Santos Dumontt 999, Independencia","notas":""},{"id":"61.101.030-3","nombre":"Hospital Militar De Santiago","direccion":"Av Alcalde Fdo Castillo v 9100, La Reina","notas":"5to Piso, Pabellon Hemodinamia"},{"id":"61.103.007-K","nombre":"Hosp Gral Dr Raul Yazigi","direccion":"Av Las Condes 8631, Las Condes","notas":"Entregar en Hemodinamia Piso 2"},{"id":"61513003-6","nombre":"Dipreca Fondo Hospital","direccion":"Vital Apoquindo 1200, Las condes","notas":"3er Piso Consignacion"},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"El Litre 1012, Valparaiso","notas":""},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"San Ignacio 725, Valparaiso","notas":""},{"id":"61.602.138-9","nombre":"Hospital Rancagua","direccion":"Av. Libertador Bernardo O'Higgins 3065, Rancagua, O'Higgins","notas":""},{"id":"61.602.189-3","nombre":"Hosp Guillermo Grant Benavente","direccion":"San Martin 1436, Concepcion","notas":"Entregar a Warner Payamares"},{"id":"61606602-1","nombre":"Hosp Dr Gustavo Fricke","direccion":"Alvarez 1532, Viña Del Mar","notas":""},{"id":"61.606.903-9","nombre":"HOSP BASE CURICO","direccion":"Archipielago Juan Fernandez 1890, Curico","notas":""},{"id":"61.608.002-4","nombre":"Hospital San Jose","direccion":"Calle San Jose 1030, Santiago Independencia","notas":"Bodega Central"},{"id":"61608004-0","nombre":"Hospital Roberto del Rio","direccion":"Profesor Zanartu 1085, Independencia","notas":"Bodega Central"},{"id":"61.608.101-2","nombre":"Hosp Barros Luco Trudeau","direccion":"Gran Avenida 3204, San Miguel","notas":"Entrega en Equipos Medicos"},{"id":"61608204-3","nombre":"Hospital San Juan de Dios","direccion":"Huerfanos 3255, Santiago","notas":"1er Piso Pabellon Hemodinamia"},{"id":"61.608.402-K","nombre":"Inst Nacional Del Torax","direccion":"Jose Manuel Infante 717, Providencia","notas":"Bodega General"},{"id":"61.608.408-9","nombre":"Hospital Calvo Mackenna","direccion":"Antonio Varas 248, Providencia","notas":""},{"id":"61608502-6","nombre":"Hospital Sotero del Rio","direccion":"Avenida Concha y Toro 3459, Puente alto","notas":"3er Piso, Pabellon 16"},{"id":"61.608.602-2","nombre":"Hosp Urgencia  Asist Pubica","direccion":"Portugal 125, Santiago","notas":"Pabellon 3,  Angiografía 3er piso"},{"id":"61.608.604-9","nombre":"Hospital San Borja De Arriaran","direccion":"Santa Rosa 1234, Santiago","notas":""},{"id":"61980320-5","nombre":"Hospital del Carmen","direccion":"Camino A Rinconada 1201 &, El Olimpo, Maipú, Región Metropolitana","notas":""},{"id":"71.494.700-1","nombre":"Fundacion Diabetes Juvenil","direccion":"Calle Valparaiso 507, Viña del mar","notas":"Piso 2"},{"id":"71.614.000-8","nombre":"Clinica Univer Los Andes","direccion":"Av Plaza 2501, Las Condes","notas":"2do Piso Hemodinamia"},{"id":"76.044.959-8","nombre":"Arlab S.A","direccion":"Alferez Real 1380, Providencia","notas":"Entrega en Bodega"},{"id":"76242774-5","nombre":"Clinica BUPA Santiago S.A.","direccion":"Av. Departamental 1455, La Florida, Region Metropolitana","notas":"Piso -1 Consignacion"},{"id":"76.336.093-3","nombre":"Clinica Meds La Dehesa Spa","direccion":"Jose Alcalde Delano 10581","notas":""},{"id":"76.363.205-9","nombre":"Clinica Ensenada Spa","direccion":"Av Fermin Vivaceta 957, Independencia","notas":"Bodega General"},{"id":"76.871.990-K","nombre":"Nueva Clinica Cordillera Ph S.A","direccion":"Alejandro Fleming  7885, Las Condes","notas":""},{"id":"77.067.168-K","nombre":"Frimed Spa","direccion":"CAMINO LO BOZA 107, Pudahuel","notas":"BODEGA A-08"},{"id":"77487960-9","nombre":"Importadora Y Exportadora CAMIR SPA","direccion":"Perez Valenzuela 1098, Providencia","notas":""},{"id":"78.040.520-1","nombre":"Clin Avansalud Providencia S.A","direccion":"Av Salvador 130, Providencia","notas":""},{"id":"78.800.870-8","nombre":"M Kaplan Y Cia Ltda","direccion":"Marchant Pereira 174, Providencia","notas":""},{"id":"81.378.300-2","nombre":"Abbott Laboratories De Chile","direccion":"Los Militares 4777, Las Condes","notas":"Piso 7 o 8"},{"id":"81698900-0","nombre":"Pontificia Universidad Catolica","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"90.753.000-0","nombre":"Clinica Santa Maria Spa","direccion":"AV Santa Maria 410, Providencia","notas":"Entrega: 4 piso torre C - Pabellón Hemodinamia."},{"id":"92.051.000-0","nombre":"Inst De Diagnostico S.A","direccion":"AV SANTA MARIA 1810, PROVIDENCIA","notas":"Entrega 5to piso Hemodinamia"},{"id":"92.999.000-5","nombre":"Imp. y Distrib.Arquimed S.A","direccion":"Arturo Prat 828, Santiago","notas":""},{"id":"93930000-7","nombre":"Clinica Las Condes S.A.","direccion":"Estoril 450, Las condes","notas":"Piso -2 Consignacion"},{"id":"96.530.470-3","nombre":"Clinica Davila y Servs Medicos Spa","direccion":"Recoleta 464, Recoleta","notas":""},{"id":"96662450-7","nombre":"Clínica Isamédica","direccion":"Carretera El Cobre Presidente Eduardo Frei Montalva N°884, Rancagua, Región del Libertador Bernardo O´Higgins","notas":""},{"id":"96.770.100-9","nombre":"Clin Alemana De Santiago","direccion":"Vitacura 5951, Viitacura","notas":"Pabellon Hemodinamia 5to Piso"},{"id":"96774580-4","nombre":"Clinica Redsalud Mayor Temuco","direccion":"Avenida Gabriela Mistral N°01955, Temuco","notas":""},{"id":"96.885.930-7","nombre":"Clinica Bicentenario SpA","direccion":"Av. Alameda Libertador Bernardo O'Higgins 4850, Estacion Central","notas":""},{"id":"96.885.950-1","nombre":"Clin Ciudad Del Mar S A","direccion":"13 Norte 672, Viña Del Mar","notas":"Entrega en Equipos Medicos"},{"id":"96898980-4","nombre":"Clinica Vespucio SPA","direccion":"Serafin Zamora 190, La Florida, Region Metropolitana","notas":""},{"id":"99.519.620-4","nombre":"Soc De Diag Invasivo Cardiologia Spa","direccion":"Gran Avenida 3204, San Miguel","notas":"Pabellon Hemodinamia"},{"id":"99573490-7","nombre":"UC Christus Servicios Clinicos SPA","direccion":"Camino El Alba 12351, Las Condes","notas":""},{"id":"71.494.700-11","nombre":"Fundacion Diabetes Juvenil","direccion":"Lota 2344, Providencia","notas":"Bodega Central"},{"id":"99.573.490-77","nombre":"Uc Christus Servicios Clinicos Spa","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"","nombre":"Cenabast","direccion":"San Eugenio 40, Ñuñoa","notas":"Entregar a Solange Arzola"}];
+
+
+const CHOFERES = [
+  { nombre: "Felipe Hernandez", ppu: "KRYX27", usuarioDT: "Quantrex M1" },
+  { nombre: "Italo Loiza",      ppu: "PBGJ33", usuarioDT: "Quantrex M2" },
+  { nombre: "Cristian Donoso",  ppu: "PZGH22", usuarioDT: "Quantrex M1" },
+];
+
+
+const USUARIOS = [
+  { email:"cortiz@quantrex.cl",     password:"Qx@Admin2026", perfil:"admin",    nombre:"César Ortiz" },
+  { email:"jmartinez@quantrex.cl",  password:"Qx@Op2026",    perfil:"operador", nombre:"J. Martínez" },
+  { email:"info@transportesbs.cl",  password:"libre2026",    perfil:"cliente",  nombre:"Abbott Chile" },
+];
+
+
+// ── Cálculo de distancia Google Maps ──────────────────────────────────────
+async function calcularDistanciaKm(origen, destino) {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origen}&destinations=${destino}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
+    const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`);
+    const data = await res.json();
+    const element = data.rows?.[0]?.elements?.[0];
+    if (element?.status === "OK") {
+      return {
+        distancia: (element.distance.value / 1000).toFixed(1),
+        duracion: element.duration.text,
+        texto: element.distance.text,
+      };
+    }
+    return null;
+  } catch { return null; }
+}
+
+
+// ── Cálculo CO2 mensual ────────────────────────────────────────────────────
+async function calcularKmDesdePudahuel(direccionDestino) {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(ORIGEN_PUDAHUEL)}&destinations=${encodeURIComponent(direccionDestino)}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
+    const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`);
+    const data = await res.json();
+    const element = data.rows?.[0]?.elements?.[0];
+    if (element?.status === "OK") {
+      return parseFloat((element.distance.value / 1000).toFixed(1));
+    }
+    return null;
+  } catch { return null; }
+}
 
 // ── Período ────────────────────────────────────────────────────────────────
 function getPeriodoActual() {
@@ -74,6 +127,12 @@ async function loadPeriodo() {
 async function savePeriodo(data) {
   try { localStorage.setItem("abbott:periodo", JSON.stringify(data)); } catch {}
 }
+async function loadClientes() {
+  try { const r = localStorage.getItem("abbott:clientes"); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+async function saveClientes(data) {
+  try { localStorage.setItem("abbott:clientes", JSON.stringify(data)); } catch {}
+}
 
 // ── Excel ─────────────────────────────────────────────────────────────────
 function exportToExcel(solicitudes, nombreArchivo) {
@@ -92,7 +151,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
   const rows = solicitudes.map((s,i) => {
     const fecha=s.fecha||"sin-fecha";
     const mins=horaAMinutos(s.hora);
-    const antes830=mins!==null&&mins<8*60+30;
+    const antes830=s.tipo==="carga_ol"&&mins!==null&&mins<8*60+30;
     const logTarde=logSuperaLas17(s.statusLog);
     const esOH=antes830||logTarde;
     contD[fecha]=(contD[fecha]||0)+1; const nro=contD[fecha];
@@ -106,6 +165,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
       s.usuarioDT||"", s.ppuAsignada||"", nro,
       (s.statusLog||[]).map(e=>(e.fechaHora||"").split(" ")[1]||"").join(" | "),
       esSpot?"Sí":"No", cSpot||"", esOH?"Sí":"No", motivoOH, cOH||"", (cSpot+cOH)||"",
+      s.choferAsignado||"",
       s.noPresentacion?(s.vehiculoNP||""):"", s.noPresentacion?(s.motivoNP||""):"",
       s.noPresentacion?DESCUENTO_DIA:""];
   });
@@ -120,7 +180,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
   const headers=["N°","Fecha","Hora","Cliente","Destino","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","Total Cobros",
-    "Veh. NP","Motivo NP","Descuento NP"];
+    "Chofer","Veh. NP","Motivo NP","Descuento NP"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
@@ -158,6 +218,8 @@ function exportToExcel(solicitudes, nombreArchivo) {
   r2.push(["Total Pre Cierre","",granTotal]);
   r2.push([]);
   r2.push(["Total solicitudes período:",solicitudes.length]);
+  r2.push(["Base peso por entrega:","1.000 kg"]);
+  r2.push(["Nota CO₂:","Ver cálculo en Dashboard: Σkm × Σkg"]);
   r2.push(["Solicitudes SPOT Extra:",totalSpot]);
   r2.push(["Solicitudes Overnight:",totalOH]);
   const ws2=XLSX.utils.aoa_to_sheet(r2);
@@ -181,13 +243,17 @@ export default function QuantrexAbbott() {
   const [formError,setFormError]=useState("");
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
+  const [sesion,setSesion]=useState(null);
+  const [clientes,setClientes]=useState(CLIENTES_DEFAULT); // null = no logueado
   const [confirmCierre,setConfirmCierre]=useState(false);
+  const [perfilChofer,setPerfilChofer]=useState(null); // null = admin, chofer = objeto chofer
+  const [selChofer,setSelChofer]=useState("");
   const [periodo,setPeriodo]=useState(null);
   const [abrirPeriodo,setAbrirPeriodo]=useState(false); // Se activa automáticamente post-cierre
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo()]).then(([s,c,p])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes()]).then(([s,c,p,cl])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -240,7 +306,8 @@ export default function QuantrexAbbott() {
     if(!form.solicitante){setFormError("Debes seleccionar un solicitante.");return;}
     if(!form.canalSolicitud){setFormError("Debes seleccionar un canal de solicitud.");return;}
     setFormError(""); setSaving(true);
-    const nueva={...form,id:Date.now().toString(),status:"pendiente",
+    const autoTransito = form.ppuAsignada && form.usuarioDT ? "en_proceso" : "pendiente";
+    const nueva={...form,id:Date.now().toString(),status:autoTransito,
       createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     const upd=[nueva,...solicitudes]; setSolicitudes(upd); await saveSolicitudes(upd);
     setSaving(false); setForm({...EMPTY_FORM,
@@ -264,6 +331,16 @@ export default function QuantrexAbbott() {
   }
 
   async function handleEdit(updatedSol){
+    const sol = solicitudes.find(s=>s.id===updatedSol.id);
+    let newStatus = updatedSol.status;
+    // Auto En Tránsito si se asigna PPU y usuarioDT
+    if(updatedSol.ppuAsignada && updatedSol.usuarioDT && sol.status==="pendiente"){
+      newStatus = "en_proceso";
+      const now=new Date();
+      const fechaHora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
+      updatedSol = {...updatedSol, status:newStatus,
+        statusLog:[...(updatedSol.statusLog||[]),{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",fechaHora,canceladoPor:null}]};
+    }
     const upd=solicitudes.map(s=>s.id===updatedSol.id?{...updatedSol,updatedAt:new Date().toISOString()}:s);
     setSolicitudes(upd); await saveSolicitudes(upd); showToast("Solicitud actualizada.");
   }
@@ -271,6 +348,29 @@ export default function QuantrexAbbott() {
   async function handleEditLog(id,updatedLog){
     const upd=solicitudes.map(s=>s.id===id?{...s,statusLog:updatedLog,updatedAt:new Date().toISOString()}:s);
     setSolicitudes(upd); await saveSolicitudes(upd); showToast("Log actualizado.");
+  }
+
+  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null){
+    const now = new Date();
+    const fechaHora = now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
+    // Obtener geolocalización
+    let geoStr = "Sin geolocalización";
+    try {
+      const pos = await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{timeout:8000}));
+      geoStr = pos.coords.latitude.toFixed(6)+","+pos.coords.longitude.toFixed(6);
+    } catch {}
+    const statusLabel = nuevoEstado === "completada" ? "Entregado" : "No Entregado";
+    const upd = solicitudes.map(s => {
+      if(s.id !== id) return s;
+      const entry = {id:Date.now().toString(), de:STATUS_META[s.status]?.label||s.status,
+        a:statusLabel, fechaHora, canceladoPor:null, geo:geoStr};
+      return {...s, status:nuevoEstado, updatedAt:now.toISOString(),
+        statusLog:[...(s.statusLog||[]),entry], geoEntrega:geoStr, horaEntrega:fechaHora,
+        fotoEntrega:fotoBase64||null, horaLlegada:horaLlegada||null, tiempoEnPunto:tiempoEnPunto||null,
+        coordsEntrega:geoStr!=="Sin geolocalización"?geoStr:null};
+    });
+    setSolicitudes(upd); await saveSolicitudes(upd);
+    showToast(statusLabel+" registrado.");
   }
 
   async function handleDelete(id){
@@ -301,26 +401,33 @@ export default function QuantrexAbbott() {
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
         </div>
         <nav style={S.nav}>
-          {[["dashboard","Panel"],["lista","Solicitudes"],["cierres","Cierres"],["nueva","+ Nueva"]].map(([v,l])=>(
+          {[["dashboard","Panel"],["lista","Solicitudes"],...(sesion?.perfil==="admin"?[["cierres","Cierres"],["clientes","Clientes"]]:[]),["nueva","+ Nueva"]].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
               onClick={()=>setView(v)}>{l}</button>
           ))}
-          {solicitudes.length>0&&<button style={S.exportBtn} onClick={()=>exportToExcel(solicitudes,excelNombre)}>⬇ Excel</button>}
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:11,color:C.muted}}>{sesion?.nombre}</span>
+            <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>setSesion(null)}>Salir</button>
+          </div>
         </nav>
       </header>
       <main style={S.main}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
+        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
+        :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
+        :view==="chofer_login"?(<LoginChofer selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=CHOFERES.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
             setView={setView} setSelectedId={setSelectedId}
             confirmCierre={confirmCierre} setConfirmCierre={setConfirmCierre} onCerrarMes={handleCerrarMes}
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
-            onAbrirPeriodo={handleAbrirPeriodo}
+            onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion}
             onExport={()=>exportToExcel(solicitudes,excelNombre)}/>)
-        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView}/>)
+        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
-            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView}/>)
+            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion}/>)
+        :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
             onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
         :view==="cierre_detalle"&&cierreDetalle?(<CierreDetalle cierre={cierreDetalle} setView={setView}
@@ -414,7 +521,7 @@ function ResumenMes({solicitudes}){
   const contD={},contN={};let tSpot=0,tOH=0;
   solicitudes.forEach(s=>{
     const f=s.fecha||"sin-fecha",m=hm(s.hora);
-    const a830=m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
+    const a830=s.tipo==="carga_ol"&&m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
     if(esOH){tOH++;}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
   });
   const mSpot=tSpot*P_SPOT,mOH=tOH*P_OH,tMov=M1+M2;
@@ -456,13 +563,15 @@ function ResumenMes({solicitudes}){
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
-function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,onExport}){
+function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,onExport}){
+  const esAdmin=sesion?.perfil==="admin";
+  const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
   return(
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Dashboard</div>
-        {solicitudes.length>0&&<button style={S.exportBtn} onClick={onExport}>⬇ Excel</button>}
+        {solicitudes.length>0&&!esCliente&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
       </div>
       <div style={{...S.periodoBanner,borderColor:yaCerrado?C.muted:C.cyan}}>
         <div style={{flex:1}}>
@@ -470,17 +579,18 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           <div style={{fontWeight:800,fontSize:16,color:C.textPrimary}}>{nombrePeriodo}</div>
           <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>{fmt(inicio)} → {fmt(fin)} · {solicitudesPeriodo.length} solicitudes</div>
         </div>
-        {!yaCerrado?(!confirmCierre?
-          <button style={S.btnCierre} onClick={()=>setConfirmCierre(true)}>Cerrar Mes</button>:
-          <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
-            <div style={{fontSize:12,color:C.warning,fontWeight:600}}>¿Exportar y cerrar {nombrePeriodo}?</div>
-            <div style={{display:"flex",gap:8}}>
-              <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted,fontSize:12}} onClick={()=>setConfirmCierre(false)}>Cancelar</button>
-              <button style={{...S.statusBtn,background:C.cyan,color:"#fff",border:"none",fontSize:12}} onClick={onCerrarMes}>Confirmar</button>
+        {esAdmin&&(yaCerrado
+          ?<div style={{...S.badge,background:C.success+"22",color:C.success}}>Cerrado</div>
+          :!confirmCierre
+            ?<button style={S.btnCierre} onClick={()=>setConfirmCierre(true)}>Cerrar Mes</button>
+            :<div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
+              <div style={{fontSize:12,color:C.warning,fontWeight:600}}>¿Exportar y cerrar {nombrePeriodo}?</div>
+              <div style={{display:"flex",gap:8}}>
+                <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted,fontSize:12}} onClick={()=>setConfirmCierre(false)}>Cancelar</button>
+                <button style={{...S.statusBtn,background:C.cyan,color:"#fff",border:"none",fontSize:12}} onClick={onCerrarMes}>Confirmar</button>
+              </div>
             </div>
-          </div>):
-          <div style={{...S.badge,background:C.success+"22",color:C.success}}>Cerrado</div>
-        }
+        )}
       </div>
       {abrirPeriodo && (
         <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
@@ -506,8 +616,11 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           </div>
         ))}
       </div>
-      <ResumenMes solicitudes={solicitudesPeriodo}/>
-      <GraficoCobros solicitudes={solicitudesPeriodo}/>
+      {esAdmin&&<ResumenMes solicitudes={solicitudesPeriodo}/>}
+      {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
+      {esAdmin&&<ResumenKmDia solicitudes={solicitudes}/>}
+      {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo}/>}
+      {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap"}}><div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div><div style={{fontSize:12,color:C.textSecondary}}>✓ <strong style={{color:C.success}}>{solicitudesPeriodo.filter(s=>s.status==="completada").length}</strong> completadas</div><div style={{fontSize:12,color:C.textSecondary}}>🚚 <strong style={{color:C.info}}>{solicitudesPeriodo.filter(s=>s.status==="en_proceso").length}</strong> en tránsito</div></div>}
       <div style={S.sectionTitle}>Solicitudes recientes</div>
       {solicitudes.length===0?<EmptyState msg="Sin solicitudes aún." action={()=>setView("nueva")}/>
         :solicitudes.slice(0,3).map(s=><SolicitudRow key={s.id} sol={s} onSelect={id=>{setSelectedId(id);setView("detalle");}}/>)}
@@ -554,12 +667,13 @@ function CierreDetalle({cierre,setView,onExport}){
 }
 
 // ── Lista ──────────────────────────────────────────────────────────────────
-function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatus,filterQ,setFilterQ,onSelect,onExport,total}){
+function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatus,filterQ,setFilterQ,onSelect,onExport,total,sesion}){
+  const esCliente=sesion?.perfil==="cliente";
   return(
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Solicitudes Abbott</div>
-        {total>0&&<button style={S.exportBtn} onClick={onExport}>⬇ Excel</button>}
+        {total>0&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
       </div>
       <div style={S.filters}>
         <input style={S.searchInput} placeholder="Buscar por cliente o guía..." value={filterQ} onChange={e=>setFilterQ(e.target.value)}/>
@@ -599,7 +713,8 @@ function SolicitudRow({sol,onSelect}){
 }
 
 // ── Detalle ────────────────────────────────────────────────────────────────
-function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
+function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion}){
+  const esAdmin=sesion?.perfil==="admin";
   const tm=TYPE_META[sol.tipo]||{label:sol.tipo,icon:"·",color:"#6B8CAE"};
   const sm=STATUS_META[sol.status]||{label:sol.status,color:"#6B8CAE"};
   const [confirmDel,setConfirmDel]=useState(false);
@@ -609,7 +724,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
   const [editForm,setEditForm]=useState({...sol});
   const fe=k=>e=>{
     const upd={...editForm,[k]:e.target.value};
-    if(k==="titulo"){const s=CLIENTES_ABBOTT.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){upd.direccion=s.direccion;upd.notas=s.notas;}}
+    if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){upd.direccion=s.direccion;upd.notas=s.notas;}}
     setEditForm(upd);
   };
 
@@ -630,11 +745,36 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
           <label style={S.label}>Cliente *</label>
           <select style={S.input} value={editForm.titulo} onChange={fe("titulo")}>
             <option value="">-- Seleccionar cliente --</option>
-            {CLIENTES_ABBOTT.map((c,i)=>{const l=c.id?c.id+" - "+c.nombre:c.nombre;return <option key={i} value={l}>{l}</option>;})}
+            {clientes.flatMap((c,i)=>{
+              const label=c.id?c.id+" - "+c.nombre:c.nombre;
+              const base=[<option key={"c"+i} value={label}>{label}</option>];
+              const subs=(c.sucursales||[]).map((s,si)=>{
+                const sl=label+" — "+s.nombre;
+                return <option key={"s"+i+"-"+si} value={sl}>{"  ↳ "+s.nombre}</option>;
+              });
+              return [...base,...subs];
+            })}
           </select></div>
         {editForm.titulo==="000-2 - Dhl Atlantis"&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
-          <input style={S.input} value={editForm.destino||""} onChange={fe("destino")}/></div>}
+          <select style={S.input} value={editForm.destino||""} onChange={e=>{
+            const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
+            setEditForm(p=>({...p,destino:e.target.value,
+              direccion:sel?.direccion||p.direccion,
+              descripcion:sel?.nombre?`Despacho a ${sel.nombre}`:"",
+              notas:sel?.notas||p.notas}));
+          }}>
+            <option value="">-- Seleccionar destino --</option>
+            {clientes.flatMap((c,i)=>{
+              const label=c.id?c.id+" - "+c.nombre:c.nombre;
+              const base=[<option key={"c"+i} value={label}>{label}</option>];
+              const subs=(c.sucursales||[]).map((s,si)=>{
+                const sl=label+" — "+s.nombre;
+                return <option key={"s"+i+"-"+si} value={sl}>{"  ↳ "+s.nombre}</option>;
+              });
+              return [...base,...subs];
+            })}
+          </select></div>}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={editForm.fecha} onChange={fe("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
@@ -643,6 +783,11 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
           <input style={S.input} value={editForm.direccion} onChange={fe("direccion")}/></div>
         <div style={S.fGroup}><label style={S.label}>Contacto</label>
           <input style={S.input} value={editForm.contacto} onChange={fe("contacto")}/></div>
+        <div style={S.fGroup}><label style={S.label}>Chofer Asignado</label>
+          <select style={S.input} value={editForm.choferAsignado||""} onChange={fe("choferAsignado")}>
+            <option value="">-- Seleccionar --</option>
+            {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+          </select></div>
         <div style={S.fGroup}><label style={S.label}>N° Guía</label>
           <input style={S.input} value={editForm.guia} onChange={fe("guia")}/></div>
         <div style={S.fGroup}><label style={S.label}>Solicitante *</label>
@@ -711,13 +856,13 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
           <div style={{color:C.textSecondary,fontSize:13}}>{tm.label} · {sol.fecha}{sol.hora&&` · ${sol.hora}`}</div>
         </div>
         <div style={{...S.badge,background:sm.color+"22",color:sm.color}}>{sm.label}</div>
-        <button style={{...S.exportBtn,fontSize:12}} onClick={()=>setEditMode(true)}>✎ Editar</button>
+        {esAdmin||sesion?.perfil==="operador"?<button style={{...S.exportBtn,fontSize:12}} onClick={()=>setEditMode(true)}>✎ Editar</button>:null}
       </div>
       <div style={S.detailGrid}>
         {[["Dirección",sol.direccion],["Contacto",sol.contacto],["N° Guía",sol.guia],
           ["Prioridad",sol.prioridad==="urgente"?"🔴 Urgente":"🟡 Normal"],
           ["Solicitante",sol.solicitante],["Canal",sol.canalSolicitud],
-          ["Usuario DT",sol.usuarioDT],["PPU Asignada",sol.ppuAsignada]
+          ["Usuario DT",sol.usuarioDT],["PPU Asignada",sol.ppuAsignada],["Chofer",sol.choferAsignado]
         ].filter(([,v])=>v).map(([l,v])=>(
           <div key={l} style={S.detailField}><div style={S.fieldLabel}>{l}</div><div style={S.fieldValue}>{v}</div></div>
         ))}
@@ -730,6 +875,31 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
+      {sol.horaEntrega&&(
+        <div style={S.detailBlock}>
+          <div style={S.fieldLabel}>Registro de entrega</div>
+          {sol.horaLlegada&&<div style={{fontSize:12,color:C.muted,marginBottom:4}}>📍 Llegada al punto: {sol.horaLlegada}</div>}
+          <div style={S.fieldValue}>🕐 Entrega registrada: {sol.horaEntrega}</div>
+          {sol.tiempoEnPunto&&<div style={{marginTop:6,background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:8,padding:"6px 12px",display:"inline-flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:C.cyan,fontWeight:700}}>⏱ Tiempo en punto:</span><span style={{fontSize:14,fontWeight:900,color:C.cyan}}>{sol.tiempoEnPunto}</span></div>}
+          {sol.geoEntrega&&sol.geoEntrega!=="Sin geolocalización"?(
+            <>
+              <div style={{fontSize:12,color:C.muted,marginTop:4}}>📍 {sol.geoEntrega}</div>
+              <a href={"https://www.google.com/maps?q="+sol.geoEntrega} target="_blank" rel="noreferrer"
+                style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,background:C.cyan+"22",border:"1px solid "+C.cyan,color:C.cyan,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,textDecoration:"none"}}>
+                📍 Ver en Google Maps
+              </a>
+            </>
+          ):<div style={{fontSize:12,color:C.muted,marginTop:4}}>Sin geolocalización disponible</div>}
+          {sol.fotoEntrega&&(
+            <div style={{marginTop:12}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Foto del documento</div>
+              <img src={sol.fotoEntrega} alt="Documento entrega" style={{width:"100%",maxWidth:320,borderRadius:10,border:"1px solid "+C.border,cursor:"pointer"}}
+                onClick={()=>window.open(sol.fotoEntrega,"_blank")}/>
+              <div style={{fontSize:11,color:C.muted,marginTop:4}}>Toca la imagen para verla en tamaño completo</div>
+            </div>
+          )}
+        </div>
+      )}
       <div style={S.fieldLabel}>Cambiar estado</div>
       <div style={S.statusBtns}>
         {Object.entries(STATUS_META).map(([k,v])=>
@@ -754,8 +924,8 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
           </div>
         </div>
       )}
-      <LogEstados log={sol.statusLog||[]} solId={sol.id} onEditLog={onEditLog}/>
-      <div style={{marginTop:16}}>
+      <LogEstados log={sol.statusLog||[]} solId={sol.id} onEditLog={onEditLog} esAdmin={esAdmin}/>
+      {esAdmin&&<div style={{marginTop:16}}>
         {!confirmDel
           ?<button style={S.deleteBtn} onClick={()=>setConfirmDel(true)}>Eliminar solicitud</button>
           :<div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
@@ -764,13 +934,13 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView}){
             <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted}} onClick={()=>setConfirmDel(false)}>Cancelar</button>
           </div>
         }
-      </div>
+      </div>}
     </div>
   );
 }
 
 // ── LogEstados ─────────────────────────────────────────────────────────────
-function LogEstados({log,solId,onEditLog}){
+function LogEstados({log,solId,onEditLog,esAdmin=true}){
   const [editMode,setEditMode]=useState(false);
   const [editLog,setEditLog]=useState(log);
   const upd=(id,f,v)=>setEditLog(p=>p.map(e=>e.id===id?{...e,[f]:v}:e));
@@ -781,9 +951,9 @@ function LogEstados({log,solId,onEditLog}){
     <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div style={S.fieldLabel}>Log de estados</div>
-        <button style={{...S.exportBtn,fontSize:11,padding:"4px 10px"}} onClick={()=>{setEditMode(!editMode);setEditLog(log);}}>
+        {esAdmin&&<button style={{...S.exportBtn,fontSize:11,padding:"4px 10px"}} onClick={()=>{setEditMode(!editMode);setEditLog(log);}}>
           {editMode?"Cancelar":"✎ Editar log"}
-        </button>
+        </button>}
       </div>
       {log.length===0&&!editMode&&<div style={{fontSize:12,color:C.muted}}>Sin cambios registrados.</div>}
       {!editMode?log.map((e,i)=>(
@@ -824,11 +994,11 @@ function LogEstados({log,solId,onEditLog}){
 }
 
 // ── FormNueva ──────────────────────────────────────────────────────────────
-function FormNueva({form,setForm,onSave,saving,error,setView}){
+function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT}){
   const f=k=>e=>setForm(p=>{
     const u={...p,[k]:e.target.value};
     if(k==="tipo")u.prioridad=PRIORIDAD_DEFAULT[e.target.value]||"normal";
-    if(k==="titulo"){const s=CLIENTES_ABBOTT.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){u.direccion=s.direccion;u.notas=s.notas;u.destino="";}}
+    if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){u.direccion=s.direccion;u.notas=s.notas;u.destino="";}}
     return u;
   });
   return(
@@ -847,11 +1017,36 @@ function FormNueva({form,setForm,onSave,saving,error,setView}){
           <label style={S.label}>Cliente *</label>
           <select style={S.input} value={form.titulo} onChange={f("titulo")}>
             <option value="">-- Seleccionar cliente --</option>
-            {CLIENTES_ABBOTT.map((c,i)=>{const l=c.id?c.id+" - "+c.nombre:c.nombre;return <option key={i} value={l}>{l}</option>;})}
+            {clientes.flatMap((c,i)=>{
+              const label=c.id?c.id+" - "+c.nombre:c.nombre;
+              const base=[<option key={"c"+i} value={label}>{label}</option>];
+              const subs=(c.sucursales||[]).map((s,si)=>{
+                const sl=label+" — "+s.nombre;
+                return <option key={"s"+i+"-"+si} value={sl}>{"  ↳ "+s.nombre}</option>;
+              });
+              return [...base,...subs];
+            })}
           </select></div>
         {form.titulo==="000-2 - Dhl Atlantis"&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
-          <input style={S.input} placeholder="Ingresa el destino del despacho..." value={form.destino} onChange={f("destino")}/></div>}
+          <select style={S.input} value={form.destino} onChange={e=>{
+            const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
+            setForm(p=>({...p,destino:e.target.value,
+              direccion:sel?.direccion||p.direccion,
+              descripcion:sel?.nombre?`Despacho a ${sel.nombre}`:"",
+              notas:sel?.notas||p.notas}));
+          }}>
+            <option value="">-- Seleccionar destino --</option>
+            {clientes.flatMap((c,i)=>{
+              const label=c.id?c.id+" - "+c.nombre:c.nombre;
+              const base=[<option key={"c"+i} value={label}>{label}</option>];
+              const subs=(c.sucursales||[]).map((s,si)=>{
+                const sl=label+" — "+s.nombre;
+                return <option key={"s"+i+"-"+si} value={sl}>{"  ↳ "+s.nombre}</option>;
+              });
+              return [...base,...subs];
+            })}
+          </select></div>}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={form.fecha} onChange={f("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
@@ -885,6 +1080,11 @@ function FormNueva({form,setForm,onSave,saving,error,setView}){
             <option value="">-- Seleccionar --</option>
             {["KRYX27","PBGJ33","PZGH22","THVZ21","PJSF91","THFY22","Otro"].map(p=><option key={p} value={p}>{p}</option>)}
           </select></div>
+        <div style={S.fGroup}><label style={S.label}>Chofer Asignado</label>
+          <select style={S.input} value={form.choferAsignado} onChange={f("choferAsignado")}>
+            <option value="">-- Seleccionar --</option>
+            {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+          </select></div>
         <div style={S.fGroup}><label style={S.label}>N° Guía / Documento</label>
           <input style={S.input} placeholder="Ej: GD-20260526-001" value={form.guia} onChange={f("guia")}/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Descripción</label>
@@ -916,6 +1116,564 @@ function FormNueva({form,setForm,onSave,saving,error,setView}){
         <button style={S.btnSec} onClick={()=>setView("lista")}>Cancelar</button>
         <button style={S.btnPri} onClick={onSave} disabled={saving}>{saving?"Guardando…":"Crear solicitud"}</button>
       </div>
+    </div>
+  );
+}
+
+
+
+// ── Pantalla Login ─────────────────────────────────────────────────────────
+function PantallaLogin({onLogin}){
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [error,setError]=useState("");
+  const [modo,setModo]=useState("login"); // login | chofer
+
+  function handleLogin(){
+    const u=USUARIOS.find(u=>u.email===email&&u.password===password);
+    if(u){onLogin(u);}
+    else{setError("Email o contraseña incorrectos.");}
+  }
+
+  return(
+    <div style={{minHeight:"100vh",background:C.navy,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:16,padding:"32px 28px",width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:20}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontWeight:900,fontSize:22,letterSpacing:3,color:"#fff",fontStyle:"italic",marginBottom:4}}>QUANTREX</div>
+          <div style={{fontSize:11,color:C.cyan,letterSpacing:2,fontWeight:600}}>GESTIÓN LOGÍSTICA · Abbott</div>
+        </div>
+
+        {modo==="login"?(
+          <>
+            <div style={S.fGroup}>
+              <label style={S.label}>Email</label>
+              <input style={S.input} type="email" placeholder="usuario@quantrex.cl"
+                value={email} onChange={e=>setEmail(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+            </div>
+            <div style={S.fGroup}>
+              <label style={S.label}>Contraseña</label>
+              <input style={S.input} type="password" placeholder="••••••••"
+                value={password} onChange={e=>setPassword(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+            </div>
+            {error&&<div style={{color:C.danger,fontSize:13,fontWeight:600,textAlign:"center"}}>{error}</div>}
+            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15}} onClick={handleLogin}>
+              Ingresar
+            </button>
+            <button style={{background:"transparent",border:"none",color:C.cyan,cursor:"pointer",fontSize:13,fontWeight:600,textAlign:"center"}}
+              onClick={()=>setModo("chofer")}>
+              🚗 Soy chofer — acceder aquí
+            </button>
+          </>
+        ):(
+          <>
+            <div style={{textAlign:"center",fontSize:13,color:C.textSecondary}}>Selecciona tu nombre para ver tus entregas del día</div>
+            <div style={S.fGroup}>
+              <label style={S.label}>Chofer</label>
+              <select style={{...S.input,fontSize:15,padding:"12px"}} value={email} onChange={e=>setEmail(e.target.value)}>
+                <option value="">-- Selecciona tu nombre --</option>
+                {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+              </select>
+            </div>
+            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15,opacity:email?1:0.5}}
+              disabled={!email}
+              onClick={()=>{const c=CHOFERES.find(ch=>ch.nombre===email);if(c)onLogin({...c,perfil:"chofer",nombre:c.nombre});}}>
+              Ingresar como Chofer
+            </button>
+            <button style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:13,textAlign:"center"}}
+              onClick={()=>{setModo("login");setEmail("");}}>
+              ← Volver al login
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Admin Clientes ─────────────────────────────────────────────────────────
+function AdminClientes({clientes,onSave,setView}){
+  const [lista,setLista]=useState(clientes.map(c=>({...c,sucursales:c.sucursales||[]})));
+  const [editIdx,setEditIdx]=useState(null);
+  const [editData,setEditData]=useState(null);
+  const [hayambios,setHayCambios]=useState(false);
+  const [buscar,setBuscar]=useState("");
+  const [mostrarNuevo,setMostrarNuevo]=useState(false);
+  const [nuevoCliente,setNuevoCliente]=useState({id:"",nombre:"",direccion:"",notas:"",sucursales:[]});
+
+  const filtrados=lista.filter(c=>c.nombre.toLowerCase().includes(buscar.toLowerCase())||c.id.includes(buscar));
+
+  function iniciarEdit(idx){
+    setEditIdx(idx);
+    setEditData({...lista[idx],sucursales:[...(lista[idx].sucursales||[])]});
+  }
+
+  function guardarEdit(){
+    const nueva=[...lista];
+    nueva[editIdx]=editData;
+    setLista(nueva); setEditIdx(null); setEditData(null); setHayCambios(true);
+  }
+
+  function eliminarCliente(idx){
+    if(!window.confirm("¿Eliminar este cliente?"))return;
+    const nueva=lista.filter((_,i)=>i!==idx);
+    setLista(nueva); setHayCambios(true);
+  }
+
+  function agregarSucursal(){
+    setEditData(p=>({...p,sucursales:[...p.sucursales,{nombre:"",direccion:"",notas:""}]}));
+  }
+
+  function editarSucursal(i,k,v){
+    setEditData(p=>{const s=[...p.sucursales];s[i]={...s[i],[k]:v};return{...p,sucursales:s};});
+  }
+
+  function eliminarSucursal(i){
+    setEditData(p=>({...p,sucursales:p.sucursales.filter((_,j)=>j!==i)}));
+  }
+
+  function agregarNuevo(){
+    if(!nuevoCliente.nombre.trim()){alert("El nombre es obligatorio.");return;}
+    setLista(p=>[...p,{...nuevoCliente}]);
+    setNuevoCliente({id:"",nombre:"",direccion:"",notas:"",sucursales:[]});
+    setMostrarNuevo(false); setHayCambios(true);
+  }
+
+  async function handleGuardar(){
+    await onSave(lista);
+    setHayCambios(false);
+    alert("✓ Clientes guardados correctamente.");
+  }
+
+  return(
+    <div style={S.section}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={S.pageTitle}>Administrar Clientes</div>
+        <div style={{display:"flex",gap:8}}>
+          {hayambios&&<button style={{...S.btnPri,fontSize:13}} onClick={handleGuardar}>💾 Guardar cambios</button>}
+          <button style={{...S.exportBtn,fontSize:13}} onClick={()=>setMostrarNuevo(true)}>+ Nuevo cliente</button>
+        </div>
+      </div>
+
+      {hayambios&&<div style={{background:"#3A2000",border:"1px solid "+C.warning,borderRadius:8,padding:"10px 14px",fontSize:12,color:C.warning,fontWeight:600}}>
+        ⚠ Tienes cambios sin guardar. Haz clic en "Guardar cambios" para aplicarlos.
+      </div>}
+
+      <input style={S.searchInput} placeholder="Buscar cliente por nombre o ID..." value={buscar} onChange={e=>setBuscar(e.target.value)}/>
+
+      {mostrarNuevo&&(
+        <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
+          <div style={{fontWeight:700,color:C.cyan,marginBottom:12,fontSize:13}}>Nuevo cliente</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div style={S.fGroup}><label style={S.label}>ID (RUT)</label>
+              <input style={S.input} value={nuevoCliente.id} onChange={e=>setNuevoCliente(p=>({...p,id:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Nombre *</label>
+              <input style={S.input} value={nuevoCliente.nombre} onChange={e=>setNuevoCliente(p=>({...p,nombre:e.target.value}))}/></div>
+            <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Dirección</label>
+              <input style={S.input} value={nuevoCliente.direccion} onChange={e=>setNuevoCliente(p=>({...p,direccion:e.target.value}))}/></div>
+            <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas</label>
+              <input style={S.input} value={nuevoCliente.notas} onChange={e=>setNuevoCliente(p=>({...p,notas:e.target.value}))}/></div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:12,justifyContent:"flex-end"}}>
+            <button style={S.btnSec} onClick={()=>setMostrarNuevo(false)}>Cancelar</button>
+            <button style={S.btnPri} onClick={agregarNuevo}>Agregar</button>
+          </div>
+        </div>
+      )}
+
+      {filtrados.map((c,i)=>{
+        const idxReal=lista.indexOf(c);
+        const enEdicion=editIdx===idxReal;
+        return(
+          <div key={i} style={{background:C.navySurface,border:"1px solid "+(enEdicion?C.cyan:C.border),borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
+            {!enEdicion?(
+              <>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14}}>{c.id&&<span style={{color:C.muted,marginRight:6}}>{c.id}</span>}{c.nombre}</div>
+                    {c.direccion&&<div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>📍 {c.direccion}</div>}
+                    {c.notas&&<div style={{fontSize:12,color:C.muted,marginTop:1}}>💬 {c.notas}</div>}
+                    {c.sucursales?.length>0&&<div style={{fontSize:11,color:C.cyan,marginTop:2}}>🏢 {c.sucursales.length} sucursal(es)</div>}
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button style={{...S.exportBtn,fontSize:11}} onClick={()=>iniciarEdit(idxReal)}>✎ Editar</button>
+                    <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>eliminarCliente(idxReal)}>✕</button>
+                  </div>
+                </div>
+              </>
+            ):(
+              <>
+                <div style={{fontWeight:700,color:C.cyan,fontSize:13}}>Editando: {c.nombre}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <div style={S.fGroup}><label style={S.label}>ID (RUT)</label>
+                    <input style={S.input} value={editData.id} onChange={e=>setEditData(p=>({...p,id:e.target.value}))}/></div>
+                  <div style={S.fGroup}><label style={S.label}>Nombre *</label>
+                    <input style={S.input} value={editData.nombre} onChange={e=>setEditData(p=>({...p,nombre:e.target.value}))}/></div>
+                  <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Dirección principal</label>
+                    <input style={S.input} value={editData.direccion} onChange={e=>setEditData(p=>({...p,direccion:e.target.value}))}/></div>
+                  <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas</label>
+                    <input style={S.input} value={editData.notas} onChange={e=>setEditData(p=>({...p,notas:e.target.value}))}/></div>
+                </div>
+                <div style={{borderTop:"1px solid "+C.border,paddingTop:10}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase"}}>Sucursales</div>
+                    <button style={{...S.exportBtn,fontSize:11}} onClick={agregarSucursal}>+ Agregar sucursal</button>
+                  </div>
+                  {editData.sucursales.map((s,si)=>(
+                    <div key={si} style={{background:C.navy,borderRadius:8,padding:"10px",marginBottom:8,display:"flex",flexDirection:"column",gap:6}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                        <div style={S.fGroup}><label style={S.label}>Nombre sucursal</label>
+                          <input style={S.input} placeholder="Ej: Bodega Norte, Piso 7..." value={s.nombre} onChange={e=>editarSucursal(si,"nombre",e.target.value)}/></div>
+                        <div style={S.fGroup}><label style={S.label}>Dirección</label>
+                          <input style={S.input} value={s.direccion} onChange={e=>editarSucursal(si,"direccion",e.target.value)}/></div>
+                        <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas</label>
+                          <input style={S.input} value={s.notas} onChange={e=>editarSucursal(si,"notas",e.target.value)}/></div>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"flex-end"}}>
+                        <button style={{...S.statusBtn,border:"1px solid "+C.danger,color:C.danger,fontSize:11}} onClick={()=>eliminarSucursal(si)}>Eliminar sucursal</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button style={S.btnSec} onClick={()=>{setEditIdx(null);setEditData(null);}}>Cancelar</button>
+                  <button style={S.btnPri} onClick={guardarEdit}>Guardar cliente</button>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Login Chofer ───────────────────────────────────────────────────────────
+function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver}){
+  return(
+    <div style={{...S.section,maxWidth:400,margin:"40px auto"}}>
+      <button style={S.backBtn} onClick={onVolver}>← Volver</button>
+      <div style={{textAlign:"center",marginBottom:8}}>
+        <div style={{fontSize:32,marginBottom:8}}>🚗</div>
+        <div style={S.pageTitle}>Acceso Choferes</div>
+        <div style={{fontSize:13,color:C.textSecondary,marginTop:4}}>Selecciona tu nombre para ver tus entregas del día</div>
+      </div>
+      <div style={S.fGroup}>
+        <label style={S.label}>Seleccionar chofer</label>
+        <select style={{...S.input,fontSize:15,padding:"12px"}} value={selChofer} onChange={e=>setSelChofer(e.target.value)}>
+          <option value="">-- Selecciona tu nombre --</option>
+          {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+        </select>
+      </div>
+      <button style={{...S.btnPri,width:"100%",padding:"14px",fontSize:15,opacity:selChofer?1:0.5}}
+        disabled={!selChofer} onClick={onAcceder}>Ingresar</button>
+    </div>
+  );
+}
+
+// ── Vista Chofer ───────────────────────────────────────────────────────────
+function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
+  const hoy = new Date().toISOString().split("T")[0];
+  const misSols = solicitudes.filter(s =>
+    (s.ppuAsignada === chofer.ppu || s.choferAsignado === chofer.nombre) &&
+    s.fecha === hoy &&
+    ["en_proceso","pendiente"].includes(s.status)
+  );
+  const [cargando,setCargando]=useState(null);
+  const [fotos,setFotos]=useState({});
+  const [llegadas,setLlegadas]=useState({}); // {solId: {hora, timestamp, geo}}
+  const [tiempos,setTiempos]=useState({}); // {solId: segundosTranscurridos}
+  const timerRef=useRef({});
+
+  useEffect(()=>{
+    return ()=>{ Object.values(timerRef.current).forEach(t=>clearInterval(t)); };
+  },[]);
+
+  function registrarLlegada(solId){
+    const now=new Date();
+    const hora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
+    navigator.geolocation.getCurrentPosition(
+      pos=>{
+        const geo=pos.coords.latitude.toFixed(6)+","+pos.coords.longitude.toFixed(6);
+        setLlegadas(p=>({...p,[solId]:{hora,timestamp:now.getTime(),geo}}));
+      },
+      ()=>{setLlegadas(p=>({...p,[solId]:{hora,timestamp:now.getTime(),geo:null}}));},
+      {timeout:5000}
+    );
+    // Iniciar cronómetro
+    timerRef.current[solId]=setInterval(()=>{
+      setTiempos(p=>({...p,[solId]:Math.floor((Date.now()-now.getTime())/1000)}));
+    },1000);
+  }
+
+  function formatTiempo(seg){
+    if(!seg&&seg!==0)return null;
+    const h=Math.floor(seg/3600),m=Math.floor((seg%3600)/60),s=seg%60;
+    if(h>0)return h+"h "+m+"m "+s+"s";
+    if(m>0)return m+"m "+s+"s";
+    return s+"s";
+  }
+
+  function capturarFoto(solId){
+    const input=document.createElement("input");
+    input.type="file"; input.accept="image/*"; input.capture="environment";
+    input.onchange=e=>{
+      const file=e.target.files[0];
+      if(!file)return;
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        // Comprimir imagen antes de guardar
+        const img=new Image();
+        img.onload=()=>{
+          const canvas=document.createElement("canvas");
+          const MAX=800;
+          let w=img.width,h=img.height;
+          if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+          if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
+          canvas.width=w; canvas.height=h;
+          canvas.getContext("2d").drawImage(img,0,0,w,h);
+          const b64=canvas.toDataURL("image/jpeg",0.7);
+          setFotos(p=>({...p,[solId]:b64}));
+        };
+        img.src=ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  }
+
+  async function cerrar(id, estado){
+    setCargando(id+estado);
+    // Calcular tiempo en punto
+    const llegada=llegadas[id];
+    const tiempoEnPunto=llegada?Math.floor((Date.now()-llegada.timestamp)/1000):null;
+    const tiempoStr=tiempoEnPunto!==null?formatTiempo(tiempoEnPunto):null;
+    // Detener cronómetro
+    if(timerRef.current[id]){clearInterval(timerRef.current[id]);delete timerRef.current[id];}
+    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr);
+    setFotos(p=>{const n={...p};delete n[id];return n;});
+    setLlegadas(p=>{const n={...p};delete n[id];return n;});
+    setTiempos(p=>{const n={...p};delete n[id];return n;});
+    setCargando(null);
+  }
+
+  return(
+    <div style={S.section}>
+      <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div>
+          <div style={{fontSize:11,color:C.cyan,fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>Perfil Chofer</div>
+          <div style={{fontSize:18,fontWeight:800,color:C.textPrimary,marginTop:2}}>{chofer.nombre}</div>
+          <div style={{fontSize:13,color:C.textSecondary}}>PPU: {chofer.ppu} · {chofer.usuarioDT}</div>
+        </div>
+        <button style={{...S.btnSec,fontSize:12}} onClick={onSalir}>Salir</button>
+      </div>
+
+      <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1.5,textTransform:"uppercase"}}>
+        Entregas de hoy — {new Date().toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long"})}
+      </div>
+
+      {misSols.length===0?(
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"40px 0",color:C.muted}}>
+          <div style={{fontSize:36}}>✓</div>
+          <p style={{margin:0,fontWeight:600}}>Sin entregas pendientes para hoy</p>
+        </div>
+      ):misSols.map(s=>{
+        const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:"#6B8CAE"};
+        return(
+          <div key={s.id} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px",display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color,flexShrink:0}}>{tm.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14}}>{s.titulo}</div>
+                <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>{tm.label}</div>
+              </div>
+            </div>
+            {s.direccion&&<div style={{background:C.navy,borderRadius:8,padding:"10px 12px",fontSize:13,color:C.textSecondary}}>
+              📍 {s.direccion}
+              {s.notas&&<div style={{color:C.muted,fontSize:12,marginTop:4}}>💬 {s.notas}</div>}
+            </div>}
+            {/* Llegada al punto */}
+            {!llegadas[s.id]?(
+              <button style={{background:C.cyan+"22",border:"1px solid "+C.cyan,color:C.cyan,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}
+                onClick={()=>registrarLlegada(s.id)}>
+                📍 Llegué al punto de entrega
+              </button>
+            ):(
+              <div style={{background:C.navy,border:"1px solid "+C.cyan,borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontSize:11,color:C.cyan,fontWeight:700}}>EN PUNTO DE ENTREGA</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:2}}>Llegada: {llegadas[s.id].hora}</div>
+                </div>
+                <div style={{fontSize:22,fontWeight:900,color:C.cyan,fontFamily:"monospace"}}>
+                  {formatTiempo(tiempos[s.id]||0)}
+                </div>
+              </div>
+            )}
+            {/* Captura de foto */}
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button style={{background:C.navySurface,border:"1px solid "+C.border,color:C.textSecondary,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}
+                onClick={()=>capturarFoto(s.id)}>
+                📷 {fotos[s.id]?"Foto tomada ✓":"Tomar foto"}
+              </button>
+              {fotos[s.id]&&<img src={fotos[s.id]} alt="preview" style={{width:48,height:48,borderRadius:8,objectFit:"cover",border:"2px solid "+C.success}}/>}
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button style={{flex:1,background:C.success+"22",border:"1px solid "+C.success,color:C.success,borderRadius:10,padding:"12px",fontWeight:800,fontSize:14,cursor:"pointer",opacity:cargando?0.6:1}}
+                disabled={!!cargando} onClick={()=>cerrar(s.id,"completada")}>
+                {cargando===s.id+"completada"?"Registrando...":"✓ Completada"}
+              </button>
+              <button style={{flex:1,background:"#F9731622",border:"1px solid #F97316",color:"#F97316",borderRadius:10,padding:"12px",fontWeight:800,fontSize:14,cursor:"pointer",opacity:cargando?0.6:1}}
+                disabled={!!cargando} onClick={()=>cerrar(s.id,"no_entregado")}>
+                {cargando===s.id+"no_entregado"?"Registrando...":"✗ No Entregado"}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+// ── Resumen KM del día ────────────────────────────────────────────────────
+function ResumenKmDia({ solicitudes }) {
+  const [kmData, setKmData] = useState(null);
+  const [calculando, setCalculando] = useState(false);
+
+  const hoy = new Date().toISOString().split("T")[0];
+  const solsHoy = solicitudes.filter(s =>
+    s.fecha === hoy && s.coordsEntrega && s.status === "completada"
+  );
+
+  async function calcularKmRuta() {
+    if (solsHoy.length < 2) return;
+    setCalculando(true);
+    let totalKm = 0;
+    const tramos = [];
+    for (let i = 0; i < solsHoy.length - 1; i++) {
+      const origen = solsHoy[i].coordsEntrega;
+      const destino = solsHoy[i+1].coordsEntrega;
+      const result = await calcularDistanciaKm(origen, destino);
+      if (result) {
+        totalKm += parseFloat(result.distancia);
+        tramos.push({
+          de: solsHoy[i].titulo,
+          a: solsHoy[i+1].titulo,
+          km: result.distancia,
+          duracion: result.duracion,
+        });
+      }
+    }
+    setKmData({ totalKm: totalKm.toFixed(1), tramos });
+    setCalculando(false);
+  }
+
+  if (solsHoy.length < 2) return null;
+
+  return (
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Kilómetros del día</div>
+        {!kmData&&<button style={{...S.exportBtn,fontSize:11}} disabled={calculando} onClick={calcularKmRuta}>
+          {calculando?"Calculando...":"🗺 Calcular ruta"}
+        </button>}
+      </div>
+      {kmData?(
+        <>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{background:C.navy,borderRadius:10,padding:"12px 16px",border:"1px solid "+C.cyan+"44",flex:1}}>
+              <div style={{fontSize:11,color:C.muted}}>Total recorrido</div>
+              <div style={{fontSize:28,fontWeight:900,color:C.cyan}}>{kmData.totalKm} km</div>
+            </div>
+            <div style={{background:C.navy,borderRadius:10,padding:"12px 16px",border:"1px solid "+C.border,flex:1}}>
+              <div style={{fontSize:11,color:C.muted}}>Entregas completadas</div>
+              <div style={{fontSize:28,fontWeight:900,color:C.success}}>{solsHoy.length}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {kmData.tramos.map((t,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.textSecondary}}>
+                <span style={{color:C.cyan}}>→</span>
+                <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.de} → {t.a}</span>
+                <span style={{color:C.textPrimary,fontWeight:700,flexShrink:0}}>{t.km} km</span>
+                <span style={{color:C.muted,flexShrink:0}}>({t.duracion})</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ):(
+        <div style={{fontSize:12,color:C.muted}}>{solsHoy.length} entregas completadas hoy con GPS registrado. Presiona para calcular la ruta total.</div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Resumen CO2 mensual ────────────────────────────────────────────────────
+function ResumenCO2({ solicitudes }) {
+  const [co2Data, setCo2Data] = useState(null);
+  const [calculando, setCalculando] = useState(false);
+
+  const solsConDireccion = solicitudes.filter(s =>
+    s.status === "completada" && s.direccion
+  );
+
+  async function calcularCO2() {
+    if (solsConDireccion.length === 0) return;
+    setCalculando(true);
+    let totalKm = 0;
+    const detalles = [];
+    for (const s of solsConDireccion) {
+      const km = await calcularKmDesdePudahuel(s.direccion);
+      if (km !== null) {
+        totalKm += km;
+        detalles.push({ titulo: s.titulo, direccion: s.direccion, km });
+      }
+    }
+    const totalKg = solsConDireccion.length * PESO_BASE_KG;
+    const co2 = (totalKm * totalKg).toFixed(0);
+    setCo2Data({ totalKm: totalKm.toFixed(1), totalKg, co2, detalles, nSols: solsConDireccion.length });
+    setCalculando(false);
+  }
+
+  if (solsConDireccion.length === 0) return null;
+
+  return (
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Medición CO₂ — Prefactura</div>
+        {!co2Data&&<button style={{...S.exportBtn,fontSize:11}} disabled={calculando} onClick={calcularCO2}>
+          {calculando?"Calculando...":"🌿 Calcular CO₂"}
+        </button>}
+      </div>
+      {co2Data?(
+        <>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+            <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
+              <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KM</div>
+              <div style={{fontSize:20,fontWeight:900,color:C.cyan}}>{co2Data.totalKm} km</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>desde Pudahuel</div>
+            </div>
+            <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
+              <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KG</div>
+              <div style={{fontSize:20,fontWeight:900,color:C.warning}}>{co2Data.totalKg.toLocaleString("es-CL")} kg</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{co2Data.nSols} entregas × 1.000 kg</div>
+            </div>
+            <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.success+"44"}}>
+              <div style={{fontSize:10,color:C.success,fontWeight:700,marginBottom:4}}>CO₂ PERÍODO</div>
+              <div style={{fontSize:20,fontWeight:900,color:C.success}}>{parseInt(co2Data.co2).toLocaleString("es-CL")}</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>km × kg</div>
+            </div>
+          </div>
+          <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>
+            Fórmula: Σ km (Pudahuel → destino) × Σ kg transportados (base 1.000 kg/entrega)
+          </div>
+        </>
+      ):(
+        <div style={{fontSize:12,color:C.muted}}>{solsConDireccion.length} entregas completadas. Presiona para calcular el CO₂ del período.</div>
+      )}
     </div>
   );
 }
