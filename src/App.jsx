@@ -470,11 +470,23 @@ function exportToExcel(solicitudes, nombreArchivo) {
   const totalKmExcel = rows.reduce((acc,r)=>acc+(parseFloat(r[22])||0),0).toFixed(1);
   const totalKgExcel = solicitudes.length * PESO_BASE_KG;
   const totalCO2Excel = (parseFloat(totalKmExcel)*totalKgExcel).toFixed(0);
+  // Calcular tkm y CO2 estimado para el resumen
+  const tkmAbbot = parseFloat(totalKmExcel) > 0 ? (parseFloat(totalKmExcel) * parseFloat(totalKgExcel)).toFixed(0) : "Pendiente cálculo";
+  const co2Estimado = parseFloat(totalKmExcel) > 0 ? (parseFloat(totalKmExcel) * parseFloat(totalKgExcel) / 1000 * 0.15).toFixed(1) : "Pendiente cálculo";
+
+  r2.push([]);
+  r2.push(["── MEDICIÓN CO₂ ──────────────────────────────"]);
   r2.push(["Total solicitudes período:",solicitudes.length]);
   r2.push(["Base peso por entrega:","1.000 kg"]);
   r2.push(["Total KG transportados:",totalKgExcel.toLocaleString("es-CL")+" kg"]);
   r2.push(["Total km recorridos (período):",parseFloat(totalKmExcel)>0?totalKmExcel+" km":"Pendiente cálculo"]);
-  r2.push(["CO₂ período (km × kg):",parseFloat(totalCO2Excel)>0?totalCO2Excel:"Pendiente cálculo km"]);
+  r2.push([]);
+  r2.push(["Índice TKM (Abbott) — km × kg:", tkmAbbot]);
+  r2.push(["  Fórmula:","Σ km (Pudahuel → destino) × Σ kg transportados"]);
+  r2.push([]);
+  r2.push(["CO₂ Estimado (Estándar Mercado):", co2Estimado+" kg CO₂"]);
+  r2.push(["  Fórmula:","TKM ÷ 1.000 × 0,15 kg CO₂/tkm (estándar GLEC/ISO 14083)"]);
+  r2.push(["  Factor emisión:","0,15 kg CO₂ por tonelada-kilómetro (camión reparto urbano)"]);
   r2.push(["Solicitudes SPOT Extra:",totalSpot]);
   r2.push(["Solicitudes Overnight:",totalOH]);
   const ws2=XLSX.utils.aoa_to_sheet(r2);
