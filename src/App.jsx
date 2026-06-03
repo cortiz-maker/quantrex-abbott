@@ -465,6 +465,10 @@ function exportToExcel(solicitudes, nombreArchivo) {
     const kmSol = s.kmDesdePudahuel||"";
     // CO2 individual = km × 1000kg
     const co2Sol = kmSol ? (parseFloat(kmSol) * PESO_BASE_KG).toFixed(0) : "";
+    // SPOT Regional — recargo por destino fuera de la RM (según dirección)
+    const regionSol = detectarRegion(s.direccion || s.destino || "");
+    const cSpotRegional = regionSol ? (regionSol.valor || 0) : 0;
+    const esSpotRegional = cSpotRegional > 0;
     return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
@@ -478,24 +482,25 @@ function exportToExcel(solicitudes, nombreArchivo) {
       s.noPresentacion?DESCUENTO_DIA:""];
   });
 
-  const totalSpot=rows.filter(r=>r[14]==="Sí").length;
-  const totalOH=rows.filter(r=>r[16]==="Sí").length;
-  const totalCobro=totalSpot*PRECIO_SPOT+totalOH*PRECIO_OVERNIGHT;
+  const totalSpot=rows.filter(r=>r[15]==="Sí").length;
+  const totalOH=rows.filter(r=>r[17]==="Sí").length;
+  const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[21])||0),0);
+  const cantSpotRegional=rows.filter(r=>(Number(r[21])||0)>0).length;
+  const totalCobro=totalSpot*PRECIO_SPOT+totalOH*PRECIO_OVERNIGHT+totalSpotRegional;
   const totalNP=solicitudes.filter(s=>s.noPresentacion).length;
   const totalDescNP=totalNP*DESCUENTO_DIA;
   const granTotal=totalCobro+COBRO_M1+COBRO_M2-totalDescNP;
 
   const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
-    "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","Total Cobros",
-    "Chofer","Veh. NP","Motivo NP","Descuento NP"];
+    "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
+    "Total Cobros","Chofer","Tiempo en Punto","Km","CO₂ (kg)","Veh. NP","Motivo NP","Descuento NP"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
   ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:28},{wch:13},{wch:10},
-    {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},
-    {wch:10},{wch:22},{wch:12},{wch:14},{wch:13},{wch:14},{wch:18},{wch:14},
-    {wch:13},{wch:25},{wch:14}];
+    {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
+    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:10},{wch:12},{wch:14},{wch:25},{wch:14}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
 
   const periodoNombre=nombreArchivo.replace("Quantrex_Abbott_","").replace(".xlsx","").replace("_"," ");
@@ -514,6 +519,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
     ["Concepto","Cantidad","Monto"],
     ["Pedido SPOT Extra",totalSpot,totalSpot*PRECIO_SPOT],
     ["Servicio Overnight / Fuera Horario",totalOH,totalOH*PRECIO_OVERNIGHT],
+    ["SPOT Regional (fuera RM)",cantSpotRegional,totalSpotRegional],
     ["SUBTOTAL VARIABLE","",totalCobro],
     [],
   ];
@@ -526,7 +532,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
   }
   r2.push(["Total Pre Cierre","",granTotal]);
   r2.push([]);
-  const totalKmExcel = rows.reduce((acc,r)=>acc+(parseFloat(r[22])||0),0).toFixed(1);
+  const totalKmExcel = rows.reduce((acc,r)=>acc+(parseFloat(r[25])||0),0).toFixed(1);
   const totalKgExcel = solicitudes.length * PESO_BASE_KG;
   const totalCO2Excel = (parseFloat(totalKmExcel)*totalKgExcel).toFixed(0);
   // Calcular tkm y CO2 estimado para el resumen
@@ -2958,4 +2964,3 @@ if(typeof document!=="undefined"){
   s.textContent=`@keyframes spin{to{transform:rotate(360deg)}} @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800;900&display=swap'); *{box-sizing:border-box} ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:#0D1F3C} ::-webkit-scrollbar-thumb{background:#1E3A6E;border-radius:3px}`;
   document.head.appendChild(s);
 }
-
