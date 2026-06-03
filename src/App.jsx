@@ -660,7 +660,7 @@ export default function QuantrexAbbott() {
   return (
     <div style={S.root}>
       {toast&&<div style={{...S.toast,background:toast.type==="danger"?C.danger:toast.type==="warning"?C.warning:C.success}}>{toast.msg}</div>}
-      <header style={S.header}>
+      {sesion&&<header style={S.header}>
         <div style={S.logoWrap}>
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
         </div>
@@ -674,7 +674,7 @@ export default function QuantrexAbbott() {
             <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{localStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
           </div>
         </nav>
-      </header>
+      </header>}
       <main style={S.main}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
         :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
@@ -688,7 +688,7 @@ export default function QuantrexAbbott() {
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
             onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion}
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
-        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes}/>)
+        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
@@ -1290,7 +1290,7 @@ function LogEstados({log,solId,onEditLog,esAdmin=true}){
 }
 
 // ── FormNueva ──────────────────────────────────────────────────────────────
-function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[]}){
+function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[],rutas=[]}){
   const f=k=>e=>setForm(p=>{
     const u={...p,[k]:e.target.value};
     if(k==="tipo")u.prioridad=PRIORIDAD_DEFAULT[e.target.value]||"normal";
@@ -1390,6 +1390,11 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           <select style={S.input} value={form.choferAsignado} onChange={f("choferAsignado")}>
             <option value="">-- Seleccionar --</option>
             {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+          </select></div>
+        <div style={S.fGroup}><label style={S.label}>Asignar a Ruta</label>
+          <select style={S.input} value={form.rutaId} onChange={f("rutaId")}>
+            <option value="">-- Sin ruta --</option>
+            {rutas.map(r=><option key={r.id} value={r.id}>{r.id} · {r.fecha} · {r.vehiculo}</option>)}
           </select></div>
         <div style={S.fGroup}><label style={S.label}>OT Quantrex</label>
           <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={form.ot||"Se genera automáticamente"} readOnly/></div>
@@ -1522,8 +1527,8 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
   }
 
   async function crearRuta(){
-    if(!formRuta.nombre.trim())return;
-    const r={id:generarIdRuta(),nombre:formRuta.nombre,fecha:formRuta.fecha,
+    const idRuta=generarIdRuta();
+    const r={id:idRuta,nombre:idRuta,fecha:formRuta.fecha,
       vehiculo:formRuta.vehiculo,paradas:[],kmTotal:null,createdAt:new Date().toISOString()};
     const upd=[r,...rutas];
     setRutas(upd); await onSaveRuta(r);
@@ -1623,10 +1628,8 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
 
       {nuevaRuta&&(
         <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
-          <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>Nueva Ruta</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-            <div style={S.fGroup}><label style={S.label}>Nombre</label>
-              <input style={S.input} placeholder="Ej: Ruta Oriente AM" value={formRuta.nombre} onChange={e=>setFormRuta(p=>({...p,nombre:e.target.value}))}/></div>
+          <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>Nueva Ruta — {generarIdRuta()}</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div style={S.fGroup}><label style={S.label}>Fecha</label>
               <input style={S.input} type="date" value={formRuta.fecha} onChange={e=>setFormRuta(p=>({...p,fecha:e.target.value}))}/></div>
             <div style={S.fGroup}><label style={S.label}>Vehículo</label>
