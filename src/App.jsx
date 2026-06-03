@@ -1603,14 +1603,38 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
     if(!ruta||ruta.paradas.length===0)return;
     setKmCalculando(rutaId);
     const paradaSols=ruta.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean);
+    
     let total=0;
     let origen=ORIGEN_PUDAHUEL;
+    let primera=true;
+
     for(const s of paradaSols){
       if(!s.direccion)continue;
-      const km=await calcularKmDesdePudahuel(s.direccion);
-      if(km){total+=parseFloat(km);}
+      
+      if(primera){
+        primera=false;
+        if(s.tipo==="carga_ol"){
+          // Carga OL: siempre es punto de salida desde Pudahuel, nunca destino
+          origen=ORIGEN_PUDAHUEL;
+          continue;
+        } else if(s.tipo==="li_retiro"){
+          // LI Retiro como primera parada: es el origen de la ruta
+          origen=s.direccion+", Chile";
+          continue;
+        }
+        // LI Devolución, Entrega/Despacho: siempre cuentan como destino
+      }
+      
+      // Calcular distancia desde el origen actual hasta este destino
+      const destCoords=await geocodificar(s.direccion);
+      const origenCoords=await geocodificar(origen);
+      if(destCoords&&origenCoords){
+        const km=haversineKm(origenCoords.lat,origenCoords.lon,destCoords.lat,destCoords.lon);
+        total+=parseFloat(km);
+      }
       origen=s.direccion+", Chile";
     }
+    
     const upd=rutas.map(r=>r.id===rutaId?{...r,kmTotal:total.toFixed(1)}:r);
     setRutas(upd);
     await onSaveRuta(upd.find(r=>r.id===rutaId));
