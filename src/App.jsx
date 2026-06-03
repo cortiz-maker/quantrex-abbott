@@ -566,8 +566,6 @@ export default function QuantrexAbbott() {
   }
 
   // Definir paleta según perfil y pantalla
-  const esChofer = sesion?.perfil === "chofer";
-  // tema aplicado via ThemeCtx
 
   const periodoBase = periodo || (() => {
     const {inicio,fin}=getPeriodoActual();
@@ -712,7 +710,7 @@ export default function QuantrexAbbott() {
   return (
     <div style={S.root}>
       {toast&&<div style={{...S.toast,background:toast.type==="danger"?C.danger:toast.type==="warning"?C.warning:C.success}}>{toast.msg}</div>}
-      {sesion&&<header style={{...S.header,...(esEscritorio?{padding:"0 40px",maxWidth:"100%"}:{})}}>
+      {sesion&&<header style={S.header}>
         {sesion?.perfil==="admin"&&<button style={{background:"transparent",border:"none",color:C.cyan,fontSize:22,cursor:"pointer",padding:"4px 8px",flexShrink:0}} onClick={()=>setSidebarOpen(p=>!p)}>≡</button>}
         <div style={S.logoWrap}>
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
@@ -752,7 +750,7 @@ export default function QuantrexAbbott() {
         </div>
       )}
       {sesion?.perfil==="admin"&&sidebarOpen&&<div style={{position:"fixed",inset:0,background:"#0006",zIndex:199}} onClick={()=>setSidebarOpen(false)}/>}
-      <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
+      <main style={S.main}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
         :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}registrarAcceso(u.email);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
