@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 
-const C = {
+let C = {
   navy:"#0D1F3C", navyMid:"#112347", navySurface:"#152A56", border:"#1E3A6E",
   cyan:"#00AEEF", cyanDim:"#0090C5", blue:"#1B3FA0",
   textPrimary:"#F0F6FF", textSecondary:"#8BAFD4", muted:"#4A6FA5",
@@ -567,7 +567,7 @@ export default function QuantrexAbbott() {
 
   // Definir paleta según perfil y pantalla
   const esChofer = sesion?.perfil === "chofer";
-  C = (esEscritorio && !esChofer) ? C_LIGHT : C_DARK;
+  C = (esEscritorio && !esChofer) ? C_LIGHT_THEME : C;
 
   const periodoBase = periodo || (() => {
     const {inicio,fin}=getPeriodoActual();
