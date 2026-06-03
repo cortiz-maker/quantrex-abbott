@@ -343,6 +343,37 @@ async function saveClientes(data) {
     await sbFetch("POST","clientes",{id:"lista",data:data},"?on_conflict=id");
   } catch(e) { console.error(e); }
 }
+function registrarAcceso(email) {
+  try {
+    const key = "qx:acceso:" + email;
+    localStorage.setItem(key, new Date().toISOString());
+  } catch {}
+}
+function getUltimoAcceso(email) {
+  try {
+    const v = localStorage.getItem("qx:acceso:" + email);
+    return v ? new Date(v) : null;
+  } catch { return null; }
+}
+function diasSinAcceso(email) {
+  const ua = getUltimoAcceso(email);
+  if (!ua) return null;
+  return Math.floor((new Date() - ua) / (1000 * 60 * 60 * 24));
+}
+function debeCambiarPassword(usuario) {
+  if (usuario.perfil === "admin") return false;
+  const hoy = new Date();
+  // Primer día del mes
+  if (hoy.getDate() !== 1) return false;
+  const key = "qx:pwchange:" + usuario.email;
+  const ultimo = localStorage.getItem(key);
+  if (!ultimo) return true;
+  const ultimaFecha = new Date(ultimo);
+  return ultimaFecha.getMonth() !== hoy.getMonth() || ultimaFecha.getFullYear() !== hoy.getFullYear();
+}
+function marcarPasswordCambiado(email) {
+  try { localStorage.setItem("qx:pwchange:" + email, new Date().toISOString()); } catch {}
+}
 async function loadRutas() {
   try {
     const data = await sbFetch("GET","rutas","","?order=created_at.desc");
@@ -511,6 +542,10 @@ export default function QuantrexAbbott() {
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
   const [rutas,setRutas]=useState([]);
+  const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [usuarios,setUsuarios]=useState(()=>{
+    try{const u=localStorage.getItem("qx:usuarios");return u?JSON.parse(u):USUARIOS;}catch{return USUARIOS;}
+  });
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
   });
@@ -529,6 +564,10 @@ export default function QuantrexAbbott() {
     setToast({msg,type}); clearTimeout(toastRef.current);
     toastRef.current=setTimeout(()=>setToast(null),3500);
   }
+
+  // Definir paleta según perfil y pantalla
+  const esChofer = sesion?.perfil === "chofer";
+  C = (esEscritorio && !esChofer) ? C_LIGHT : C_DARK;
 
   const periodoBase = periodo || (() => {
     const {inicio,fin}=getPeriodoActual();
@@ -673,12 +712,13 @@ export default function QuantrexAbbott() {
   return (
     <div style={S.root}>
       {toast&&<div style={{...S.toast,background:toast.type==="danger"?C.danger:toast.type==="warning"?C.warning:C.success}}>{toast.msg}</div>}
-      {sesion&&<header style={S.header}>
+      {sesion&&<header style={{...S.header,...(esEscritorio?{padding:"0 40px",maxWidth:"100%"}:{})}}>
+        {sesion?.perfil==="admin"&&<button style={{background:"transparent",border:"none",color:C.cyan,fontSize:22,cursor:"pointer",padding:"4px 8px",flexShrink:0}} onClick={()=>setSidebarOpen(p=>!p)}>≡</button>}
         <div style={S.logoWrap}>
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
         </div>
         <nav style={S.nav}>
-          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(sesion?.perfil==="admin"?[["cierres","Cierres"],["clientes","Clientes"]]:[]),...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
+          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
               onClick={()=>setView(v)}>{l}</button>
           ))}
@@ -688,9 +728,33 @@ export default function QuantrexAbbott() {
           </div>
         </nav>
       </header>}
-      <main style={S.main}>
+      {sesion?.perfil==="admin"&&sidebarOpen&&(
+        <div style={{position:"fixed",top:0,left:0,bottom:0,width:260,background:C.navySurface,borderRight:"1px solid "+C.border,zIndex:200,display:"flex",flexDirection:"column",boxShadow:"4px 0 20px #0006"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:"1px solid "+C.border}}>
+            <div style={{fontSize:13,fontWeight:800,color:C.cyan,letterSpacing:1}}>ADMINISTRACIÓN</div>
+            <button style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}} onClick={()=>setSidebarOpen(false)}>✕</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:4,padding:"12px 12px",flex:1,overflowY:"auto"}}>
+            {[
+              {id:"usuarios",label:"👥 Gestión de Usuarios"},
+              {id:"clientes",label:"🏥 Clientes Abbott"},
+              {id:"cierres",label:"📁 Cierres de Período"},
+            ].map(item=>(
+              <button key={item.id} style={{background:view===item.id?C.cyan+"22":"transparent",border:"1px solid "+(view===item.id?C.cyan:C.border),color:view===item.id?C.cyan:C.textSecondary,borderRadius:8,padding:"10px 14px",textAlign:"left",cursor:"pointer",fontSize:13,fontWeight:600}}
+                onClick={()=>{setView(item.id);setSidebarOpen(false);}}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div style={{padding:"12px 20px",borderTop:"1px solid "+C.border,fontSize:11,color:C.muted}}>
+            Quantrex · Panel Admin
+          </div>
+        </div>
+      )}
+      {sesion?.perfil==="admin"&&sidebarOpen&&<div style={{position:"fixed",inset:0,background:"#0006",zIndex:199}} onClick={()=>setSidebarOpen(false)}/>}
+      <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
-        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
+        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}registrarAcceso(u.email);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=CHOFERES.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
@@ -704,6 +768,7 @@ export default function QuantrexAbbott() {
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes}/>)
+        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={CHOFERES} onSave={(u,c)=>{setUsuarios(u);try{localStorage.setItem("qx:usuarios",JSON.stringify(u));}catch{};}} setView={setView}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
@@ -1453,11 +1518,19 @@ function PantallaLogin({onLogin}){
   const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [error,setError]=useState("");
-  const [modo,setModo]=useState("login"); // login | chofer
+  const [modo,setModo]=useState("login");
+  const [cambioRequerido,setCambioRequerido]=useState(null);
+  const [nuevaPassword,setNuevaPassword]=useState("");
 
   function handleLogin(){
     const u=USUARIOS.find(u=>u.email===email&&u.password===password);
-    if(u){onLogin(u);}
+    if(u){
+      if(debeCambiarPassword(u)){
+        setCambioRequerido(u);
+      } else {
+        onLogin(u);
+      }
+    }
     else{setError("Email o contraseña incorrectos.");}
   }
 
@@ -1469,7 +1542,28 @@ function PantallaLogin({onLogin}){
           <div style={{fontSize:11,color:C.cyan,letterSpacing:2,fontWeight:600}}>GESTIÓN LOGÍSTICA · Abbott</div>
         </div>
 
-        {modo==="login"?(
+        {cambioRequerido?(
+          <>
+            <div style={{textAlign:"center",marginBottom:8}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.warning}}>⚠ Cambio de contraseña requerido</div>
+              <div style={{fontSize:12,color:C.muted,marginTop:4}}>Es el primer día del mes. Por seguridad debes actualizar tu contraseña.</div>
+            </div>
+            <div style={S.fGroup}>
+              <label style={S.label}>Nueva contraseña</label>
+              <input style={S.input} type="password" placeholder="Nueva contraseña" value={nuevaPassword} onChange={e=>setNuevaPassword(e.target.value)}/>
+            </div>
+            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15,opacity:nuevaPassword.length>=6?1:0.5}}
+              disabled={nuevaPassword.length<6}
+              onClick={()=>{
+                const u={...cambioRequerido,password:nuevaPassword};
+                marcarPasswordCambiado(u.email);
+                onLogin(u);
+              }}>
+              Actualizar y continuar
+            </button>
+            <div style={{fontSize:11,color:C.muted,textAlign:"center"}}>Mínimo 6 caracteres</div>
+          </>
+        ):modo==="login"?(
           <>
             <div style={S.fGroup}>
               <label style={S.label}>Email</label>
@@ -1771,6 +1865,196 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
           </div>
         );
       })}
+    </div>
+  );
+}
+
+
+// ── Admin Usuarios ─────────────────────────────────────────────────────────
+function AdminUsuarios({usuarios,choferes,onSave,setView}){
+  const [listaU,setListaU]=useState(usuarios.filter(u=>u.perfil!=="admin"));
+  const [listaC,setListaC]=useState(choferes);
+  const [tab,setTab]=useState("operadores");
+  const [editU,setEditU]=useState(null);
+  const [editC,setEditC]=useState(null);
+  const [formU,setFormU]=useState({email:"",password:"",nombre:"",perfil:"operador"});
+  const [formC,setFormC]=useState({nombre:"",ppu:"",usuarioDT:"Quantrex M1"});
+  const [nuevoU,setNuevoU]=useState(false);
+  const [nuevoC,setNuevoC]=useState(false);
+
+  function guardarOperador(){
+    if(!formU.email||!formU.password||!formU.nombre)return;
+    const upd=editU!==null
+      ?listaU.map((u,i)=>i===editU?{...formU}:u)
+      :[...listaU,{...formU}];
+    setListaU(upd);
+    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Chile"}];
+    onSave(todosUsuarios);
+    setEditU(null);setNuevoU(false);setFormU({email:"",password:"",nombre:"",perfil:"operador"});
+  }
+
+  function eliminarOperador(i){
+    if(!window.confirm("¿Eliminar este usuario?"))return;
+    const upd=listaU.filter((_,j)=>j!==i);
+    setListaU(upd);
+    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Chile"}];
+    onSave(todosUsuarios);
+  }
+
+  return(
+    <div style={S.section}>
+      <div style={S.pageTitle}>Gestión de Usuarios</div>
+      <div style={{display:"flex",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+        {[["operadores","👤 Operadores"],["clientes_acc","🏢 Clientes"],["choferes","🚗 Choferes"]].map(([id,label])=>(
+          <button key={id} style={{...S.statusBtn,background:tab===id?C.cyan+"33":"transparent",border:"1px solid "+(tab===id?C.cyan:C.border),color:tab===id?C.cyan:C.muted,fontWeight:700,fontSize:13}}
+            onClick={()=>setTab(id)}>{label}</button>
+        ))}
+      </div>
+
+      {tab==="operadores"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <button style={S.btnPri} onClick={()=>{setNuevoU(true);setEditU(null);setFormU({email:"",password:"",nombre:"",perfil:"operador"});}}>+ Nuevo operador</button>
+          </div>
+          {(nuevoU||editU!==null)&&(
+            <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
+              <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>{editU!==null?"Editar operador":"Nuevo operador"}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div style={S.fGroup}><label style={S.label}>Nombre</label>
+                  <input style={S.input} value={formU.nombre} onChange={e=>setFormU(p=>({...p,nombre:e.target.value}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Email</label>
+                  <input style={S.input} type="email" value={formU.email} onChange={e=>setFormU(p=>({...p,email:e.target.value}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Contraseña</label>
+                  <input style={S.input} type="text" value={formU.password} onChange={e=>setFormU(p=>({...p,password:e.target.value}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Perfil</label>
+                  <select style={S.input} value={formU.perfil} onChange={e=>setFormU(p=>({...p,perfil:e.target.value}))}>
+                    <option value="operador">Operador</option>
+                    <option value="cliente">Cliente (solo lectura)</option>
+                  </select></div>
+              </div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+                <button style={S.btnSec} onClick={()=>{setNuevoU(false);setEditU(null);}}>Cancelar</button>
+                <button style={S.btnPri} onClick={guardarOperador}>Guardar</button>
+              </div>
+            </div>
+          )}
+          {listaU.map((u,i)=>(
+            <div key={i} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13}}>{u.nombre}</div>
+                <div style={{fontSize:12,color:C.muted}}>{u.email} · <span style={{color:C.cyan}}>{u.perfil}</span></div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{setEditU(i);setNuevoU(false);setFormU({...u});}}>✎ Editar</button>
+                <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>eliminarOperador(i)}>✕</button>
+              </div>
+            </div>
+          ))}
+          {listaU.length===0&&!nuevoU&&<EmptyState msg="No hay operadores registrados."/>}
+        </div>
+      )}
+
+      {tab==="clientes_acc"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <button style={S.btnPri} onClick={()=>{setNuevoU(true);setEditU(null);setFormU({email:"",password:"",nombre:"",perfil:"cliente"});}}>+ Nuevo cliente</button>
+          </div>
+          {(nuevoU&&formU.perfil==="cliente"||editU!==null&&listaU[editU]?.perfil==="cliente")&&(
+            <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
+              <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>{editU!==null?"Editar cliente":"Nuevo cliente"}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div style={S.fGroup}><label style={S.label}>Nombre / Empresa</label>
+                  <input style={S.input} value={formU.nombre} onChange={e=>setFormU(p=>({...p,nombre:e.target.value}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Email</label>
+                  <input style={S.input} type="email" value={formU.email} onChange={e=>setFormU(p=>({...p,email:e.target.value}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Contraseña</label>
+                  <input style={S.input} type="text" value={formU.password} onChange={e=>setFormU(p=>({...p,password:e.target.value}))}/></div>
+              </div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+                <button style={S.btnSec} onClick={()=>{setNuevoU(false);setEditU(null);}}>Cancelar</button>
+                <button style={S.btnPri} onClick={()=>{setFormU(p=>({...p,perfil:"cliente"}));guardarOperador();}}>Guardar</button>
+              </div>
+            </div>
+          )}
+          {usuarios.filter(u=>u.perfil==="cliente").map((u,i)=>{
+            const dias=diasSinAcceso(u.email);
+            const cambio=debeCambiarPassword(u);
+            return(
+              <div key={i} style={{background:C.navySurface,border:"1px solid "+(cambio?C.warning:C.border),borderRadius:10,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:13}}>{u.nombre}</div>
+                    <div style={{fontSize:12,color:C.muted}}>{u.email}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{
+                      const idx=listaU.findIndex(lu=>lu.email===u.email);
+                      if(idx>=0){setEditU(idx);setNuevoU(false);setFormU({...u});}
+                      else{setNuevoU(true);setEditU(null);setFormU({...u});}
+                      setTab("clientes_acc");
+                    }}>✎ Editar</button>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  <div style={{background:dias===null?"#333":dias>7?C.danger+"22":C.success+"22",border:"1px solid "+(dias===null?"#555":dias>7?C.danger:C.success),borderRadius:6,padding:"4px 10px",fontSize:11,color:dias===null?C.muted:dias>7?C.danger:C.success,fontWeight:700}}>
+                    {dias===null?"Sin accesos registrados":dias===0?"Accedió hoy":dias===1?"Hace 1 día":dias+" días sin acceder"}
+                  </div>
+                  {cambio&&<div style={{background:C.warning+"22",border:"1px solid "+C.warning,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.warning,fontWeight:700}}>
+                    ⚠ Debe cambiar contraseña este mes
+                  </div>}
+                </div>
+              </div>
+            );
+          })}
+          {usuarios.filter(u=>u.perfil==="cliente").length===0&&!nuevoU&&<EmptyState msg="No hay clientes registrados."/>}
+        </div>
+      )}
+
+      {tab==="choferes"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <button style={S.btnPri} onClick={()=>{setNuevoC(true);setEditC(null);setFormC({nombre:"",ppu:"",usuarioDT:"Quantrex M1"});}}>+ Nuevo chofer</button>
+          </div>
+          {(nuevoC||editC!==null)&&(
+            <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
+              <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>{editC!==null?"Editar chofer":"Nuevo chofer"}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                <div style={S.fGroup}><label style={S.label}>Nombre</label>
+                  <input style={S.input} value={formC.nombre} onChange={e=>setFormC(p=>({...p,nombre:e.target.value}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>PPU</label>
+                  <input style={S.input} placeholder="Ej: KRYX27" value={formC.ppu} onChange={e=>setFormC(p=>({...p,ppu:e.target.value.toUpperCase()}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Usuario DT</label>
+                  <select style={S.input} value={formC.usuarioDT} onChange={e=>setFormC(p=>({...p,usuarioDT:e.target.value}))}>
+                    <option>Quantrex M1</option>
+                    <option>Quantrex M2</option>
+                  </select></div>
+              </div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+                <button style={S.btnSec} onClick={()=>{setNuevoC(false);setEditC(null);}}>Cancelar</button>
+                <button style={S.btnPri} onClick={()=>{
+                  if(!formC.nombre||!formC.ppu)return;
+                  const upd=editC!==null?listaC.map((c,i)=>i===editC?{...formC}:c):[...listaC,{...formC}];
+                  setListaC(upd);setNuevoC(false);setEditC(null);
+                  try{localStorage.setItem("qx:choferes",JSON.stringify(upd));}catch{}
+                }}>Guardar</button>
+              </div>
+            </div>
+          )}
+          {listaC.map((c,i)=>(
+            <div key={i} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13}}>{c.nombre}</div>
+                <div style={{fontSize:12,color:C.muted}}>PPU: {c.ppu} · {c.usuarioDT}</div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{setEditC(i);setNuevoC(false);setFormC({...c});}}>✎ Editar</button>
+                <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{const upd=listaC.filter((_,j)=>j!==i);setListaC(upd);try{localStorage.setItem("qx:choferes",JSON.stringify(upd));}catch{};}}>✕</button>
+              </div>
+            </div>
+          ))}
+          {listaC.length===0&&!nuevoC&&<EmptyState msg="No hay choferes registrados."/>}
+        </div>
+      )}
     </div>
   );
 }
