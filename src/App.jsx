@@ -342,6 +342,35 @@ async function saveClientes(data) {
     await sbFetch("POST","clientes",{id:"lista",data:data},"?on_conflict=id");
   } catch(e) { console.error(e); }
 }
+async function loadRutas() {
+  try {
+    const data = await sbFetch("GET","rutas","","?order=created_at.desc");
+    if(!data) return [];
+    return data.map(r=>({
+      id:r.id, nombre:r.nombre, fecha:r.fecha, vehiculo:r.vehiculo,
+      paradas:r.paradas||[], kmTotal:r.km_total||null,
+      createdAt:r.created_at,
+    }));
+  } catch(e) { return []; }
+}
+async function saveRuta(r) {
+  try {
+    const row = {
+      id:r.id, nombre:r.nombre, fecha:r.fecha, vehiculo:r.vehiculo||null,
+      paradas:r.paradas||[], km_total:r.kmTotal||null,
+      updated_at:new Date().toISOString(),
+    };
+    await sbFetch("POST","rutas",row,"?on_conflict=id");
+  } catch(e) { console.error(e); }
+}
+async function deleteRuta(id) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/rutas?id=eq.${id}`, {
+      method:"DELETE",
+      headers:{"apikey":SUPABASE_KEY,"Authorization":`Bearer ${SUPABASE_KEY}`},
+    });
+  } catch(e) { console.error(e); }
+}
 
 // ── Excel ─────────────────────────────────────────────────────────────────
 function exportToExcel(solicitudes, nombreArchivo) {
@@ -363,7 +392,10 @@ function exportToExcel(solicitudes, nombreArchivo) {
     const antes830=s.tipo==="carga_ol"&&mins!==null&&mins<8*60+30;
     const logTarde=logSuperaLas17(s.statusLog);
     const esOH=antes830||logTarde;
-    contD[fecha]=(contD[fecha]||0)+1; const nro=contD[fecha];
+    // Carga OL fuera de horario no cuenta para el límite diario de 6
+    if(!esOH) contD[fecha]=(contD[fecha]||0)+1;
+    else if(!(contD[fecha])) contD[fecha]=contD[fecha]||0;
+    const nro=contD[fecha];
     let esSpot=false;
     if(!esOH){contN[fecha]=(contN[fecha]||0)+1; esSpot=contN[fecha]>6;}
     const cSpot=esSpot?PRECIO_SPOT:0, cOH=esOH?PRECIO_OVERNIGHT:0;
@@ -465,6 +497,7 @@ export default function QuantrexAbbott() {
   const [formError,setFormError]=useState("");
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
+  const [rutas,setRutas]=useState([]);
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
   });
@@ -477,7 +510,7 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes()]).then(([s,c,p,cl])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas()]).then(([s,c,p,cl,r])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -659,6 +692,7 @@ export default function QuantrexAbbott() {
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
+        :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
             onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
         :view==="cierre_detalle"&&cierreDetalle?(<CierreDetalle cierre={cierreDetalle} setView={setView}
@@ -863,7 +897,6 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&<ResumenMes solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<ResumenKmDia solicitudes={solicitudes}/>}
-      {esAdmin&&<ResumenRutasDia solicitudes={solicitudes}/>}
       {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo}/>}
       {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap"}}><div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div><div style={{fontSize:12,color:C.textSecondary}}>✓ <strong style={{color:C.success}}>{solicitudesPeriodo.filter(s=>s.status==="completada").length}</strong> completadas</div><div style={{fontSize:12,color:C.textSecondary}}>🚚 <strong style={{color:C.info}}>{solicitudesPeriodo.filter(s=>s.status==="en_proceso").length}</strong> en tránsito</div></div>}
       <div style={S.sectionTitle}>Solicitudes recientes</div>
@@ -1467,6 +1500,235 @@ function PantallaLogin({onLogin}){
   );
 }
 
+
+
+// ── Gestión de Rutas ───────────────────────────────────────────────────────
+const VEHICULOS = [
+  {id:"M1", label:"M1 · Felipe Hernandez", ppu:"KRYX27"},
+  {id:"M2", label:"M2 · Italo Loiza", ppu:"PBGJ33"},
+  {id:"M3", label:"M3 · Cristian Donoso", ppu:"PZGH22"},
+];
+
+function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDeleteRuta,onSaveSolicitud,setView}){
+  const hoy=new Date().toISOString().split("T")[0];
+  const [nuevaRuta,setNuevaRuta]=useState(false);
+  const [formRuta,setFormRuta]=useState({nombre:"",fecha:hoy,vehiculo:"M1"});
+  const [rutaDetalle,setRutaDetalle]=useState(null);
+  const [agregandoParada,setAgregandoParada]=useState(false);
+  const [kmCalculando,setKmCalculando]=useState(false);
+
+  function generarIdRuta(){
+    return "RUTA-"+(rutas.length+1).toString().padStart(3,"0");
+  }
+
+  async function crearRuta(){
+    if(!formRuta.nombre.trim())return;
+    const r={id:generarIdRuta(),nombre:formRuta.nombre,fecha:formRuta.fecha,
+      vehiculo:formRuta.vehiculo,paradas:[],kmTotal:null,createdAt:new Date().toISOString()};
+    const upd=[r,...rutas];
+    setRutas(upd); await onSaveRuta(r);
+    setNuevaRuta(false); setFormRuta({nombre:"",fecha:hoy,vehiculo:"M1"});
+    setRutaDetalle(r.id);
+  }
+
+  async function eliminarRuta(id){
+    if(!window.confirm("¿Eliminar esta ruta?"))return;
+    setRutas(rutas.filter(r=>r.id!==id));
+    await onDeleteRuta(id);
+    if(rutaDetalle===id)setRutaDetalle(null);
+  }
+
+  async function agregarParada(rutaId, solId, orden){
+    const upd=rutas.map(r=>{
+      if(r.id!==rutaId)return r;
+      const paradas=[...r.paradas.filter(p=>p.solId!==solId),{solId,orden:r.paradas.length+1}]
+        .sort((a,b)=>a.orden-b.orden);
+      return {...r,paradas};
+    });
+    setRutas(upd);
+    const ruta=upd.find(r=>r.id===rutaId);
+    if(ruta) await onSaveRuta(ruta);
+    // Actualizar solicitud con ID de ruta
+    const sol=solicitudes.find(s=>s.id===solId);
+    if(sol){
+      const solUpd={...sol,rutaId};
+      setSolicitudes(solicitudes.map(s=>s.id===solId?solUpd:s));
+      await onSaveSolicitud(solUpd);
+    }
+  }
+
+  async function quitarParada(rutaId, solId){
+    const upd=rutas.map(r=>{
+      if(r.id!==rutaId)return r;
+      return {...r,paradas:r.paradas.filter(p=>p.solId!==solId)};
+    });
+    setRutas(upd);
+    const ruta=upd.find(r=>r.id===rutaId);
+    if(ruta) await onSaveRuta(ruta);
+    const sol=solicitudes.find(s=>s.id===solId);
+    if(sol){
+      const solUpd={...sol,rutaId:null};
+      setSolicitudes(solicitudes.map(s=>s.id===solId?solUpd:s));
+      await onSaveSolicitud(solUpd);
+    }
+  }
+
+  async function moverParada(rutaId, solId, dir){
+    const ruta=rutas.find(r=>r.id===rutaId);
+    if(!ruta)return;
+    const idx=ruta.paradas.findIndex(p=>p.solId===solId);
+    if((dir===-1&&idx===0)||(dir===1&&idx===ruta.paradas.length-1))return;
+    const paradas=[...ruta.paradas];
+    [paradas[idx],paradas[idx+dir]]=[paradas[idx+dir],paradas[idx]];
+    paradas.forEach((p,i)=>p.orden=i+1);
+    const upd=rutas.map(r=>r.id===rutaId?{...r,paradas}:r);
+    setRutas(upd);
+    await onSaveRuta(upd.find(r=>r.id===rutaId));
+  }
+
+  async function cambiarVehiculo(rutaId, vehiculo){
+    const upd=rutas.map(r=>r.id===rutaId?{...r,vehiculo}:r);
+    setRutas(upd);
+    await onSaveRuta(upd.find(r=>r.id===rutaId));
+  }
+
+  async function calcularKmRuta(rutaId){
+    const ruta=rutas.find(r=>r.id===rutaId);
+    if(!ruta||ruta.paradas.length===0)return;
+    setKmCalculando(rutaId);
+    const paradaSols=ruta.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean);
+    let total=0;
+    let origen=ORIGEN_PUDAHUEL;
+    for(const s of paradaSols){
+      if(!s.direccion)continue;
+      const km=await calcularKmDesdePudahuel(s.direccion);
+      if(km){total+=parseFloat(km);}
+      origen=s.direccion+", Chile";
+    }
+    const upd=rutas.map(r=>r.id===rutaId?{...r,kmTotal:total.toFixed(1)}:r);
+    setRutas(upd);
+    await onSaveRuta(upd.find(r=>r.id===rutaId));
+    setKmCalculando(null);
+  }
+
+  const rutaActiva=rutaDetalle?rutas.find(r=>r.id===rutaDetalle):null;
+  const solsDisponibles=solicitudes.filter(s=>!s.rutaId||s.rutaId===rutaDetalle);
+
+  return(
+    <div style={S.section}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={S.pageTitle}>Gestión de Rutas</div>
+        <button style={S.btnPri} onClick={()=>setNuevaRuta(true)}>+ Nueva Ruta</button>
+      </div>
+
+      {nuevaRuta&&(
+        <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
+          <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>Nueva Ruta</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+            <div style={S.fGroup}><label style={S.label}>Nombre</label>
+              <input style={S.input} placeholder="Ej: Ruta Oriente AM" value={formRuta.nombre} onChange={e=>setFormRuta(p=>({...p,nombre:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Fecha</label>
+              <input style={S.input} type="date" value={formRuta.fecha} onChange={e=>setFormRuta(p=>({...p,fecha:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Vehículo</label>
+              <select style={S.input} value={formRuta.vehiculo} onChange={e=>setFormRuta(p=>({...p,vehiculo:e.target.value}))}>
+                {VEHICULOS.map(v=><option key={v.id} value={v.id}>{v.label}</option>)}
+              </select></div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <button style={S.btnSec} onClick={()=>setNuevaRuta(false)}>Cancelar</button>
+            <button style={S.btnPri} onClick={crearRuta}>Crear Ruta</button>
+          </div>
+        </div>
+      )}
+
+      {/* Lista de rutas */}
+      {rutas.length===0&&!nuevaRuta&&<EmptyState msg="No hay rutas creadas aún."/>}
+      {rutas.map(r=>{
+        const veh=VEHICULOS.find(v=>v.id===r.vehiculo);
+        const isOpen=rutaDetalle===r.id;
+        const paradaSols=r.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean);
+        return(
+          <div key={r.id} style={{background:C.navySurface,border:"1px solid "+(isOpen?C.cyan:C.border),borderRadius:12,overflow:"hidden"}}>
+            {/* Header ruta */}
+            <div style={{padding:"14px 16px",display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>setRutaDetalle(isOpen?null:r.id)}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:800,fontSize:14}}>{r.id}</span>
+                  <span style={{fontSize:13,color:C.textSecondary}}>{r.nombre}</span>
+                  <span style={{fontSize:11,background:C.cyan+"22",color:C.cyan,padding:"2px 8px",borderRadius:6,fontWeight:700}}>{veh?.label||r.vehiculo}</span>
+                </div>
+                <div style={{fontSize:12,color:C.muted,marginTop:2}}>{r.fecha} · {r.paradas.length} parada(s){r.kmTotal?` · ${r.kmTotal} km`:""}</div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button style={{...S.exportBtn,fontSize:11}} onClick={e=>{e.stopPropagation();eliminarRuta(r.id);}}>✕</button>
+                <span style={{color:C.muted,fontSize:16}}>{isOpen?"▲":"▼"}</span>
+              </div>
+            </div>
+
+            {/* Detalle ruta */}
+            {isOpen&&(
+              <div style={{borderTop:"1px solid "+C.border,padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
+                {/* Cambiar vehículo */}
+                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                  <label style={{...S.label,marginBottom:0}}>Vehículo:</label>
+                  {VEHICULOS.map(v=>(
+                    <button key={v.id} style={{...S.statusBtn,background:r.vehiculo===v.id?C.cyan+"33":"transparent",border:"1px solid "+(r.vehiculo===v.id?C.cyan:C.border),color:r.vehiculo===v.id?C.cyan:C.muted,fontSize:12}}
+                      onClick={()=>cambiarVehiculo(r.id,v.id)}>{v.label}</button>
+                  ))}
+                </div>
+
+                {/* Paradas */}
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Paradas en orden</div>
+                  {paradaSols.length===0&&<div style={{fontSize:12,color:C.muted}}>Sin paradas. Agrega solicitudes abajo.</div>}
+                  {paradaSols.map((s,i)=>{
+                    const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:"#6B8CAE"};
+                    return(
+                      <div key={s.id} style={{background:C.navy,borderRadius:8,padding:"10px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{fontSize:18,fontWeight:900,color:C.cyan,minWidth:24}}>{i+1}</span>
+                        <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color,width:28,height:28,fontSize:14,flexShrink:0}}>{tm.icon}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.titulo}</div>
+                          <div style={{fontSize:11,color:C.muted}}>{s.direccion||"Sin dirección"}</div>
+                        </div>
+                        <div style={{display:"flex",gap:4,flexShrink:0}}>
+                          <button style={{...S.statusBtn,fontSize:12,padding:"4px 8px"}} onClick={()=>moverParada(r.id,s.id,-1)} disabled={i===0}>↑</button>
+                          <button style={{...S.statusBtn,fontSize:12,padding:"4px 8px"}} onClick={()=>moverParada(r.id,s.id,1)} disabled={i===paradaSols.length-1}>↓</button>
+                          <button style={{...S.statusBtn,fontSize:11,padding:"4px 8px",border:"1px solid "+C.danger,color:C.danger}} onClick={()=>quitarParada(r.id,s.id)}>✕</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Agregar parada */}
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Agregar solicitud a la ruta</div>
+                  <select style={S.input} value="" onChange={e=>{if(e.target.value)agregarParada(r.id,e.target.value);}}>
+                    <option value="">-- Seleccionar solicitud --</option>
+                    {solicitudes.filter(s=>(!s.rutaId||s.rutaId===r.id)&&!r.paradas.find(p=>p.solId===s.id)).map(s=>(
+                      <option key={s.id} value={s.id}>{s.ot||s.id} · {s.titulo} · {s.fecha}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Calcular km */}
+                {paradaSols.length>0&&(
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <button style={{...S.exportBtn,fontSize:12}} disabled={kmCalculando===r.id} onClick={()=>calcularKmRuta(r.id)}>
+                      {kmCalculando===r.id?"Calculando...":"🗺 Calcular km de la ruta"}
+                    </button>
+                    {r.kmTotal&&<span style={{fontSize:16,fontWeight:900,color:C.cyan}}>{r.kmTotal} km totales</span>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ── Admin Clientes ─────────────────────────────────────────────────────────
 function AdminClientes({clientes,onSave,setView}){
@@ -2132,7 +2394,7 @@ function ResumenCO2({ solicitudes }) {
   return (
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Medición CO₂ — Prefactura</div>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Medición CO₂</div>
         {!co2Data&&<button style={{...S.exportBtn,fontSize:11}} disabled={calculando} onClick={calcularCO2}>
           {calculando?"Calculando...":"🌿 Calcular CO₂"}
         </button>}
