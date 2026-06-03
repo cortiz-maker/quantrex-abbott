@@ -60,6 +60,7 @@ async function sbFetch(method, table, body=null, query="") {
   return text ? JSON.parse(text) : null;
 }
 
+
 const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
 const PESO_BASE_KG = 1000; // kg por solicitud (base contractual)
@@ -2404,25 +2405,32 @@ function ResumenCO2({ solicitudes }) {
       </div>
       {co2Data?(
         <>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
               <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KM</div>
               <div style={{fontSize:20,fontWeight:900,color:C.cyan}}>{co2Data.totalKm} km</div>
               <div style={{fontSize:10,color:C.muted,marginTop:2}}>desde Pudahuel</div>
             </div>
             <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
-              <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KG</div>
+              <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KG TRANSPORTADOS</div>
               <div style={{fontSize:20,fontWeight:900,color:C.warning}}>{co2Data.totalKg.toLocaleString("es-CL")} kg</div>
               <div style={{fontSize:10,color:C.muted,marginTop:2}}>{co2Data.nSols} entregas × 1.000 kg</div>
             </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.cyan+"44"}}>
+              <div style={{fontSize:10,color:C.cyan,fontWeight:700,marginBottom:4}}>ÍNDICE TKM (Abbott)</div>
+              <div style={{fontSize:20,fontWeight:900,color:C.cyan}}>{parseInt(co2Data.co2).toLocaleString("es-CL")}</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>km × kg transportados</div>
+            </div>
             <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.success+"44"}}>
-              <div style={{fontSize:10,color:C.success,fontWeight:700,marginBottom:4}}>CO₂ PERÍODO</div>
-              <div style={{fontSize:20,fontWeight:900,color:C.success}}>{parseInt(co2Data.co2).toLocaleString("es-CL")}</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>km × kg</div>
+              <div style={{fontSize:10,color:C.success,fontWeight:700,marginBottom:4}}>CO₂ ESTIMADO</div>
+              <div style={{fontSize:20,fontWeight:900,color:C.success}}>{(parseInt(co2Data.co2)/1000*0.15).toFixed(1)} kg</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>tkm × 0,15 kg CO₂/tkm</div>
             </div>
           </div>
           <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>
-            Fórmula: Σ km (Pudahuel → destino) × Σ kg transportados (base 1.000 kg/entrega)
+            Índice tkm = Σ km (Pudahuel → destino) × Σ kg (base 1.000 kg/entrega) · CO₂ según estándar GLEC/ISO 14083
           </div>
         </>
       ):(
