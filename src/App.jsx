@@ -265,13 +265,13 @@ async function saveSolicitud(s) {
       updated_at:new Date().toISOString(),
     };
     // UPSERT - insert o update si ya existe
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes?on_conflict=id`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "apikey": SUPABASE_KEY,
         "Authorization": `Bearer ${SUPABASE_KEY}`,
-        "Prefer": "resolution=merge-duplicates",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
       },
       body: JSON.stringify(row),
     });
@@ -279,7 +279,16 @@ async function saveSolicitud(s) {
   } catch(e) { console.error(e); }
 }
 async function deleteSolicitud(id) {
-  try { await sbFetch("DELETE","solicitudes",null,`?id=eq.${id}`); } catch(e) { console.error(e); }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes?id=eq.${id}`, {
+      method: "DELETE",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+      },
+    });
+    if(!res.ok) { const e=await res.text(); console.error("deleteSolicitud error:",e); }
+  } catch(e) { console.error(e); }
 }
 async function loadCierres() {
   try {
@@ -595,7 +604,7 @@ export default function QuantrexAbbott() {
   }
 
   async function handleDelete(id){
-    const upd=solicitudes.filter(s=>s.id!==id); setSolicitudes(upd); await saveSolicitudes(upd);
+    const upd=solicitudes.filter(s=>s.id!==id); setSolicitudes(upd); await deleteSolicitud(id);
     showToast("Solicitud eliminada.","danger"); setView("lista");
   }
 
@@ -1145,9 +1154,11 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           {sol.fotoEntrega&&(
             <div style={{marginTop:12}}>
               <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Foto del documento</div>
-              <img src={sol.fotoEntrega} alt="Documento entrega" style={{width:"100%",maxWidth:320,borderRadius:10,border:"1px solid "+C.border,cursor:"pointer"}}
-                onClick={()=>window.open(sol.fotoEntrega,"_blank")}/>
-              <div style={{fontSize:11,color:C.muted,marginTop:4}}>Toca la imagen para verla en tamaño completo</div>
+              <img src={sol.fotoEntrega} alt="Documento entrega" style={{width:"100%",maxWidth:320,borderRadius:10,border:"1px solid "+C.border}}/>
+              <a href={sol.fotoEntrega} download="foto_entrega.jpg" target="_blank" rel="noreferrer"
+                style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:6,background:C.cyan+"22",border:"1px solid "+C.cyan,color:C.cyan,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,textDecoration:"none"}}>
+                📷 Ver foto completa
+              </a>
             </div>
           )}
         </div>
