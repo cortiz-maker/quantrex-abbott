@@ -665,7 +665,7 @@ export default function QuantrexAbbott() {
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
         </div>
         <nav style={S.nav}>
-          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(sesion?.perfil==="admin"?[["cierres","Cierres"],["clientes","Clientes"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
+          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(sesion?.perfil==="admin"?[["cierres","Cierres"],["clientes","Clientes"]]:[]),...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
               onClick={()=>setView(v)}>{l}</button>
           ))}
