@@ -829,7 +829,7 @@ function ResumenMes({solicitudes}){
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
-function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,onExport}){
+function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
@@ -897,8 +897,8 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       )}
       {esAdmin&&<ResumenMes solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
-      {esAdmin&&<ResumenKmDia solicitudes={solicitudes}/>}
-      {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo}/>}
+      {esAdmin&&<ResumenKmDia solicitudes={solicitudes} rutas={rutas}/>}
+      {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
       {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap"}}><div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div><div style={{fontSize:12,color:C.textSecondary}}>✓ <strong style={{color:C.success}}>{solicitudesPeriodo.filter(s=>s.status==="completada").length}</strong> completadas</div><div style={{fontSize:12,color:C.textSecondary}}>🚚 <strong style={{color:C.info}}>{solicitudesPeriodo.filter(s=>s.status==="en_proceso").length}</strong> en tránsito</div></div>}
       <div style={S.sectionTitle}>Solicitudes recientes</div>
       {solicitudes.length===0?<EmptyState msg="Sin solicitudes aún." action={()=>setView("nueva")}/>
@@ -952,7 +952,7 @@ function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatu
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Solicitudes Abbott</div>
-        {total>0&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
+        {total>0&&sesion?.perfil!=="cliente"&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
       </div>
       <div style={S.filters}>
         <input style={S.searchInput} placeholder="Buscar por cliente o guía..." value={filterQ} onChange={e=>setFilterQ(e.target.value)}/>
@@ -1627,7 +1627,12 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
       
       // Calcular distancia desde el origen actual hasta este destino
       const destCoords=await geocodificar(s.direccion);
-      const origenCoords=await geocodificar(origen);
+      let origenCoords;
+      if(origen===ORIGEN_PUDAHUEL){
+        origenCoords=PUDAHUEL_COORDS;
+      } else {
+        origenCoords=await geocodificar(origen.replace(", Chile",""));
+      }
       if(destCoords&&origenCoords){
         const km=haversineKm(origenCoords.lat,origenCoords.lon,destCoords.lat,destCoords.lon);
         total+=parseFloat(km);
@@ -2324,13 +2329,13 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
 
 
 // ── Resumen KM del día ────────────────────────────────────────────────────
-function ResumenKmDia({ solicitudes }) {
+function ResumenKmDia({ solicitudes, rutas=[] }) {
   const [kmData, setKmData] = useState(null);
   const [calculando, setCalculando] = useState(false);
 
   const hoy = new Date().toISOString().split("T")[0];
   const solsHoy = solicitudes.filter(s =>
-    s.fecha === hoy && s.direccion && s.status === "completada"
+    s.fecha === hoy && s.direccion && s.status === "completada" && s.tipo !== "carga_ol"
   );
 
   async function calcularKmRuta() {
@@ -2338,10 +2343,20 @@ function ResumenKmDia({ solicitudes }) {
     setCalculando(true);
     let totalKm = 0;
     const tramos = [];
+    // Primero agregar km de rutas completas (sin duplicar solicitudes)
+    const rutasHoy = rutas.filter(r => r.fecha === hoy && r.kmTotal);
+    const solsEnRuta = new Set();
+    for (const r of rutasHoy) {
+      r.paradas.forEach(p => solsEnRuta.add(p.solId));
+      totalKm += parseFloat(r.kmTotal);
+      tramos.push({ titulo: r.id + " · " + r.vehiculo, direccion: "Ruta completa", km: r.kmTotal });
+    }
+    // Luego agregar solicitudes que NO están en ninguna ruta
     for (const s of solsHoy) {
+      if (solsEnRuta.has(s.id)) continue;
       const km = await calcularKmDesdePudahuel(s.direccion);
       if (km !== null) {
-        totalKm += km;
+        totalKm += parseFloat(km);
         tramos.push({ titulo: s.titulo, direccion: s.direccion, km });
       }
     }
@@ -2391,12 +2406,12 @@ function ResumenKmDia({ solicitudes }) {
 
 
 // ── Resumen CO2 mensual ────────────────────────────────────────────────────
-function ResumenCO2({ solicitudes }) {
+function ResumenCO2({ solicitudes, rutas=[] }) {
   const [co2Data, setCo2Data] = useState(null);
   const [calculando, setCalculando] = useState(false);
 
   const solsConDireccion = solicitudes.filter(s =>
-    s.status === "completada" && s.direccion
+    s.status === "completada" && s.direccion && s.tipo !== "carga_ol"
   );
 
   async function calcularCO2() {
