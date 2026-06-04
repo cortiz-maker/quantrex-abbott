@@ -407,6 +407,8 @@ async function loadRutas() {
     return data.map(r=>({
       id:r.id, nombre:r.nombre, fecha:r.fecha, vehiculo:r.vehiculo,
       paradas:r.paradas||[], kmTotal:r.km_total||null,
+      estado:r.estado||"abierta", cerradaAt:r.cerrada_at||null,
+      cerradaPor:r.cerrada_por||null, reaperturas:r.reaperturas||[],
       createdAt:r.created_at,
     }));
   } catch(e) { return []; }
@@ -416,9 +418,22 @@ async function saveRuta(r) {
     const row = {
       id:r.id, nombre:r.nombre, fecha:r.fecha, vehiculo:r.vehiculo||null,
       paradas:r.paradas||[], km_total:r.kmTotal||null,
+      estado:r.estado||"abierta", cerrada_at:r.cerradaAt||null,
+      cerrada_por:r.cerradaPor||null, reaperturas:r.reaperturas||[],
+      created_at:r.createdAt||new Date().toISOString(),
       updated_at:new Date().toISOString(),
     };
-    await sbFetch("POST","rutas",row,"?on_conflict=id");
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rutas?on_conflict=id`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`,
+        "Prefer":"resolution=merge-duplicates,return=minimal",
+      },
+      body:JSON.stringify(row),
+    });
+    if(!res.ok){ const e=await res.text(); console.error("saveRuta error:",e); }
   } catch(e) { console.error(e); }
 }
 async function deleteRuta(id) {
@@ -428,6 +443,15 @@ async function deleteRuta(id) {
       headers:{"apikey":SUPABASE_KEY,"Authorization":`Bearer ${SUPABASE_KEY}`},
     });
   } catch(e) { console.error(e); }
+}
+
+// Una ruta se cierra cuando tiene paradas y todas sus solicitudes asignadas
+// están en estado terminal (entregadas/completadas, no entregadas o canceladas).
+const ESTADOS_TERMINALES = ["completada","no_entregado","cancelada"];
+function rutaCerrada(ruta, sols) {
+  const asignadas = (sols||[]).filter(s => (ruta.paradas||[]).some(p => p.solId===s.id));
+  if (asignadas.length === 0) return false;
+  return asignadas.every(s => ESTADOS_TERMINALES.includes(s.status));
 }
 
 // ── Excel ─────────────────────────────────────────────────────────────────
@@ -649,6 +673,26 @@ export default function QuantrexAbbott() {
     showToast("Solicitud creada correctamente."); setView("lista");
   }
 
+  // Auto-cierra rutas cuyas paradas estén todas finalizadas. NUNCA reabre: una ruta cerrada
+  // (manual o automáticamente) solo puede reabrirla el admin con motivo registrado.
+  async function sincronizarRutas(solsActuales){
+    const cambiadas=[];
+    const upd=rutas.map(r=>{
+      if((r.estado||"abierta")==="cerrada") return r;
+      if(rutaCerrada(r,solsActuales)){
+        const nr={...r,estado:"cerrada",cerradaAt:new Date().toISOString(),cerradaPor:"Automático"};
+        cambiadas.push(nr);
+        return nr;
+      }
+      return r;
+    });
+    if(cambiadas.length){
+      setRutas(upd);
+      for(const r of cambiadas) await saveRuta(r);
+      showToast(`Ruta ${cambiadas.map(r=>r.id).join(", ")} cerrada automáticamente: todas sus paradas finalizadas.`);
+    }
+  }
+
   async function handleStatusChange(id,newStatus,canceladoPor=null){
     const now=new Date();
     const fechaHora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
@@ -660,6 +704,7 @@ export default function QuantrexAbbott() {
         statusLog:[...(s.statusLog||[]),entry],...(canceladoPor?{canceladoPor}:{})};
     });
     setSolicitudes(upd); await saveSolicitudes(upd);
+    await sincronizarRutas(upd);
     showToast(newStatus==="cancelada"?`Cancelada por ${canceladoPor}.`:"Estado actualizado.");
   }
 
@@ -676,7 +721,9 @@ export default function QuantrexAbbott() {
     }
     const solActualizada={...updatedSol,updatedAt:new Date().toISOString()};
     const upd=solicitudes.map(s=>s.id===updatedSol.id?solActualizada:s);
-    setSolicitudes(upd); await saveSolicitud(solActualizada); showToast("Solicitud actualizada.");
+    setSolicitudes(upd); await saveSolicitud(solActualizada); 
+    await sincronizarRutas(upd);
+    showToast("Solicitud actualizada.");
   }
 
   async function handleEditLog(id,updatedLog){
@@ -708,6 +755,7 @@ export default function QuantrexAbbott() {
     setSolicitudes(upd);
     const solUpd=upd.find(s=>s.id===id);
     if(solUpd) await saveSolicitud(solUpd);
+    await sincronizarRutas(upd);
     showToast(statusLabel+" registrado.");
   }
 
@@ -796,7 +844,7 @@ export default function QuantrexAbbott() {
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes}/>)
         :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={CHOFERES} onSave={(u,c)=>{setUsuarios(u);try{localStorage.setItem("qx:usuarios",JSON.stringify(u));}catch{};}} setView={setView}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
-        :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView}/>)
+        :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
             onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
         :view==="cierre_detalle"&&cierreDetalle?(<CierreDetalle cierre={cierreDetalle} setView={setView}
@@ -1647,7 +1695,7 @@ const VEHICULOS = [
   {id:"M3", label:"M3 · Cristian Donoso", ppu:"PZGH22"},
 ];
 
-function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDeleteRuta,onSaveSolicitud,setView}){
+function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDeleteRuta,onSaveSolicitud,setView,sesion}){
   const hoy=new Date().toISOString().split("T")[0];
   const [nuevaRuta,setNuevaRuta]=useState(false);
   const [formRuta,setFormRuta]=useState({nombre:"",fecha:hoy,vehiculo:"M1"});
@@ -1662,7 +1710,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
   async function crearRuta(){
     const idRuta=generarIdRuta();
     const r={id:idRuta,nombre:idRuta,fecha:formRuta.fecha,
-      vehiculo:formRuta.vehiculo,paradas:[],kmTotal:null,createdAt:new Date().toISOString()};
+      vehiculo:formRuta.vehiculo,paradas:[],kmTotal:null,estado:"abierta",cerradaPor:null,reaperturas:[],createdAt:new Date().toISOString()};
     const upd=[r,...rutas];
     setRutas(upd); await onSaveRuta(r);
     setNuevaRuta(false); setFormRuta({nombre:"",fecha:hoy,vehiculo:"M1"});
@@ -1778,6 +1826,35 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
     setKmCalculando(null);
   }
 
+  const perfil=sesion?.perfil;
+  const puedeReabrir=perfil==="admin";
+
+  async function cerrarRutaManual(rutaId){
+    const ruta=rutas.find(r=>r.id===rutaId);
+    if(!ruta)return;
+    if((ruta.paradas||[]).length===0){window.alert("La ruta no tiene paradas, no se puede cerrar.");return;}
+    const pendientes=ruta.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean)
+      .filter(s=>!["completada","no_entregado","cancelada"].includes(s.status));
+    if(pendientes.length>0 && !window.confirm(`Hay ${pendientes.length} parada(s) sin finalizar. ¿Cerrar la ruta de todas formas?`))return;
+    const nr={...ruta,estado:"cerrada",cerradaAt:new Date().toISOString(),cerradaPor:sesion?.nombre||perfil||"Manual"};
+    setRutas(rutas.map(r=>r.id===rutaId?nr:r));
+    await onSaveRuta(nr);
+  }
+
+  async function reabrirRuta(rutaId){
+    if(perfil!=="admin"){window.alert("Solo un administrador puede reabrir una ruta.");return;}
+    const ruta=rutas.find(r=>r.id===rutaId);
+    if(!ruta)return;
+    const motivo=(window.prompt("Motivo de la reapertura (queda registrado):")||"").trim();
+    if(!motivo){window.alert("Debes indicar un motivo para reabrir la ruta.");return;}
+    const now=new Date();
+    const sello=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
+    const reaperturas=[...(ruta.reaperturas||[]),{fecha:sello,usuario:sesion?.nombre||"Admin",motivo}];
+    const nr={...ruta,estado:"abierta",cerradaAt:null,cerradaPor:null,reaperturas};
+    setRutas(rutas.map(r=>r.id===rutaId?nr:r));
+    await onSaveRuta(nr);
+  }
+
   const rutaActiva=rutaDetalle?rutas.find(r=>r.id===rutaDetalle):null;
   const solsDisponibles=solicitudes.filter(s=>!s.rutaId||s.rutaId===rutaDetalle);
 
@@ -1812,6 +1889,8 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
         const veh=VEHICULOS.find(v=>v.id===r.vehiculo);
         const isOpen=rutaDetalle===r.id;
         const paradaSols=r.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean);
+        const listaParaCerrar=paradaSols.length>0&&paradaSols.every(s=>["completada","no_entregado","cancelada"].includes(s.status));
+        const estaCerrada=(r.estado||"abierta")==="cerrada";
         return(
           <div key={r.id} style={{background:C.navySurface,border:"1px solid "+(isOpen?C.cyan:C.border),borderRadius:12,overflow:"hidden"}}>
             {/* Header ruta */}
@@ -1821,11 +1900,13 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
                   <span style={{fontWeight:800,fontSize:14}}>{r.id}</span>
                   <span style={{fontSize:13,color:C.textSecondary}}>{r.nombre}</span>
                   <span style={{fontSize:11,background:C.cyan+"22",color:C.cyan,padding:"2px 8px",borderRadius:6,fontWeight:700}}>{veh?.label||r.vehiculo}</span>
+                  <span style={{fontSize:11,background:(estaCerrada?"#22C55E":"#F59E0B")+"22",color:estaCerrada?"#22C55E":"#F59E0B",padding:"2px 8px",borderRadius:6,fontWeight:700}}>{estaCerrada?"✓ Cerrada":"Abierta"}</span>
+                  {!estaCerrada&&listaParaCerrar&&<span style={{fontSize:11,background:"#22C55E22",color:"#22C55E",padding:"2px 8px",borderRadius:6,fontWeight:700}}>Lista para cerrar</span>}
                 </div>
                 <div style={{fontSize:12,color:C.muted,marginTop:2}}>{r.fecha} · {r.paradas.length} parada(s){r.kmTotal?` · ${r.kmTotal} km`:""}</div>
               </div>
               <div style={{display:"flex",gap:6}}>
-                <button style={{...S.exportBtn,fontSize:11}} onClick={e=>{e.stopPropagation();eliminarRuta(r.id);}}>✕</button>
+                {!estaCerrada&&<button style={{...S.exportBtn,fontSize:11}} onClick={e=>{e.stopPropagation();eliminarRuta(r.id);}}>✕</button>}
                 <span style={{color:C.muted,fontSize:16}}>{isOpen?"▲":"▼"}</span>
               </div>
             </div>
@@ -1833,7 +1914,30 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
             {/* Detalle ruta */}
             {isOpen&&(
               <div style={{borderTop:"1px solid "+C.border,padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
-                {/* Cambiar vehículo */}
+                {/* Acciones de cierre / reapertura */}
+                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                  {!estaCerrada
+                    ? <button style={{...S.btnPri,fontSize:13}} onClick={()=>cerrarRutaManual(r.id)}>🔒 Cerrar ruta</button>
+                    : (<>
+                        <button style={{...S.btnSec,fontSize:13,opacity:puedeReabrir?1:.5,cursor:puedeReabrir?"pointer":"not-allowed"}} disabled={!puedeReabrir} onClick={()=>reabrirRuta(r.id)}>🔓 Reabrir ruta</button>
+                        {!puedeReabrir&&<span style={{fontSize:11,color:C.muted}}>Solo un administrador puede reabrir.</span>}
+                      </>)
+                  }
+                </div>
+                {estaCerrada&&(
+                  <div style={{background:C.navy,borderRadius:8,padding:"10px 12px",fontSize:12,color:C.textSecondary}}>
+                    Ruta cerrada{r.cerradaPor?` por ${r.cerradaPor}`:""}{r.cerradaAt?` · ${new Date(r.cerradaAt).toLocaleString("es-CL")}`:""}. Edición bloqueada.
+                    {(r.reaperturas||[]).length>0&&(
+                      <div style={{marginTop:8}}>
+                        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Reaperturas registradas</div>
+                        {(r.reaperturas||[]).map((re,i)=>(
+                          <div key={i} style={{fontSize:11,color:C.muted,marginBottom:2}}>• {re.fecha} — {re.usuario}: {re.motivo}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!estaCerrada&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                   <label style={{...S.label,marginBottom:0}}>Vehículo:</label>
                   {VEHICULOS.map(v=>(
@@ -1841,6 +1945,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
                       onClick={()=>cambiarVehiculo(r.id,v.id)}>{v.label}</button>
                   ))}
                 </div>
+                )}
 
                 {/* Paradas */}
                 <div>
@@ -1855,17 +1960,21 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.titulo}</div>
                           <div style={{fontSize:11,color:C.muted}}>{s.direccion||"Sin dirección"}</div>
+                          <div style={{fontSize:10,fontWeight:700,color:STATUS_META[s.status]?.color||C.muted,marginTop:2}}>{STATUS_META[s.status]?.label||s.status}</div>
                         </div>
+                        {!estaCerrada&&(
                         <div style={{display:"flex",gap:4,flexShrink:0}}>
                           <button style={{...S.statusBtn,fontSize:12,padding:"4px 8px"}} onClick={()=>moverParada(r.id,s.id,-1)} disabled={i===0}>↑</button>
                           <button style={{...S.statusBtn,fontSize:12,padding:"4px 8px"}} onClick={()=>moverParada(r.id,s.id,1)} disabled={i===paradaSols.length-1}>↓</button>
                           <button style={{...S.statusBtn,fontSize:11,padding:"4px 8px",border:"1px solid "+C.danger,color:C.danger}} onClick={()=>quitarParada(r.id,s.id)}>✕</button>
                         </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
 
+                {!estaCerrada&&(<>
                 {/* Agregar parada */}
                 <div>
                   <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Agregar solicitud a la ruta</div>
@@ -1886,6 +1995,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
                     {r.kmTotal&&<span style={{fontSize:16,fontWeight:900,color:C.cyan}}>{r.kmTotal} km totales</span>}
                   </div>
                 )}
+                </>)}
               </div>
             )}
           </div>
