@@ -461,10 +461,6 @@ function exportToExcel(solicitudes, nombreArchivo) {
     // Tiempo en punto solo para carga_ol, li_retiro, li_devol
     const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
     const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
-    // Km desde Pudahuel (guardado en la solicitud si se calculó)
-    const kmSol = s.kmDesdePudahuel||"";
-    // CO2 individual = km × 1000kg
-    const co2Sol = kmSol ? (parseFloat(kmSol) * PESO_BASE_KG).toFixed(0) : "";
     // SPOT Regional — recargo por destino fuera de la RM (según dirección)
     const regionSol = detectarRegion(s.direccion || s.destino || "");
     const cSpotRegional = regionSol ? (regionSol.valor || 0) : 0;
@@ -477,7 +473,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
       esSpot?"Sí":"No", cSpot||"", esOH?"Sí":"No", motivoOH, cOH||"",
       esSpotRegional?(regionSol?.label||""):"", cSpotRegional||"",
       (cSpot+cOH+cSpotRegional)||"",
-      s.choferAsignado||"", tiempoEnPunto, kmSol, co2Sol,
+      s.choferAsignado||"", tiempoEnPunto,
       s.noPresentacion?(s.vehiculoNP||""):"", s.noPresentacion?(s.motivoNP||""):"",
       s.noPresentacion?DESCUENTO_DIA:""];
   });
@@ -494,13 +490,13 @@ function exportToExcel(solicitudes, nombreArchivo) {
   const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
-    "Total Cobros","Chofer","Tiempo en Punto","Km","CO₂ (kg)","Veh. NP","Motivo NP","Descuento NP"];
+    "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
   ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:28},{wch:13},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
-    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:10},{wch:12},{wch:14},{wch:25},{wch:14}];
+    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
 
   const periodoNombre=nombreArchivo.replace("Quantrex_Abbott_","").replace(".xlsx","").replace("_"," ");
@@ -532,7 +528,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
   }
   r2.push(["Total Pre Cierre","",granTotal]);
   r2.push([]);
-  const totalKmExcel = rows.reduce((acc,r)=>acc+(parseFloat(r[25])||0),0).toFixed(1);
+  const totalKmExcel = solicitudes.reduce((acc,s)=>acc+(parseFloat(s.kmDesdePudahuel)||0),0).toFixed(1);
   const totalKgExcel = solicitudes.length * PESO_BASE_KG;
   const totalCO2Excel = (parseFloat(totalKmExcel)*totalKgExcel).toFixed(0);
   // Calcular tkm y CO2 estimado para el resumen
