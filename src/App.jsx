@@ -871,15 +871,23 @@ function GraficoCobros({ solicitudes }) {
     const f=s.fecha||"x",m=hm(s.hora),a830=m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
     if(esOH){tOH++;}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
   });
+  // SPOT Regional — recargo por destinos fuera de la RM (misma tabla del Excel)
+  let mSpotReg=0, nSpotReg=0;
+  solicitudes.forEach(s=>{
+    const reg=detectarRegion(s.direccion||s.destino||"");
+    const v=reg?(reg.valor||0):0;
+    if(v>0){mSpotReg+=v;nSpotReg++;}
+  });
   const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(2840000/30);
   const mFijo=M1+M2,mSpot=tSpot*P_SPOT,mOH=tOH*P_OH;
-  const total=mFijo+mSpot+mOH-tNP;
+  const total=mFijo+mSpot+mOH+mSpotReg-tNP;
   if(total<=0) return null;
 
   const segmentos=[
     {label:"OC Mensual",valor:mFijo,color:"#1B3FA0"},
     {label:"SPOT Extra",valor:mSpot,color:"#F59E0B"},
     {label:"Overnight",valor:mOH,color:"#38BDF8"},
+    ...(mSpotReg>0?[{label:`SPOT Regional (${nSpotReg})`,valor:mSpotReg,color:"#A78BFA"}]:[]),
     ...(tNP>0?[{label:"Descuento NP",valor:tNP,color:"#EF4444",negativo:true}]:[]),
   ];
   const positivos=segmentos.filter(s=>!s.negativo&&s.valor>0);
@@ -1310,7 +1318,6 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
-      {esAdmin&&<MapaTramo sol={sol} solicitudes={solicitudes} />}
       {(sol.firmaReceptor||sol.rechazoFirma)&&(
         <div style={S.detailBlock}>
           <div style={S.fieldLabel}>{sol.rechazoFirma?"Rechazo de firma":"Firma del receptor"}</div>
