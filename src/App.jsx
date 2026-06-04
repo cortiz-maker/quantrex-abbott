@@ -20,6 +20,7 @@ const STATUS_META = {
   en_proceso:      { label:"En Tránsito",    color:"#00AEEF" },
   completada:      { label:"Completada",     color:"#22C55E" },
   no_entregado:    { label:"No Entregado",   color:"#F97316" },
+  devolucion:      { label:"Devolución",     color:"#14B8A6" },
   cancelada:       { label:"Cancelada",      color:"#EF4444" },
 };
 
@@ -447,7 +448,7 @@ async function deleteRuta(id) {
 
 // Una ruta se cierra cuando tiene paradas y todas sus solicitudes asignadas
 // están en estado terminal (entregadas/completadas, no entregadas o canceladas).
-const ESTADOS_TERMINALES = ["completada","no_entregado","cancelada"];
+const ESTADOS_TERMINALES = ["completada","no_entregado","devolucion","cancelada"];
 function rutaCerrada(ruta, sols) {
   const asignadas = (sols||[]).filter(s => (ruta.paradas||[]).some(p => p.solId===s.id));
   if (asignadas.length === 0) return false;
@@ -1841,7 +1842,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
     if(!ruta)return;
     if((ruta.paradas||[]).length===0){window.alert("La ruta no tiene paradas, no se puede cerrar.");return;}
     const pendientes=ruta.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean)
-      .filter(s=>!["completada","no_entregado","cancelada"].includes(s.status));
+      .filter(s=>!ESTADOS_TERMINALES.includes(s.status));
     if(pendientes.length>0 && !window.confirm(`Hay ${pendientes.length} parada(s) sin finalizar. ¿Cerrar la ruta de todas formas?`))return;
     const nr={...ruta,estado:"cerrada",cerradaAt:new Date().toISOString(),cerradaPor:sesion?.nombre||perfil||"Manual"};
     setRutas(rutas.map(r=>r.id===rutaId?nr:r));
@@ -1896,7 +1897,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
         const veh=VEHICULOS.find(v=>v.id===r.vehiculo);
         const isOpen=rutaDetalle===r.id;
         const paradaSols=r.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean);
-        const listaParaCerrar=paradaSols.length>0&&paradaSols.every(s=>["completada","no_entregado","cancelada"].includes(s.status));
+        const listaParaCerrar=paradaSols.length>0&&paradaSols.every(s=>ESTADOS_TERMINALES.includes(s.status));
         const estaCerrada=(r.estado||"abierta")==="cerrada";
         return(
           <div key={r.id} style={{background:C.navySurface,border:"1px solid "+(isOpen?C.cyan:C.border),borderRadius:12,overflow:"hidden"}}>
