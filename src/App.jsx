@@ -271,7 +271,8 @@ async function loadSolicitudes() {
   } catch(e) { console.error(e); return []; }
 }
 async function saveSolicitudes(data) {
-  // No se usa - guardamos individualmente
+  // Persiste cada registro mediante el guardado individual (upsert real).
+  for (const s of (data||[])) await saveSolicitud(s);
 }
 async function saveSolicitud(s) {
   try {
@@ -704,7 +705,8 @@ export default function QuantrexAbbott() {
       return{...s,status:newStatus,updatedAt:now.toISOString(),
         statusLog:[...(s.statusLog||[]),entry],...(canceladoPor?{canceladoPor}:{})};
     });
-    setSolicitudes(upd); await saveSolicitudes(upd);
+    const cambiada=upd.find(s=>s.id===id);
+    setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada);
     await sincronizarRutas(upd);
     showToast(newStatus==="cancelada"?`Cancelada por ${canceladoPor}.`:"Estado actualizado.");
   }
@@ -729,7 +731,8 @@ export default function QuantrexAbbott() {
 
   async function handleEditLog(id,updatedLog){
     const upd=solicitudes.map(s=>s.id===id?{...s,statusLog:updatedLog,updatedAt:new Date().toISOString()}:s);
-    setSolicitudes(upd); await saveSolicitudes(upd); showToast("Log actualizado.");
+    const cambiada=upd.find(s=>s.id===id);
+    setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada); showToast("Log actualizado.");
   }
 
   async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null){
