@@ -52,7 +52,7 @@ async function sbFetch(method, table, body=null, query="") {
       "Content-Type": "application/json",
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
-      "Prefer": method==="POST"?"return=representation":"",
+      "Prefer": method==="POST"?"resolution=merge-duplicates,return=representation":"",
     },
     body: body ? JSON.stringify(body) : null,
   });
@@ -456,6 +456,19 @@ function rutaCerrada(ruta, sols) {
   return asignadas.every(s => ESTADOS_TERMINALES.includes(s.status));
 }
 
+// ── Respaldo (JSON descargable) ─────────────────────────────────────────────
+function descargarRespaldo(payload, nombreArchivo) {
+  try {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombreArchivo;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    return true;
+  } catch (e) { console.error("respaldo error:", e); return false; }
+}
+
 // ── Excel ─────────────────────────────────────────────────────────────────
 function exportToExcel(solicitudes, nombreArchivo) {
   const PRECIO_SPOT=50000, PRECIO_OVERNIGHT=85000, COBRO_M1=2840000, COBRO_M2=2840000;
@@ -636,11 +649,18 @@ export default function QuantrexAbbott() {
       total:solicitudesPeriodo.length,completadas:solicitudesPeriodo.filter(s=>s.status==="completada").length,
       cerradoEn:new Date().toISOString(),solicitudes:solicitudesPeriodo};
     const upd=[cierre,...cierres]; setCierres(upd); await saveCierres(upd);
+    // Respaldo completo descargable (guárdalo en tu carpeta de Google Drive)
+    const stamp=new Date().toISOString().split("T")[0];
+    const respaldoOk=descargarRespaldo({
+      app:"Quantrex-Abbott", version:1, generadoEn:new Date().toISOString(),
+      periodoCerrado:nombrePeriodo,
+      datos:{ solicitudes, rutas, cierres:upd, clientes, periodo:periodoBase },
+    }, `Quantrex_Respaldo_${nombrePeriodo.replace(/\s+/g,"_")}_${stamp}.json`);
     // Limpiar período para que aparezca la opción de abrir uno nuevo
     setPeriodo(null); await savePeriodo(null);
     setConfirmCierre(false);
     setAbrirPeriodo(true); // Mostrar panel de apertura
-    showToast("✓ Período cerrado. Define el nuevo período.");
+    showToast(respaldoOk?"✓ Período cerrado. Excel y respaldo descargados. Define el nuevo período.":"✓ Período cerrado. Define el nuevo período.");
   }
 
   async function handleAbrirPeriodo(){
