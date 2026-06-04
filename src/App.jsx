@@ -868,7 +868,7 @@ function GraficoCobros({ solicitudes }) {
   function l17(log){return(log||[]).some(e=>{const p=(e.fechaHora||"").split(" ");if(p.length<2)return false;const m=hm(p[1]);return m!==null&&m>=17*60;});}
   const contN={};let tSpot=0,tOH=0;
   solicitudes.forEach(s=>{
-    const f=s.fecha||"x",m=hm(s.hora),a830=m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
+    const f=s.fecha||"x",m=hm(s.hora),a830=s.tipo==="carga_ol"&&m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
     if(esOH){tOH++;}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
   });
   // SPOT Regional — recargo por destinos fuera de la RM (misma tabla del Excel)
