@@ -542,16 +542,11 @@ function exportToExcel(solicitudes, nombreArchivo) {
   r2.push([]);
   r2.push(["── MEDICIÓN CO₂ ──────────────────────────────"]);
   r2.push(["Total solicitudes período:",solicitudes.length]);
-  r2.push(["Base peso por entrega:","1.000 kg"]);
-  r2.push(["Total KG transportados:",totalKgExcel.toLocaleString("es-CL")+" kg"]);
   r2.push(["Total km recorridos (período):",parseFloat(totalKmExcel)>0?totalKmExcel+" km":"Pendiente cálculo"]);
   r2.push([]);
   r2.push(["Índice TKM (Abbott) — km × kg:", tkmAbbot]);
-  r2.push(["  Fórmula:","Σ km (Pudahuel → destino) × Σ kg transportados"]);
   r2.push([]);
   r2.push(["CO₂ Estimado (Estándar Mercado):", co2Estimado+" kg CO₂"]);
-  r2.push(["  Fórmula:","TKM ÷ 1.000 × 0,15 kg CO₂/tkm (estándar GLEC/ISO 14083)"]);
-  r2.push(["  Factor emisión:","0,15 kg CO₂ por tonelada-kilómetro (camión reparto urbano)"]);
   r2.push(["Solicitudes SPOT Extra:",totalSpot]);
   r2.push(["Solicitudes Overnight:",totalOH]);
   const ws2=XLSX.utils.aoa_to_sheet(r2);
