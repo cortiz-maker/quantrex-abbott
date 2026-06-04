@@ -1085,7 +1085,10 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap"}}><div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div><div style={{fontSize:12,color:C.textSecondary}}>✓ <strong style={{color:C.success}}>{solicitudesPeriodo.filter(s=>s.status==="completada").length}</strong> completadas</div><div style={{fontSize:12,color:C.textSecondary}}>🚚 <strong style={{color:C.info}}>{solicitudesPeriodo.filter(s=>s.status==="en_proceso").length}</strong> en tránsito</div></div>}
       <div style={S.sectionTitle}>Solicitudes recientes</div>
       {solicitudes.length===0?<EmptyState msg="Sin solicitudes aún." action={()=>setView("nueva")}/>
-        :solicitudes.slice(0,3).map(s=><SolicitudRow key={s.id} sol={s} onSelect={id=>{setSelectedId(id);setView("detalle");}}/>)}
+        :[...solicitudes].sort((a,b)=>{
+            const f=(b.fecha||"").localeCompare(a.fecha||"");
+            return f!==0?f:(b.createdAt||"").localeCompare(a.createdAt||"");
+          }).slice(0,3).map(s=><SolicitudRow key={s.id} sol={s} onSelect={id=>{setSelectedId(id);setView("detalle");}}/>)}
       {solicitudes.length>3&&<button style={S.linkBtn} onClick={()=>setView("lista")}>Ver todas →</button>}
     </div>
   );
