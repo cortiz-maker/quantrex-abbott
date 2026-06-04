@@ -800,6 +800,8 @@ export default function QuantrexAbbott() {
     pendiente:solicitudesPeriodo.filter(s=>s.status==="pendiente").length,
     en_proceso:solicitudesPeriodo.filter(s=>s.status==="en_proceso").length,
     completada:solicitudesPeriodo.filter(s=>s.status==="completada").length,
+    devolucion:solicitudesPeriodo.filter(s=>s.status==="devolucion").length,
+    cancelada:solicitudesPeriodo.filter(s=>s.status==="cancelada").length,
     no_entregado:solicitudesPeriodo.filter(s=>s.status==="no_entregado").length};
 
   const excelNombre=`Quantrex_Abbott_${new Date().toISOString().split("T")[0]}.xlsx`;
@@ -1058,7 +1060,9 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </div>
       )}
       <div style={S.statsGrid}>
-        {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada,C.success]].map(([l,v,col])=>(
+        {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
+          ...(stats.no_entregado>0?[["No Entregado",stats.no_entregado,"#F97316"]]:[]),
+          ...(stats.cancelada>0?[["Canceladas",stats.cancelada,C.danger]]:[])].map(([l,v,col])=>(
           <div key={l} style={{...S.statCard,borderTop:`3px solid ${col}`}}>
             <div style={{...S.statNum,color:col}}>{v}</div>
             <div style={S.statLabel}>{l}</div>
