@@ -546,7 +546,7 @@ function descargarRespaldo(payload, nombreArchivo) {
 }
 
 // ── Excel ─────────────────────────────────────────────────────────────────
-function exportToExcel(solicitudes, nombreArchivo) {
+async function exportToExcel(solicitudes, nombreArchivo) {
   const PRECIO_SPOT=50000, PRECIO_OVERNIGHT=85000, COBRO_M1=2840000, COBRO_M2=2840000;
   const DESCUENTO_DIA = Math.round(2840000/30);
 
@@ -645,21 +645,30 @@ function exportToExcel(solicitudes, nombreArchivo) {
   }
   r2.push(["Total Pre Cierre","",granTotal]);
   r2.push([]);
-  const totalKmExcel = solicitudes.reduce((acc,s)=>acc+(parseFloat(s.kmDesdePudahuel)||0),0).toFixed(1);
-  const totalKgExcel = solicitudes.length * PESO_BASE_KG;
-  const totalCO2Excel = (parseFloat(totalKmExcel)*totalKgExcel).toFixed(0);
-  // Calcular tkm y CO2 estimado para el resumen
-  const tkmAbbot = parseFloat(totalKmExcel) > 0 ? (parseFloat(totalKmExcel) * parseFloat(totalKgExcel)).toFixed(0) : "Pendiente cálculo";
-  const co2Estimado = parseFloat(totalKmExcel) > 0 ? (parseFloat(totalKmExcel) * parseFloat(totalKgExcel) / 1000 * 0.15).toFixed(1) : "Pendiente cálculo";
+  // Km / TKM / CO₂ — mismo cálculo que el panel "Medición CO₂" del dashboard:
+  // Σ km (Pudahuel → destino) sobre solicitudes completadas con dirección (excluye Carga OL).
+  const solsCO2 = solicitudes.filter(s => s.status==="completada" && s.direccion && s.tipo!=="carga_ol");
+  let totalKmNum = 0;
+  for (const s of solsCO2) {
+    const km = await calcularKmDesdePudahuel(s.direccion);
+    if (km !== null) totalKmNum += km;
+  }
+  const totalKgExcel = solsCO2.length * PESO_BASE_KG;
+  const tkmNum = totalKmNum * totalKgExcel;
+  const hayKm = totalKmNum > 0;
+  const tkmAbbot = hayKm ? Math.round(tkmNum) : "Pendiente cálculo";
+  const co2Estimado = hayKm ? (tkmNum/1000*0.15).toFixed(1)+" kg CO₂" : "Pendiente cálculo";
 
   r2.push([]);
   r2.push(["── MEDICIÓN CO₂ ──────────────────────────────"]);
   r2.push(["Total solicitudes período:",solicitudes.length]);
-  r2.push(["Total km recorridos (período):",parseFloat(totalKmExcel)>0?totalKmExcel+" km":"Pendiente cálculo"]);
+  r2.push(["Entregas consideradas (completadas c/dirección):",solsCO2.length]);
+  r2.push(["Total km recorridos (período):",hayKm?totalKmNum.toFixed(1)+" km":"Pendiente cálculo"]);
+  r2.push(["Total kg transportados:",totalKgExcel.toLocaleString("es-CL")+" kg"]);
   r2.push([]);
   r2.push(["Índice TKM (Abbott) — km × kg:", tkmAbbot]);
   r2.push([]);
-  r2.push(["CO₂ Estimado (Estándar Mercado):", co2Estimado+" kg CO₂"]);
+  r2.push(["CO₂ Estimado (Estándar Mercado):", co2Estimado]);
   r2.push(["Solicitudes SPOT Extra:",totalSpot]);
   r2.push(["Solicitudes Overnight:",totalOH]);
   const ws2=XLSX.utils.aoa_to_sheet(r2);
@@ -720,7 +729,7 @@ export default function QuantrexAbbott() {
 
   async function handleCerrarMes(){
     if(yaCerrado){showToast("Este período ya fue cerrado.","danger");return;}
-    exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}.xlsx`);
+    await exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}.xlsx`);
     const cierre={id:Date.now().toString(),nombre:nombrePeriodo,
       fechaInicio:periodoBase.inicio,fechaFin:periodoBase.fin,
       total:solicitudesPeriodo.length,completadas:solicitudesPeriodo.filter(s=>s.status==="completada").length,
