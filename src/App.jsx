@@ -206,6 +206,15 @@ async function calcularKmDesdePudahuel(direccionDestino) {
   } catch { return null; }
 }
 
+// Coordenadas de destino de una solicitud para el cálculo de km.
+// Devolución (li_devol) sin dirección propia → vuelve a la bodega DHL (Pudahuel).
+async function coordsSolicitud(s){
+  const loc=(s.direccion||s.destino||"").trim();
+  if(s.tipo==="li_devol" && !loc) return PUDAHUEL_COORDS;
+  if(!loc) return null;
+  return await geocodificar(loc);
+}
+
 // Minutos del log más tardío >= 17:00 de una solicitud (o null si no hay).
 function ultimoLogPost17(log){
   let max=null;
@@ -1879,7 +1888,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
       }
       
       // Calcular distancia desde el origen actual hasta este destino
-      const destCoords=await geocodificar(s.direccion);
+      const destCoords=await coordsSolicitud(s);
       let origenCoords;
       if(origen===ORIGEN_PUDAHUEL){
         origenCoords=PUDAHUEL_COORDS;
@@ -2840,7 +2849,7 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
 
   const hoy = new Date().toLocaleDateString("en-CA"); // fecha local (Chile), evita salto UTC
   const solsHoy = solicitudes.filter(s =>
-    s.fecha === hoy && s.direccion && (s.status === "completada" || s.status === "devolucion") && s.tipo !== "carga_ol"
+    s.fecha === hoy && (s.direccion || s.destino || s.tipo === "li_devol") && (s.status === "completada" || s.status === "devolucion") && s.tipo !== "carga_ol"
   );
 
   async function calcularKmRuta() {
@@ -2869,13 +2878,14 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
       let origen = PUDAHUEL_COORDS;
       let primera = true;
       for (const s of grupo) {
-        const dest = await geocodificar(s.direccion);
+        const dest = await coordsSolicitud(s);
         if (dest && origen) {
           const km = parseFloat(haversineKm(origen.lat, origen.lon, dest.lat, dest.lon));
           totalKm += km;
+          const etiquetaDestino = s.tipo === "li_devol" ? "Devolución → DHL" : s.direccion || s.destino || "";
           tramos.push({
             titulo: (ppu!=="Sin PPU"?ppu+" · ":"") + s.titulo,
-            direccion: (primera?"Desde Pudahuel → ":"Desde anterior → ") + s.direccion,
+            direccion: (primera?"Desde Pudahuel → ":"Desde anterior → ") + etiquetaDestino,
             km: km.toFixed(1),
           });
           origen = dest; primera = false;
