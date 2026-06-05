@@ -72,9 +72,9 @@ const CLIENTES_DEFAULT = [{"id":"000-2","nombre":"Dhl Atlantis","direccion":"","
 
 
 const CHOFERES = [
-  { nombre: "Felipe Hernandez", ppu: "KRYX27", usuarioDT: "Quantrex M1" },
-  { nombre: "Italo Loiza",      ppu: "PBGJ33", usuarioDT: "Quantrex M2" },
-  { nombre: "Cristian Donoso",  ppu: "PZGH22", usuarioDT: "Quantrex M1" },
+  { nombre: "Felipe Hernandez", ppu: "KRYX27", usuarioDT: "Quantrex M1", pin: "1981" },
+  { nombre: "Italo Loiza",      ppu: "PBGJ33", usuarioDT: "Quantrex M2", pin: "1981" },
+  { nombre: "Cristian Donoso",  ppu: "PZGH22", usuarioDT: "Quantrex M1", pin: "1981" },
 ];
 
 
@@ -2233,7 +2233,7 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
       {tab==="choferes"&&(
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",justifyContent:"flex-end"}}>
-            <button style={S.btnPri} onClick={()=>{setNuevoC(true);setEditC(null);setFormC({nombre:"",ppu:"",usuarioDT:"Quantrex M1"});}}>+ Nuevo chofer</button>
+            <button style={S.btnPri} onClick={()=>{setNuevoC(true);setEditC(null);setFormC({nombre:"",ppu:"",usuarioDT:"Quantrex M1",pin:"1981"});}}>+ Nuevo chofer</button>
           </div>
           {(nuevoC||editC!==null)&&(
             <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
@@ -2248,11 +2248,15 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
                     <option>Quantrex M1</option>
                     <option>Quantrex M2</option>
                   </select></div>
+                <div style={S.fGroup}><label style={S.label}>PIN (4 dígitos)</label>
+                  <input style={S.input} inputMode="numeric" maxLength={4} placeholder="Ej: 1981" value={formC.pin||""}
+                    onChange={e=>setFormC(p=>({...p,pin:e.target.value.replace(/\D/g,"").slice(0,4)}))}/></div>
               </div>
               <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
                 <button style={S.btnSec} onClick={()=>{setNuevoC(false);setEditC(null);}}>Cancelar</button>
                 <button style={S.btnPri} onClick={()=>{
                   if(!formC.nombre||!formC.ppu)return;
+                  if(!formC.pin||formC.pin.length!==4){return;}
                   const upd=editC!==null?listaC.map((c,i)=>i===editC?{...formC}:c):[...listaC,{...formC}];
                   setListaC(upd);setNuevoC(false);setEditC(null);
                   try{localStorage.setItem("qx:choferes",JSON.stringify(upd));}catch{}
@@ -2264,7 +2268,7 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
             <div key={i} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,fontSize:13}}>{c.nombre}</div>
-                <div style={{fontSize:12,color:C.muted}}>PPU: {c.ppu} · {c.usuarioDT}</div>
+                <div style={{fontSize:12,color:C.muted}}>PPU: {c.ppu} · {c.usuarioDT} · PIN: {c.pin||"—"}</div>
               </div>
               <div style={{display:"flex",gap:6}}>
                 <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{setEditC(i);setNuevoC(false);setFormC({...c});}}>✎ Editar</button>
@@ -2626,23 +2630,39 @@ function ModalFirma({ solId, onGuardar, onCerrar }) {
 
 // ── Login Chofer ───────────────────────────────────────────────────────────
 function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver}){
+  const [pin,setPin]=useState("");
+  const [err,setErr]=useState("");
+  const intentar=()=>{
+    const c=CHOFERES.find(ch=>ch.nombre===selChofer);
+    if(!c){setErr("Selecciona tu nombre.");return;}
+    if((c.pin||"")!==pin){setErr("PIN incorrecto.");return;}
+    setErr(""); onAcceder();
+  };
   return(
     <div style={{...S.section,maxWidth:400,margin:"40px auto"}}>
       <button style={S.backBtn} onClick={onVolver}>← Volver</button>
       <div style={{textAlign:"center",marginBottom:8}}>
         <img src={LOGO_QUANTREX} alt="Quantrex Abbott" style={{width:110,height:110,borderRadius:"50%",display:"block",margin:"0 auto 12px",boxShadow:"0 0 0 3px rgba(0,174,239,.12), 0 12px 36px rgba(0,0,0,.5), 0 0 44px rgba(0,174,239,.16)"}}/>
         <div style={S.pageTitle}>Acceso Choferes</div>
-        <div style={{fontSize:13,color:C.textSecondary,marginTop:4}}>Selecciona tu nombre para ver tus entregas del día</div>
+        <div style={{fontSize:13,color:C.textSecondary,marginTop:4}}>Selecciona tu nombre e ingresa tu PIN</div>
       </div>
       <div style={S.fGroup}>
         <label style={S.label}>Seleccionar chofer</label>
-        <select style={{...S.input,fontSize:15,padding:"12px"}} value={selChofer} onChange={e=>setSelChofer(e.target.value)}>
+        <select style={{...S.input,fontSize:15,padding:"12px"}} value={selChofer} onChange={e=>{setSelChofer(e.target.value);setErr("");}}>
           <option value="">-- Selecciona tu nombre --</option>
           {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
         </select>
       </div>
-      <button style={{...S.btnPri,width:"100%",padding:"14px",fontSize:15,opacity:selChofer?1:0.5}}
-        disabled={!selChofer} onClick={onAcceder}>Ingresar</button>
+      <div style={S.fGroup}>
+        <label style={S.label}>PIN (4 dígitos)</label>
+        <input style={{...S.input,fontSize:22,padding:"12px",letterSpacing:8,textAlign:"center"}} type="password" inputMode="numeric"
+          maxLength={4} placeholder="••••" value={pin}
+          onChange={e=>{setPin(e.target.value.replace(/\D/g,"").slice(0,4));setErr("");}}
+          onKeyDown={e=>{if(e.key==="Enter")intentar();}}/>
+      </div>
+      {err&&<div style={{color:C.danger,fontSize:13,marginBottom:10,textAlign:"center"}}>{err}</div>}
+      <button style={{...S.btnPri,width:"100%",padding:"14px",fontSize:15,opacity:(selChofer&&pin.length===4)?1:0.5}}
+        disabled={!selChofer||pin.length!==4} onClick={intentar}>Ingresar</button>
     </div>
   );
 }
