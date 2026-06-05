@@ -2875,21 +2875,30 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
     for (const ppu of Object.keys(porPpu)) {
       // Orden por hora de entrega real (o programada) para reflejar la secuencia del viaje
       const grupo = porPpu[ppu].slice().sort((a,b)=>(a.horaEntrega||a.hora||"").localeCompare(b.horaEntrega||b.hora||""));
+      const tipoCorto = t => ({entrega:"Entrega",li_retiro:"Retiro",li_devol:"Devolución"}[t] || (TYPE_META[t]?.label||t));
       let origen = PUDAHUEL_COORDS;
       let primera = true;
+      let prevTramo = null;
       for (const s of grupo) {
         const dest = await coordsSolicitud(s);
-        if (dest && origen) {
-          const km = parseFloat(haversineKm(origen.lat, origen.lon, dest.lat, dest.lon));
-          totalKm += km;
-          const etiquetaDestino = s.tipo === "li_devol" ? "Devolución → DHL" : s.direccion || s.destino || "";
-          tramos.push({
-            titulo: (ppu!=="Sin PPU"?ppu+" · ":"") + s.titulo,
-            direccion: (primera?"Desde Pudahuel → ":"Desde anterior → ") + etiquetaDestino,
-            km: km.toFixed(1),
-          });
-          origen = dest; primera = false;
+        if (!(dest && origen)) continue;
+        const km = parseFloat(haversineKm(origen.lat, origen.lon, dest.lat, dest.lon));
+        if (prevTramo && !primera && km === 0) {
+          // Mismo punto que la parada anterior: agrupar en una sola línea (no suma km)
+          prevTramo._ops.push(tipoCorto(s.tipo));
+          prevTramo.titulo = prevTramo._base + " (" + prevTramo._ops.join(" + ") + ")";
+          continue;
         }
+        totalKm += km;
+        const base = (ppu!=="Sin PPU"?ppu+" · ":"") + s.titulo;
+        const t = {
+          _base: base, _ops: [tipoCorto(s.tipo)],
+          titulo: base + " (" + tipoCorto(s.tipo) + ")",
+          km: km.toFixed(1),
+        };
+        tramos.push(t);
+        prevTramo = t;
+        origen = dest; primera = false;
       }
     }
     setKmData({ totalKm: totalKm.toFixed(1), tramos, nSols: solsHoy.length });
