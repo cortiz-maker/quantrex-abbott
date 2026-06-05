@@ -2803,9 +2803,9 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
   const [kmData, setKmData] = useState(null);
   const [calculando, setCalculando] = useState(false);
 
-  const hoy = new Date().toISOString().split("T")[0];
+  const hoy = new Date().toLocaleDateString("en-CA"); // fecha local (Chile), evita salto UTC
   const solsHoy = solicitudes.filter(s =>
-    s.fecha === hoy && s.direccion && s.status === "completada" && s.tipo !== "carga_ol"
+    s.fecha === hoy && s.direccion && (s.status === "completada" || s.status === "devolucion") && s.tipo !== "carga_ol"
   );
 
   async function calcularKmRuta() {
@@ -2834,7 +2834,14 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
     setCalculando(false);
   }
 
-  if (solsHoy.length === 0) return null;
+  if (solsHoy.length === 0 && rutas.filter(r=>r.fecha===hoy&&r.kmTotal).length===0) {
+    return (
+      <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Kilómetros del día</div>
+        <div style={{fontSize:12,color:C.muted}}>Aún no hay entregas completadas hoy. El cálculo aparecerá cuando se completen entregas con dirección.</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
