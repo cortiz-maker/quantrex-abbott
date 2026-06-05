@@ -206,6 +206,37 @@ async function calcularKmDesdePudahuel(direccionDestino) {
   } catch { return null; }
 }
 
+// Minutos del log más tardío >= 17:00 de una solicitud (o null si no hay).
+function ultimoLogPost17(log){
+  let max=null;
+  for(const e of (log||[])){
+    const p=(e.fechaHora||"").split(" "); if(p.length<2) continue;
+    const t=p[1].split(":"); const m=parseInt(t[0],10)*60+parseInt(t[1]||"0",10);
+    if(!isNaN(m)&&m>=17*60){ if(max===null||m>max) max=m; }
+  }
+  return max;
+}
+// IDs de solicitudes con COBRO Overnight:
+//  - carga_ol antes de 08:30 → por solicitud
+//  - log después de 17:00 → UNA por PPU (la más tardía); sin PPU → por solicitud
+function overnightIds(sols){
+  const ids=new Set();
+  const lateByPpu={};
+  for(const s of (sols||[])){
+    const h=(s.hora||"").split(":");
+    const mins=s.hora?parseInt(h[0],10)*60+parseInt(h[1]||"0",10):null;
+    if(s.tipo==="carga_ol" && mins!==null && !isNaN(mins) && mins<8*60+30) ids.add(s.id);
+    const t=ultimoLogPost17(s.statusLog);
+    if(t!==null){
+      const ppu=(s.ppuAsignada||"").trim();
+      if(!ppu){ ids.add(s.id); }
+      else if(!lateByPpu[ppu] || t>lateByPpu[ppu].t){ lateByPpu[ppu]={id:s.id,t}; }
+    }
+  }
+  for(const k of Object.keys(lateByPpu)) ids.add(lateByPpu[k].id);
+  return ids;
+}
+
 
 
 // ── Tabla SPOT Regional ────────────────────────────────────────────────────
@@ -483,20 +514,22 @@ function exportToExcel(solicitudes, nombreArchivo) {
   }
 
   const contD={}, contN={};
+  const ohIds = overnightIds(solicitudes); // cobro overnight (late = por PPU)
   const rows = solicitudes.map((s,i) => {
     const fecha=s.fecha||"sin-fecha";
     const mins=horaAMinutos(s.hora);
     const antes830=s.tipo==="carga_ol"&&mins!==null&&mins<8*60+30;
     const logTarde=logSuperaLas17(s.statusLog);
-    const esOH=antes830||logTarde;
+    const esOH=antes830||logTarde;          // clasificación: excluye del conteo SPOT diario
+    const ohCharge=ohIds.has(s.id);         // cobro real (late = una por PPU)
     // Carga OL fuera de horario no cuenta para el límite diario de 6
     if(!esOH) contD[fecha]=(contD[fecha]||0)+1;
     else if(!(contD[fecha])) contD[fecha]=contD[fecha]||0;
     const nro=contD[fecha];
     let esSpot=false;
     if(!esOH){contN[fecha]=(contN[fecha]||0)+1; esSpot=contN[fecha]>6;}
-    const cSpot=esSpot?PRECIO_SPOT:0, cOH=esOH?PRECIO_OVERNIGHT:0;
-    const motivoOH=esOH?[antes830?"Hora antes 08:30":null,logTarde?"Log después 17:00":null].filter(Boolean).join(" / "):"";
+    const cSpot=esSpot?PRECIO_SPOT:0, cOH=ohCharge?PRECIO_OVERNIGHT:0;
+    const motivoOH=ohCharge?[antes830?"Hora antes 08:30":null,logTarde?"Log después 17:00 (por PPU)":null].filter(Boolean).join(" / "):"";
     // Tiempo en punto solo para carga_ol, li_retiro, li_devol
     const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
     const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
@@ -509,7 +542,7 @@ function exportToExcel(solicitudes, nombreArchivo) {
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
       s.usuarioDT||"", s.ppuAsignada||"", nro,
       (s.statusLog||[]).map(e=>(e.fechaHora||"").split(" ")[1]||"").join(" | "),
-      esSpot?"Sí":"No", cSpot||"", esOH?"Sí":"No", motivoOH, cOH||"",
+      esSpot?"Sí":"No", cSpot||"", ohCharge?"Sí":"No", motivoOH, cOH||"",
       esSpotRegional?(regionSol?.label||""):"", cSpotRegional||"",
       (cSpot+cOH+cSpotRegional)||"",
       s.choferAsignado||"", tiempoEnPunto,
@@ -892,11 +925,12 @@ function GraficoCobros({ solicitudes }) {
   const P_SPOT=50000, P_OH=85000, M1=2840000, M2=2840000;
   function hm(h){if(!h)return null;const[hh,mm]=h.split(":").map(Number);return isNaN(hh)?null:hh*60+(mm||0);}
   function l17(log){return(log||[]).some(e=>{const p=(e.fechaHora||"").split(" ");if(p.length<2)return false;const m=hm(p[1]);return m!==null&&m>=17*60;});}
-  const contN={};let tSpot=0,tOH=0;
+  const contN={};let tSpot=0;
   solicitudes.forEach(s=>{
     const f=s.fecha||"x",m=hm(s.hora),a830=s.tipo==="carga_ol"&&m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
-    if(esOH){tOH++;}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
+    if(esOH){/* entrega fuera de horario: no cuenta para el límite SPOT diario */}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
   });
+  const tOH=overnightIds(solicitudes).size; // cobro overnight: log tarde = una por PPU
   // SPOT Regional — recargo por destinos fuera de la RM (misma tabla del Excel)
   let mSpotReg=0, nSpotReg=0;
   solicitudes.forEach(s=>{
@@ -969,12 +1003,13 @@ function ResumenMes({solicitudes}){
   const P_SPOT=50000,P_OH=85000,M1=2840000,M2=2840000;
   function hm(h){if(!h)return null;const[hh,mm]=h.split(":").map(Number);return isNaN(hh)?null:hh*60+(mm||0);}
   function l17(log){return(log||[]).some(e=>{const p=(e.fechaHora||"").split(" ");if(p.length<2)return false;const m=hm(p[1]);return m!==null&&m>=17*60;});}
-  const contD={},contN={};let tSpot=0,tOH=0;
+  const contD={},contN={};let tSpot=0;
   solicitudes.forEach(s=>{
     const f=s.fecha||"sin-fecha",m=hm(s.hora);
     const a830=s.tipo==="carga_ol"&&m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
-    if(esOH){tOH++;}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
+    if(esOH){/* fuera de horario: no cuenta para el límite SPOT diario */}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
   });
+  const tOH=overnightIds(solicitudes).size; // cobro overnight: log tarde = una por PPU
   const mSpot=tSpot*P_SPOT,mOH=tOH*P_OH,tMov=M1+M2;
   const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(2840000/30);
   const gran=mSpot+mOH+tMov-tNP;
@@ -2809,11 +2844,11 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
   );
 
   async function calcularKmRuta() {
-    if (solsHoy.length === 0) return;
+    if (solsHoy.length === 0 && rutas.filter(r=>r.fecha===hoy&&r.kmTotal).length===0) return;
     setCalculando(true);
     let totalKm = 0;
     const tramos = [];
-    // Primero agregar km de rutas completas (sin duplicar solicitudes)
+    // 1) Rutas formales de hoy: ya vienen encadenadas (kmTotal)
     const rutasHoy = rutas.filter(r => r.fecha === hoy && r.kmTotal);
     const solsEnRuta = new Set();
     for (const r of rutasHoy) {
@@ -2821,13 +2856,30 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
       totalKm += parseFloat(r.kmTotal);
       tramos.push({ titulo: r.id + " · " + r.vehiculo, direccion: "Ruta completa", km: r.kmTotal });
     }
-    // Luego agregar solicitudes que NO están en ninguna ruta
-    for (const s of solsHoy) {
-      if (solsEnRuta.has(s.id)) continue;
-      const km = await calcularKmDesdePudahuel(s.direccion);
-      if (km !== null) {
-        totalKm += parseFloat(km);
-        tramos.push({ titulo: s.titulo, direccion: s.direccion, km });
+    // 2) Solicitudes sueltas: agrupar por PPU y ENCADENAR (Pudahuel → s1 → s2 → ...)
+    const sueltas = solsHoy.filter(s => !solsEnRuta.has(s.id));
+    const porPpu = {};
+    for (const s of sueltas) {
+      const ppu = (s.ppuAsignada || "").trim() || "Sin PPU";
+      (porPpu[ppu] = porPpu[ppu] || []).push(s);
+    }
+    for (const ppu of Object.keys(porPpu)) {
+      // Orden por hora de entrega real (o programada) para reflejar la secuencia del viaje
+      const grupo = porPpu[ppu].slice().sort((a,b)=>(a.horaEntrega||a.hora||"").localeCompare(b.horaEntrega||b.hora||""));
+      let origen = PUDAHUEL_COORDS;
+      let primera = true;
+      for (const s of grupo) {
+        const dest = await geocodificar(s.direccion);
+        if (dest && origen) {
+          const km = parseFloat(haversineKm(origen.lat, origen.lon, dest.lat, dest.lon));
+          totalKm += km;
+          tramos.push({
+            titulo: (ppu!=="Sin PPU"?ppu+" · ":"") + s.titulo,
+            direccion: (primera?"Desde Pudahuel → ":"Desde anterior → ") + s.direccion,
+            km: km.toFixed(1),
+          });
+          origen = dest; primera = false;
+        }
       }
     }
     setKmData({ totalKm: totalKm.toFixed(1), tramos, nSols: solsHoy.length });
