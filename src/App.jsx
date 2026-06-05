@@ -413,6 +413,40 @@ async function saveClientes(data) {
     await sbFetch("POST","clientes",{id:"lista",data:data},"?on_conflict=id");
   } catch(e) { console.error(e); }
 }
+async function loadUsuarios() {
+  try {
+    const data = await sbFetch("GET","usuarios","","?order=updated_at.asc");
+    if(!data||!data.length) return null;
+    return data.map(u=>({email:u.email,password:u.password,perfil:u.perfil,nombre:u.nombre}));
+  } catch(e) { return null; }
+}
+async function saveUsuarios(data) {
+  try {
+    await sbFetch("DELETE","usuarios",null,"?id=not.is.null");
+    const rows=(data||[]).filter(Boolean).map(u=>({
+      id:u.email, email:u.email, password:u.password, perfil:u.perfil, nombre:u.nombre,
+      updated_at:new Date().toISOString(),
+    }));
+    if(rows.length) await sbFetch("POST","usuarios",rows,"?on_conflict=id");
+  } catch(e) { console.error(e); }
+}
+async function loadChoferes() {
+  try {
+    const data = await sbFetch("GET","choferes","","?order=updated_at.asc");
+    if(!data||!data.length) return null;
+    return data.map(c=>({nombre:c.nombre,ppu:c.ppu,usuarioDT:c.usuario_dt,pin:c.pin}));
+  } catch(e) { return null; }
+}
+async function saveChoferes(data) {
+  try {
+    await sbFetch("DELETE","choferes",null,"?id=not.is.null");
+    const rows=(data||[]).filter(Boolean).map(c=>({
+      id:c.nombre, nombre:c.nombre, ppu:c.ppu, usuario_dt:c.usuarioDT, pin:c.pin,
+      updated_at:new Date().toISOString(),
+    }));
+    if(rows.length) await sbFetch("POST","choferes",rows,"?on_conflict=id");
+  } catch(e) { console.error(e); }
+}
 function registrarAcceso(email) {
   try {
     const key = "qx:acceso:" + email;
@@ -651,9 +685,8 @@ export default function QuantrexAbbott() {
   const [toast,setToast]=useState(null);
   const [rutas,setRutas]=useState([]);
   const [sidebarOpen,setSidebarOpen]=useState(false);
-  const [usuarios,setUsuarios]=useState(()=>{
-    try{const u=localStorage.getItem("qx:usuarios");return u?JSON.parse(u):USUARIOS;}catch{return USUARIOS;}
-  });
+  const [usuarios,setUsuarios]=useState(USUARIOS);
+  const [choferes,setChoferes]=useState(CHOFERES);
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
   });
@@ -666,7 +699,7 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas()]).then(([s,c,p,cl,r])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes()]).then(async ([s,c,p,cl,r,us,ch])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -899,9 +932,9 @@ export default function QuantrexAbbott() {
       {sesion?.perfil==="admin"&&sidebarOpen&&<div style={{position:"fixed",inset:0,background:"#0006",zIndex:199}} onClick={()=>setSidebarOpen(false)}/>}
       <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
-        :!sesion?(<PantallaLogin onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}registrarAcceso(u.email);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
+        :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}registrarAcceso(u.email);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
-        :view==="chofer_login"?(<LoginChofer selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=CHOFERES.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
+        :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
             setView={setView} setSelectedId={setSelectedId}
@@ -910,10 +943,10 @@ export default function QuantrexAbbott() {
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
             onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion}
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
-        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas}/>)
+        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
-            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes}/>)
-        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={CHOFERES} onSave={(u,c)=>{setUsuarios(u);try{localStorage.setItem("qx:usuarios",JSON.stringify(u));}catch{};}} setView={setView}/>)
+            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes}/>)
+        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} onSave={async (u,c)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}}} setView={setView}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
@@ -1231,7 +1264,7 @@ function SolicitudRow({sol,onSelect}){
 }
 
 // ── Detalle ────────────────────────────────────────────────────────────────
-function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[]}){
+function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES}){
   const esAdmin=sesion?.perfil==="admin";
   const tm=TYPE_META[sol.tipo]||{label:sol.tipo,icon:"·",color:"#6B8CAE"};
   const sm=STATUS_META[sol.status]||{label:sol.status,color:"#6B8CAE"};
@@ -1304,7 +1337,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         <div style={S.fGroup}><label style={S.label}>Chofer Asignado</label>
           <select style={S.input} value={editForm.choferAsignado||""} onChange={fe("choferAsignado")}>
             <option value="">-- Seleccionar --</option>
-            {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+            {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
           </select></div>
         <div style={S.fGroup}><label style={S.label}>OT Quantrex</label>
           <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={editForm.ot||""} readOnly/></div>
@@ -1527,7 +1560,7 @@ function LogEstados({log,solId,onEditLog,esAdmin=true}){
 }
 
 // ── FormNueva ──────────────────────────────────────────────────────────────
-function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[],rutas=[]}){
+function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[],rutas=[],choferes=CHOFERES}){
   const f=k=>e=>setForm(p=>{
     const u={...p,[k]:e.target.value};
     if(k==="tipo")u.prioridad=PRIORIDAD_DEFAULT[e.target.value]||"normal";
@@ -1626,7 +1659,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         <div style={S.fGroup}><label style={S.label}>Chofer Asignado</label>
           <select style={S.input} value={form.choferAsignado} onChange={f("choferAsignado")}>
             <option value="">-- Seleccionar --</option>
-            {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+            {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
           </select></div>
         <div style={S.fGroup}><label style={S.label}>Asignar a Ruta</label>
           <select style={S.input} value={form.rutaId} onChange={f("rutaId")}>
@@ -1673,16 +1706,17 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
 
 
 // ── Pantalla Login ─────────────────────────────────────────────────────────
-function PantallaLogin({onLogin}){
+function PantallaLogin({onLogin,usuarios=USUARIOS,choferes=CHOFERES}){
   const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [error,setError]=useState("");
   const [modo,setModo]=useState("login");
   const [cambioRequerido,setCambioRequerido]=useState(null);
   const [nuevaPassword,setNuevaPassword]=useState("");
+  const [pinChofer,setPinChofer]=useState("");
 
   function handleLogin(){
-    const u=USUARIOS.find(u=>u.email===email&&u.password===password);
+    const u=usuarios.find(u=>u.email===email&&u.password===password);
     if(u){
       if(debeCambiarPassword(u)){
         setCambioRequerido(u);
@@ -1746,21 +1780,29 @@ function PantallaLogin({onLogin}){
           </>
         ):(
           <>
-            <div style={{textAlign:"center",fontSize:13,color:C.textSecondary}}>Selecciona tu nombre para ver tus entregas del día</div>
+            <div style={{textAlign:"center",fontSize:13,color:C.textSecondary}}>Selecciona tu nombre e ingresa tu PIN para ver tus entregas del día</div>
             <div style={S.fGroup}>
               <label style={S.label}>Chofer</label>
-              <select style={{...S.input,fontSize:15,padding:"12px"}} value={email} onChange={e=>setEmail(e.target.value)}>
+              <select style={{...S.input,fontSize:15,padding:"12px"}} value={email} onChange={e=>{setEmail(e.target.value);setError("");}}>
                 <option value="">-- Selecciona tu nombre --</option>
-                {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+                {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
               </select>
             </div>
-            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15,opacity:email?1:0.5}}
-              disabled={!email}
-              onClick={()=>{const c=CHOFERES.find(ch=>ch.nombre===email);if(c)onLogin({...c,perfil:"chofer",nombre:c.nombre});}}>
+            <div style={S.fGroup}>
+              <label style={S.label}>PIN (4 dígitos)</label>
+              <input style={{...S.input,fontSize:22,padding:"12px",letterSpacing:8,textAlign:"center"}} type="password" inputMode="numeric"
+                maxLength={4} placeholder="••••" value={pinChofer}
+                onChange={e=>{setPinChofer(e.target.value.replace(/\D/g,"").slice(0,4));setError("");}}
+                onKeyDown={e=>{if(e.key==="Enter"){const c=choferes.find(ch=>ch.nombre===email);if(c&&(c.pin||"")===pinChofer)onLogin({...c,perfil:"chofer",nombre:c.nombre});else setError("Chofer o PIN incorrecto.");}}}/>
+            </div>
+            {error&&<div style={{color:C.danger,fontSize:13,fontWeight:600,textAlign:"center"}}>{error}</div>}
+            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15,opacity:(email&&pinChofer.length===4)?1:0.5}}
+              disabled={!email||pinChofer.length!==4}
+              onClick={()=>{const c=choferes.find(ch=>ch.nombre===email);if(c&&(c.pin||"")===pinChofer)onLogin({...c,perfil:"chofer",nombre:c.nombre});else setError("Chofer o PIN incorrecto.");}}>
               Ingresar como Chofer
             </button>
             <button style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:13,textAlign:"center"}}
-              onClick={()=>{setModo("login");setEmail("");}}>
+              onClick={()=>{setModo("login");setEmail("");setPinChofer("");setError("");}}>
               ← Volver al login
             </button>
           </>
@@ -2259,7 +2301,7 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
                   if(!formC.pin||formC.pin.length!==4){return;}
                   const upd=editC!==null?listaC.map((c,i)=>i===editC?{...formC}:c):[...listaC,{...formC}];
                   setListaC(upd);setNuevoC(false);setEditC(null);
-                  try{localStorage.setItem("qx:choferes",JSON.stringify(upd));}catch{}
+                  onSave(null,upd);
                 }}>Guardar</button>
               </div>
             </div>
@@ -2272,7 +2314,7 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
               </div>
               <div style={{display:"flex",gap:6}}>
                 <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{setEditC(i);setNuevoC(false);setFormC({...c});}}>✎ Editar</button>
-                <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{const upd=listaC.filter((_,j)=>j!==i);setListaC(upd);try{localStorage.setItem("qx:choferes",JSON.stringify(upd));}catch{};}}>✕</button>
+                <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{const upd=listaC.filter((_,j)=>j!==i);setListaC(upd);onSave(null,upd);}}>✕</button>
               </div>
             </div>
           ))}
@@ -2629,11 +2671,11 @@ function ModalFirma({ solId, onGuardar, onCerrar }) {
 }
 
 // ── Login Chofer ───────────────────────────────────────────────────────────
-function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver}){
+function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver,choferes=CHOFERES}){
   const [pin,setPin]=useState("");
   const [err,setErr]=useState("");
   const intentar=()=>{
-    const c=CHOFERES.find(ch=>ch.nombre===selChofer);
+    const c=choferes.find(ch=>ch.nombre===selChofer);
     if(!c){setErr("Selecciona tu nombre.");return;}
     if((c.pin||"")!==pin){setErr("PIN incorrecto.");return;}
     setErr(""); onAcceder();
@@ -2650,7 +2692,7 @@ function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver}){
         <label style={S.label}>Seleccionar chofer</label>
         <select style={{...S.input,fontSize:15,padding:"12px"}} value={selChofer} onChange={e=>{setSelChofer(e.target.value);setErr("");}}>
           <option value="">-- Selecciona tu nombre --</option>
-          {CHOFERES.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+          {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
         </select>
       </div>
       <div style={S.fGroup}>
