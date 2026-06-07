@@ -3404,7 +3404,7 @@ function ResumenCO2({ solicitudes, rutas=[] }) {
           </div>
         </>
       ):(
-        <div style={{fontSize:12,color:C.muted}}>{solsConDireccion.length} entregas completadas. Presiona para calcular el CO₂ del período.</div>
+        <div style={{fontSize:12,color:C.muted}}>Presiona para calcular el CO₂ del período.</div>
       )}
     </div>
   );
