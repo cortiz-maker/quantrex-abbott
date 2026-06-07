@@ -39,7 +39,7 @@ const EMPTY_FORM = {
   hora: new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}),
   contacto:"", guia:"", prioridad:"urgente", notas:"",
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
-  destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[],
+  destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[], devolucionUrgente:false,
 };
 
 
@@ -234,6 +234,8 @@ function overnightIds(sols){
   const ids=new Set();
   const lateByPpu={};
   for(const s of (sols||[])){
+    // Devolución normal: no genera overnight (no se cobra). La urgente sí participa.
+    if(s.tipo==="li_devol" && s.devolucionUrgente!==true) continue;
     const h=(s.hora||"").split(":");
     const mins=s.hora?parseInt(h[0],10)*60+parseInt(h[1]||"0",10):null;
     if(s.tipo==="carga_ol" && mins!==null && !isNaN(mins) && mins<8*60+30) ids.add(s.id);
@@ -246,6 +248,78 @@ function overnightIds(sols){
   }
   for(const k of Object.keys(lateByPpu)) ids.add(lateByPpu[k].id);
   return ids;
+}
+
+// ── Motor de cobros centralizado ───────────────────────────────────────────
+// Reglas acordadas:
+//  SPOT Extra ($50.000): contador GLOBAL por día (todas las PPU juntas). Desde la 7ma
+//    gestión del día, cada una es SPOT. NO cuentan: Carga OL (siempre) ni Devolución normal.
+//    La Devolución urgente sí cuenta.
+//  Overnight ($85.000), por PPU y por día:
+//    · Temprano: PPU con ≥1 solicitud (≠ Carga OL, ≠ Devolución normal) agendada antes de 08:30.
+//    · Tarde: PPU con ≥1 registro de log ≥17:00 (se cobra la que cierra más tarde).
+//    · Temprano y tarde se cobran AMBOS (hasta 2 por PPU/día).
+//  Prevalece overnight: si una misma solicitud es SPOT y además genera el cobro overnight,
+//    se cobra solo overnight (se suprime su SPOT).
+const PRECIO_SPOT = 50000, PRECIO_OVERNIGHT = 85000;
+function _minHora(h){ if(!h) return null; const p=String(h).split(":"); const hh=parseInt(p[0],10); const mm=parseInt(p[1]||"0",10); return isNaN(hh)?null:hh*60+mm; }
+function calcularCobros(solicitudes){
+  const sols = solicitudes || [];
+  const perId = {};
+  for(const s of sols){
+    const esCargaOL = s.tipo==="carga_ol";
+    const esDevol = s.tipo==="li_devol";
+    const esDevolUrg = esDevol && s.devolucionUrgente===true;
+    const esDevolNormal = esDevol && !esDevolUrg;
+    perId[s.id] = { esSpot:false, ohEarly:false, ohLate:false, nro:0,
+      _cargaOL:esCargaOL, _devolNormal:esDevolNormal,
+      _cuenta: !esCargaOL && !esDevolNormal };
+  }
+  // SPOT: contador global por día (orden del arreglo)
+  const contN = {};
+  for(const s of sols){
+    const r = perId[s.id]; if(!r || !r._cuenta) continue;
+    const f = s.fecha || "sin-fecha";
+    contN[f] = (contN[f]||0) + 1;
+    r.nro = contN[f];
+    if(contN[f] > 6) r.esSpot = true;
+  }
+  // Overnight TEMPRANO: por (fecha+PPU); candidata ≠CargaOL, ≠DevolNormal, hora<08:30
+  const earlyRep = {}; const earlyNoPpu = [];
+  for(const s of sols){
+    const r = perId[s.id]; if(!r || r._cargaOL || r._devolNormal) continue;
+    const mins = _minHora(s.hora);
+    if(mins===null || mins >= 8*60+30) continue;
+    const ppu = (s.ppuAsignada||"").trim();
+    if(!ppu){ earlyNoPpu.push(s.id); continue; }
+    const k = (s.fecha||"x")+"|"+ppu;
+    if(!earlyRep[k] || mins < earlyRep[k].mins) earlyRep[k] = {id:s.id, mins};
+  }
+  for(const k of Object.keys(earlyRep)) perId[earlyRep[k].id].ohEarly = true;
+  for(const id of earlyNoPpu) perId[id].ohEarly = true;
+  // Overnight TARDE: por (fecha+PPU); candidata ≠DevolNormal con registro de log ≥17:00
+  const lateRep = {}; const lateNoPpu = [];
+  for(const s of sols){
+    const r = perId[s.id]; if(!r || r._devolNormal) continue;
+    const t = ultimoLogPost17(s.statusLog);
+    if(t===null) continue;
+    const ppu = (s.ppuAsignada||"").trim();
+    if(!ppu){ lateNoPpu.push(s.id); continue; }
+    const k = (s.fecha||"x")+"|"+ppu;
+    if(!lateRep[k] || t > lateRep[k].t) lateRep[k] = {id:s.id, t};
+  }
+  for(const k of Object.keys(lateRep)) perId[lateRep[k].id].ohLate = true;
+  for(const id of lateNoPpu) perId[id].ohLate = true;
+  // Prevalece overnight sobre SPOT
+  let spotCount = 0, ohCount = 0;
+  for(const s of sols){
+    const r = perId[s.id]; if(!r) continue;
+    if(r.esSpot && (r.ohEarly||r.ohLate)) r.esSpot = false;
+    if(r.esSpot) spotCount++;
+    if(r.ohEarly) ohCount++;
+    if(r.ohLate) ohCount++;
+  }
+  return { perId, spotCount, ohCount, montoSpot: spotCount*PRECIO_SPOT, montoOH: ohCount*PRECIO_OVERNIGHT };
 }
 
 
@@ -308,6 +382,7 @@ async function loadSolicitudes() {
       fotoEntrega:s.foto_entrega, firmaReceptor:s.firma_receptor,
       nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
       canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
+      devolucionUrgente:s.devolucion_urgente||false,
       updatedAt:s.updated_at, createdAt:s.created_at,
     }));
   } catch(e) { console.error(e); return []; }
@@ -333,6 +408,7 @@ async function saveSolicitud(s) {
       foto_entrega:s.fotoEntrega||null, firma_receptor:s.firmaReceptor||null,
       nombre_receptor:s.nombreReceptor||null, rechazo_firma:s.rechazoFirma||false,
       cancelado_por:s.canceladoPor||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
+      devolucion_urgente:s.devolucionUrgente||false,
       updated_at:new Date().toISOString(),
     };
     // UPSERT - insert o update si ya existe
@@ -558,23 +634,15 @@ async function exportToExcel(solicitudes, nombreArchivo) {
     return (log||[]).some(e => { const p=(e.fechaHora||"").split(" "); if(p.length<2)return false; const m=horaAMinutos(p[1]); return m!==null&&m>=17*60; });
   }
 
-  const contD={}, contN={};
-  const ohIds = overnightIds(solicitudes); // cobro overnight (late = por PPU)
+  const cobros = calcularCobros(solicitudes);
   const rows = solicitudes.map((s,i) => {
-    const fecha=s.fecha||"sin-fecha";
-    const mins=horaAMinutos(s.hora);
-    const antes830=s.tipo==="carga_ol"&&mins!==null&&mins<8*60+30;
-    const logTarde=logSuperaLas17(s.statusLog);
-    const esOH=antes830||logTarde;          // clasificación: excluye del conteo SPOT diario
-    const ohCharge=ohIds.has(s.id);         // cobro real (late = una por PPU)
-    // Carga OL fuera de horario no cuenta para el límite diario de 6
-    if(!esOH) contD[fecha]=(contD[fecha]||0)+1;
-    else if(!(contD[fecha])) contD[fecha]=contD[fecha]||0;
-    const nro=contD[fecha];
-    let esSpot=false;
-    if(!esOH){contN[fecha]=(contN[fecha]||0)+1; esSpot=contN[fecha]>6;}
-    const cSpot=esSpot?PRECIO_SPOT:0, cOH=ohCharge?PRECIO_OVERNIGHT:0;
-    const motivoOH=ohCharge?[antes830?"Hora antes 08:30":null,logTarde?"Log después 17:00 (por PPU)":null].filter(Boolean).join(" / "):"";
+    const r = cobros.perId[s.id] || {esSpot:false,ohEarly:false,ohLate:false,nro:0};
+    const esSpot = r.esSpot;
+    const ohEarly = r.ohEarly, ohLate = r.ohLate, ohCharge = ohEarly||ohLate;
+    const nro = r.nro;
+    const cSpot = esSpot?PRECIO_SPOT:0;
+    const cOH = (ohEarly?PRECIO_OVERNIGHT:0)+(ohLate?PRECIO_OVERNIGHT:0);
+    const motivoOH = [ohEarly?"Antes 08:30":null, ohLate?"Cierre ≥17:00 (más tardío por PPU)":null].filter(Boolean).join(" / ");
     // Tiempo en punto solo para carga_ol, li_retiro, li_devol
     const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
     const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
@@ -595,11 +663,11 @@ async function exportToExcel(solicitudes, nombreArchivo) {
       s.noPresentacion?DESCUENTO_DIA:""];
   });
 
-  const totalSpot=rows.filter(r=>r[15]==="Sí").length;
-  const totalOH=rows.filter(r=>r[17]==="Sí").length;
+  const totalSpot=cobros.spotCount;
+  const totalOH=cobros.ohCount;
   const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[21])||0),0);
   const cantSpotRegional=rows.filter(r=>(Number(r[21])||0)>0).length;
-  const totalCobro=totalSpot*PRECIO_SPOT+totalOH*PRECIO_OVERNIGHT+totalSpotRegional;
+  const totalCobro=cobros.montoSpot+cobros.montoOH+totalSpotRegional;
   const totalNP=solicitudes.filter(s=>s.noPresentacion).length;
   const totalDescNP=totalNP*DESCUENTO_DIA;
   const granTotal=totalCobro+COBRO_M1+COBRO_M2-totalDescNP;
@@ -977,14 +1045,9 @@ export default function QuantrexAbbott() {
 
 function GraficoCobros({ solicitudes }) {
   const P_SPOT=50000, P_OH=85000, M1=2840000, M2=2840000;
-  function hm(h){if(!h)return null;const[hh,mm]=h.split(":").map(Number);return isNaN(hh)?null:hh*60+(mm||0);}
-  function l17(log){return(log||[]).some(e=>{const p=(e.fechaHora||"").split(" ");if(p.length<2)return false;const m=hm(p[1]);return m!==null&&m>=17*60;});}
-  const contN={};let tSpot=0;
-  solicitudes.forEach(s=>{
-    const f=s.fecha||"x",m=hm(s.hora),a830=s.tipo==="carga_ol"&&m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
-    if(esOH){/* entrega fuera de horario: no cuenta para el límite SPOT diario */}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
-  });
-  const tOH=overnightIds(solicitudes).size; // cobro overnight: log tarde = una por PPU
+  const cobros=calcularCobros(solicitudes);
+  const tSpot=cobros.spotCount;
+  const tOH=cobros.ohCount;
   // SPOT Regional — recargo por destinos fuera de la RM (misma tabla del Excel)
   let mSpotReg=0, nSpotReg=0;
   solicitudes.forEach(s=>{
@@ -1055,15 +1118,9 @@ function GraficoCobros({ solicitudes }) {
 
 function ResumenMes({solicitudes}){
   const P_SPOT=50000,P_OH=85000,M1=2840000,M2=2840000;
-  function hm(h){if(!h)return null;const[hh,mm]=h.split(":").map(Number);return isNaN(hh)?null:hh*60+(mm||0);}
-  function l17(log){return(log||[]).some(e=>{const p=(e.fechaHora||"").split(" ");if(p.length<2)return false;const m=hm(p[1]);return m!==null&&m>=17*60;});}
-  const contD={},contN={};let tSpot=0;
-  solicitudes.forEach(s=>{
-    const f=s.fecha||"sin-fecha",m=hm(s.hora);
-    const a830=s.tipo==="carga_ol"&&m!==null&&m<8*60+30,lT=l17(s.statusLog),esOH=a830||lT;
-    if(esOH){/* fuera de horario: no cuenta para el límite SPOT diario */}else{contN[f]=(contN[f]||0)+1;if(contN[f]>6)tSpot++;}
-  });
-  const tOH=overnightIds(solicitudes).size; // cobro overnight: log tarde = una por PPU
+  const cobros=calcularCobros(solicitudes);
+  const tSpot=cobros.spotCount;
+  const tOH=cobros.ohCount;
   const mSpot=tSpot*P_SPOT,mOH=tOH*P_OH,tMov=M1+M2;
   const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(2840000/30);
   const gran=mSpot+mOH+tMov-tNP;
@@ -1284,6 +1341,17 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
   const [editForm,setEditForm]=useState({...sol});
   const fe=k=>e=>{
     const upd={...editForm,[k]:e.target.value};
+    if(k==="tipo"){
+      upd.prioridad=PRIORIDAD_DEFAULT[e.target.value]||editForm.prioridad;
+      if(e.target.value==="li_devol"){
+        const dhl=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)==="000-2 - Dhl Atlantis");
+        upd.destino="000-2 - Dhl Atlantis";
+        upd.direccion=dhl?.direccion||editForm.direccion;
+        if(!editForm.hora)upd.hora="16:30";
+      } else {
+        upd.devolucionUrgente=false;
+      }
+    }
     if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){upd.direccion=s.direccion;upd.notas=s.notas;}}
     setEditForm(upd);
   };
@@ -1315,9 +1383,9 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
               return [...base,...subs];
             })}
           </select></div>
-        {editForm.titulo==="000-2 - Dhl Atlantis"&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
+        {(editForm.titulo==="000-2 - Dhl Atlantis"||editForm.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
-          <select style={S.input} value={editForm.destino||""} onChange={e=>{
+          <select style={{...S.input,...(editForm.tipo==="li_devol"?{opacity:0.7,cursor:"not-allowed"}:{})}} value={editForm.destino||""} disabled={editForm.tipo==="li_devol"} onChange={e=>{
             const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
             setEditForm(p=>({...p,destino:e.target.value,
               direccion:sel?.direccion||p.direccion,
@@ -1334,7 +1402,9 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
               });
               return [...base,...subs];
             })}
-          </select></div>}
+          </select>
+          {editForm.tipo==="li_devol"&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Destino fijo: bodega DHL (devolución a operador logístico).</div>}
+          </div>}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={editForm.fecha} onChange={fe("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
@@ -1381,6 +1451,13 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           <textarea style={{...S.input,minHeight:60,resize:"vertical"}} value={editForm.descripcion} onChange={fe("descripcion")}/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas internas Quantrex</label>
           <textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={editForm.notas} onChange={fe("notas")}/></div>
+        {editForm.tipo==="li_devol"&&<div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
+          <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+            <input type="checkbox" checked={editForm.devolucionUrgente||false} onChange={e=>setEditForm(p=>({...p,devolucionUrgente:e.target.checked}))}/>
+            <span style={{color:C.warning}}>Devolución urgente exigida por Abbott — cuenta para cobro</span>
+          </label>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Las devoluciones normales no se cobran ni cuentan al límite diario. Marca esto solo si Abbott exigió un viaje extra por insumos urgentes.</div>
+        </div>}
         <div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
             <input type="checkbox" checked={editForm.noPresentacion||false} onChange={e=>setEditForm(p=>({...p,noPresentacion:e.target.checked,vehiculoNP:"",motivoNP:""}))}/>
@@ -1572,7 +1649,18 @@ function LogEstados({log,solId,onEditLog,esAdmin=true}){
 function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[],rutas=[],choferes=CHOFERES}){
   const f=k=>e=>setForm(p=>{
     const u={...p,[k]:e.target.value};
-    if(k==="tipo")u.prioridad=PRIORIDAD_DEFAULT[e.target.value]||"normal";
+    if(k==="tipo"){
+      u.prioridad=PRIORIDAD_DEFAULT[e.target.value]||"normal";
+      if(e.target.value==="li_devol"){
+        const dhl=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)==="000-2 - Dhl Atlantis");
+        u.destino="000-2 - Dhl Atlantis";
+        u.direccion=dhl?.direccion||p.direccion;
+        u.notas=dhl?.notas||p.notas;
+        u.hora="16:30";
+      } else {
+        u.devolucionUrgente=false;
+      }
+    }
     if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){u.direccion=s.direccion;u.notas=s.notas;u.destino="";}}
     return u;
   });
@@ -1612,9 +1700,9 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
             </div>
           </div>):null;
         })()}
-        {form.titulo==="000-2 - Dhl Atlantis"&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
+        {(form.titulo==="000-2 - Dhl Atlantis"||form.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
-          <select style={S.input} value={form.destino} onChange={e=>{
+          <select style={{...S.input,...(form.tipo==="li_devol"?{opacity:0.7,cursor:"not-allowed"}:{})}} value={form.destino} disabled={form.tipo==="li_devol"} onChange={e=>{
             const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
             setForm(p=>({...p,destino:e.target.value,
               direccion:sel?.direccion||p.direccion,
@@ -1631,7 +1719,9 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
               });
               return [...base,...subs];
             })}
-          </select></div>}
+          </select>
+          {form.tipo==="li_devol"&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Destino fijo: bodega DHL (devolución a operador logístico).</div>}
+          </div>}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={form.fecha} onChange={f("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
@@ -1683,6 +1773,13 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           <textarea style={{...S.input,minHeight:60,resize:"vertical"}} placeholder="Detalle de la carga..." value={form.descripcion} onChange={f("descripcion")}/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas internas Quantrex</label>
           <textarea style={{...S.input,minHeight:50,resize:"vertical"}} placeholder="Instrucciones al equipo..." value={form.notas} onChange={f("notas")}/></div>
+        {form.tipo==="li_devol"&&<div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4}}>
+          <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+            <input type="checkbox" checked={form.devolucionUrgente||false} onChange={e=>setForm(p=>({...p,devolucionUrgente:e.target.checked}))}/>
+            <span style={{color:C.warning}}>Devolución urgente exigida por Abbott — cuenta para cobro</span>
+          </label>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Las devoluciones normales (fin de jornada a bodega) no se cobran ni cuentan al límite diario. Marca esto solo si Abbott exigió un viaje extra por insumos urgentes.</div>
+        </div>}
         <div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
             <input type="checkbox" checked={form.noPresentacion} onChange={e=>setForm(p=>({...p,noPresentacion:e.target.checked,vehiculoNP:"",motivoNP:""}))}/>
