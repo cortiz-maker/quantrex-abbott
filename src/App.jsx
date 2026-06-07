@@ -37,6 +37,19 @@ const PRIORIDAD_DEFAULT = {
 const CARGA_OL_CLIENTES = ["000-2 - Dhl Atlantis","81.378.300-2 - Abbott Laboratories De Chile"];
 const DESTINOS_CARGA_OL = ["Ruta Programada","Despacho Coordinado","Ruta/Despacho No Programada"];
 
+// Resuelve un valor del desplegable (cliente o "cliente — sucursal") a sus datos
+function resolverDestino(value, clientes){
+  if(!value) return null;
+  for(const c of (clientes||[])){
+    const label = c.id?c.id+" - "+c.nombre:c.nombre;
+    if(label===value) return {direccion:c.direccion||"", notas:c.notas||"", contacto:c.contacto||"", nombre:c.nombre};
+    for(const su of (c.sucursales||[])){
+      if(label+" — "+su.nombre===value) return {direccion:su.direccion||c.direccion||"", notas:su.notas||c.notas||"", contacto:su.contacto||c.contacto||"", nombre:c.nombre+" — "+su.nombre};
+    }
+  }
+  return null;
+}
+
 const EMPTY_FORM = {
   tipo:"entrega", titulo:"", descripcion:"", direccion:"",
   fecha: new Date().toISOString().split("T")[0],
@@ -288,10 +301,10 @@ function calcularCobros(solicitudes){
     r.nro = contN[f];
     if(contN[f] > 6) r.esSpot = true;
   }
-  // Overnight TEMPRANO: por (fecha+PPU); candidata ≠CargaOL, ≠DevolNormal, hora<08:30
+  // Overnight TEMPRANO: solo Carga OL agendada antes de 08:30 (entregas/despachos NO aplican)
   const earlyRep = {}; const earlyNoPpu = [];
   for(const s of sols){
-    const r = perId[s.id]; if(!r || r._cargaOL || r._devolNormal) continue;
+    const r = perId[s.id]; if(!r || s.tipo!=="carga_ol") continue;
     const mins = _minHora(s.hora);
     if(mins===null || mins >= 8*60+30) continue;
     const ppu = (s.ppuAsignada||"").trim();
@@ -388,6 +401,7 @@ async function loadSolicitudes() {
       canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
       devolucionUrgente:s.devolucion_urgente||false,
       fotosManifiesto:s.fotos_manifiesto||[],
+      observacionChofer:s.observacion_chofer||"",
       updatedAt:s.updated_at, createdAt:s.created_at,
     }));
   } catch(e) { console.error(e); return []; }
@@ -415,10 +429,11 @@ async function saveSolicitud(s) {
       cancelado_por:s.canceladoPor||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
       devolucion_urgente:s.devolucionUrgente||false,
       fotos_manifiesto:s.fotosManifiesto||[],
+      observacion_chofer:s.observacionChofer||null,
       updated_at:new Date().toISOString(),
     };
     // UPSERT - insert o update si ya existe
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/solicitudes?on_conflict=id`, {
+    const doUpsert = async (payload) => fetch(`${SUPABASE_URL}/rest/v1/solicitudes?on_conflict=id`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -426,9 +441,20 @@ async function saveSolicitud(s) {
         "Authorization": `Bearer ${SUPABASE_KEY}`,
         "Prefer": "resolution=merge-duplicates,return=minimal",
       },
-      body: JSON.stringify(row),
+      body: JSON.stringify(payload),
     });
-    if(!res.ok) { const e=await res.text(); console.error("saveSolicitud error:",e); }
+    let res = await doUpsert(row);
+    if(!res.ok) {
+      const e = await res.text();
+      // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
+      if(/column|schema|PGRST|fotos_manifiesto|observacion_chofer|devolucion_urgente/i.test(e)) {
+        console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
+        const fallback = {...row};
+        delete fallback.fotos_manifiesto; delete fallback.observacion_chofer; delete fallback.devolucion_urgente;
+        res = await doUpsert(fallback);
+      }
+      if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2); }
+    }
   } catch(e) { console.error(e); }
 }
 async function deleteSolicitud(id) {
@@ -915,7 +941,7 @@ export default function QuantrexAbbott() {
     setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada); showToast("Log actualizado.");
   }
 
-  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null, fotosManifiesto=null){
+  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null, fotosManifiesto=null, observacion=null){
     const now = new Date();
     const fechaHora = now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
     // Obtener geolocalización
@@ -933,6 +959,7 @@ export default function QuantrexAbbott() {
         statusLog:[...(s.statusLog||[]),entry], geoEntrega:geoStr, horaEntrega:fechaHora,
         fotoEntrega:fotoBase64||null, horaLlegada:horaLlegada||null, tiempoEnPunto:tiempoEnPunto||null,
         fotosManifiesto:fotosManifiesto||s.fotosManifiesto||[],
+        observacionChofer:(observacion!=null?observacion:s.observacionChofer)||"",
         coordsEntrega:geoStr!=="Sin geolocalización"?geoStr:null,
         firmaReceptor:firmaData?.dataUrl||null, nombreReceptor:firmaData?.nombre||null,
         rechazoFirma:firmaData?.rechazo||false};
@@ -1363,7 +1390,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         upd.devolucionUrgente=false;
       }
     }
-    if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){upd.direccion=s.direccion;upd.notas=s.notas;}}
+    if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){upd.direccion=sel.direccion;upd.notas=sel.notas;upd.contacto=sel.contacto||upd.contacto;}}
     setEditForm(upd);
   };
 
@@ -1403,7 +1430,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         {editForm.tipo!=="carga_ol"&&(editForm.titulo==="000-2 - Dhl Atlantis"||editForm.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
           <select style={{...S.input,...(editForm.tipo==="li_devol"?{opacity:0.7,cursor:"not-allowed"}:{})}} value={editForm.destino||""} disabled={editForm.tipo==="li_devol"} onChange={e=>{
-            const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
+            const sel=resolverDestino(e.target.value,clientes);
             setEditForm(p=>({...p,destino:e.target.value,
               direccion:sel?.direccion||p.direccion,
               descripcion:sel?.nombre?`Despacho a ${sel.nombre}`:"",
@@ -1532,9 +1559,10 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
+      {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación del chofer</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div></div>}
       {(sol.firmaReceptor||sol.rechazoFirma)&&(
         <div style={S.detailBlock}>
-          <div style={S.fieldLabel}>{sol.rechazoFirma?"Rechazo de firma":"Firma del receptor"}</div>
+          <div style={S.fieldLabel}>{sol.rechazoFirma?"Rechazo de firma":(sol.tipo==="carga_ol"?"Firma del despachador":"Firma del receptor")}</div>
           {sol.nombreReceptor&&<div style={{fontSize:13,color:C.textPrimary,marginBottom:6}}>👤 {sol.nombreReceptor}</div>}
           {sol.rechazoFirma
             ?<div style={{background:C.danger+"22",border:"1px solid "+C.danger+"44",borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>✗ El receptor se negó a firmar digitalmente</div>
@@ -1676,6 +1704,18 @@ function LogEstados({log,solId,onEditLog,esAdmin=true}){
 
 // ── FormNueva ──────────────────────────────────────────────────────────────
 function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[],rutas=[],choferes=CHOFERES}){
+  const [clienteQ,setClienteQ]=useState("");
+  const [clienteOpen,setClienteOpen]=useState(false);
+  // Opciones de cliente aplanadas (cliente + sucursales) para el buscador
+  const opcionesCliente=clientes.flatMap(c=>{
+    const label=c.id?c.id+" - "+c.nombre:c.nombre;
+    const arr=[{value:label,texto:label}];
+    (c.sucursales||[]).forEach(su=>arr.push({value:label+" — "+su.nombre,texto:label+" — "+su.nombre}));
+    return arr;
+  });
+  const clienteFiltrado=clienteQ.trim()
+    ? opcionesCliente.filter(o=>o.texto.toLowerCase().includes(clienteQ.trim().toLowerCase())).slice(0,40)
+    : opcionesCliente.slice(0,40);
   const f=k=>e=>setForm(p=>{
     const u={...p,[k]:e.target.value};
     if(k==="tipo"){
@@ -1694,7 +1734,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         u.devolucionUrgente=false;
       }
     }
-    if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){u.direccion=s.direccion;u.notas=s.notas;u.contacto=s.contacto||u.contacto;if(u.tipo!=="carga_ol")u.destino="";}}
+    if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){u.direccion=sel.direccion;u.notas=sel.notas;u.contacto=sel.contacto||u.contacto;if(u.tipo!=="carga_ol")u.destino="";}}
     return u;
   });
   return(
@@ -1711,18 +1751,35 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           </select></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Cliente *</label>
-          <select style={S.input} value={form.titulo} onChange={f("titulo")}>
-            <option value="">-- Seleccionar cliente --</option>
-            {(form.tipo==="carga_ol"?clientes.filter(c=>CARGA_OL_CLIENTES.includes(c.id?c.id+" - "+c.nombre:c.nombre)):clientes).flatMap((c,i)=>{
-              const label=c.id?c.id+" - "+c.nombre:c.nombre;
-              const base=[<option key={"c"+i} value={label}>{label}</option>];
-              const subs=(c.sucursales||[]).map((s,si)=>{
-                const sl=label+" — "+s.nombre;
-                return <option key={"s"+i+"-"+si} value={sl}>{"  ↳ "+s.nombre}</option>;
-              });
-              return [...base,...subs];
-            })}
-          </select></div>
+          {form.tipo==="carga_ol"?(
+            <select style={S.input} value={form.titulo} onChange={f("titulo")}>
+              <option value="">-- Seleccionar cliente --</option>
+              {clientes.filter(c=>CARGA_OL_CLIENTES.includes(c.id?c.id+" - "+c.nombre:c.nombre)).map((c,i)=>{
+                const label=c.id?c.id+" - "+c.nombre:c.nombre;
+                return <option key={"c"+i} value={label}>{label}</option>;
+              })}
+            </select>
+          ):(
+            <div style={{position:"relative"}}>
+              <input style={S.input} placeholder="Buscar cliente por nombre o RUT…"
+                value={clienteOpen?clienteQ:(form.titulo||"")}
+                onFocus={()=>{setClienteOpen(true);setClienteQ("");}}
+                onChange={e=>{setClienteQ(e.target.value);setClienteOpen(true);}}
+                onBlur={()=>setTimeout(()=>setClienteOpen(false),150)}/>
+              {clienteOpen&&<div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,marginTop:4,maxHeight:260,overflowY:"auto",background:C.navy,border:"1px solid "+C.border,borderRadius:10,boxShadow:"0 8px 24px #00000055"}}>
+                {clienteFiltrado.length===0
+                  ?<div style={{padding:"10px 14px",fontSize:13,color:C.muted}}>Sin coincidencias</div>
+                  :clienteFiltrado.map((o,i)=>(
+                    <div key={i} onMouseDown={()=>{f("titulo")({target:{value:o.value}});setClienteOpen(false);setClienteQ("");}}
+                      style={{padding:"9px 14px",fontSize:13,color:C.text,cursor:"pointer",borderBottom:"1px solid "+C.border+"55",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.cyan+"22"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      {o.texto.includes(" — ")?"↳ "+o.texto:o.texto}
+                    </div>
+                  ))}
+              </div>}
+            </div>
+          )}</div>
         {/* Alerta cliente con solicitudes activas hoy */}
         {form.titulo&&(()=>{
           const hoy=new Date().toISOString().split("T")[0];
@@ -1742,7 +1799,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         {form.tipo!=="carga_ol"&&(form.titulo==="000-2 - Dhl Atlantis"||form.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
           <select style={{...S.input,...(form.tipo==="li_devol"?{opacity:0.7,cursor:"not-allowed"}:{})}} value={form.destino} disabled={form.tipo==="li_devol"} onChange={e=>{
-            const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
+            const sel=resolverDestino(e.target.value,clientes);
             setForm(p=>({...p,destino:e.target.value,
               direccion:sel?.direccion||p.direccion,
               descripcion:sel?.nombre?`Despacho a ${sel.nombre}`:"",
@@ -2866,6 +2923,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   const [cargando,setCargando]=useState(null);
   const [fotos,setFotos]=useState({});
   const [fotosManifiesto,setFotosManifiesto]=useState({}); // {solId: [b64,...]} para Carga OL
+  const [observaciones,setObservaciones]=useState({}); // {solId: texto} nota opcional del chofer
   const [errorFoto,setErrorFoto]=useState(null);
   const [firmas,setFirmas]=useState({}); // {solId: {dataUrl, nombre, rechazo}}
   const [modalFirma,setModalFirma]=useState(null); // solId activo
@@ -2990,9 +3048,10 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
     const tiempoStr=tiempoEnPunto!==null?formatTiempo(tiempoEnPunto):null;
     // Detener cronómetro
     if(timerRef.current[id]){clearInterval(timerRef.current[id]);delete timerRef.current[id];}
-    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr, firmas[id]||null, fotosManifiesto[id]||null);
+    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr, firmas[id]||null, fotosManifiesto[id]||null, observaciones[id]||null);
     setFotos(p=>{const n={...p};delete n[id];return n;});
     setFotosManifiesto(p=>{const n={...p};delete n[id];return n;});
+    setObservaciones(p=>{const n={...p};delete n[id];return n;});
     setFirmas(p=>{const n={...p};delete n[id];return n;});
     setLlegadas(p=>{const n={...p};delete n[id];return n;});
     setTiempos(p=>{const n={...p};delete n[id];return n;});
@@ -3093,6 +3152,13 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
             {errorFoto===s.id+"firma"&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>
               ✍️ {s.tipo==="carga_ol"?"Debes registrar la firma del despachador.":"Debes registrar la firma o el rechazo del receptor."}
             </div>}
+            {/* Observación opcional del chofer */}
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              <label style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase"}}>Observación (opcional)</label>
+              <textarea style={{border:"1px solid "+C.border,background:C.navy,color:C.text,borderRadius:10,padding:"10px 12px",fontSize:13,outline:"none",resize:"vertical",minHeight:54,fontFamily:"inherit"}}
+                placeholder="Alguna nota o situación de la entrega (ej. recibido por turno noche, acceso restringido, etc.)"
+                value={observaciones[s.id]||""} onChange={e=>setObservaciones(p=>({...p,[s.id]:e.target.value}))}/>
+            </div>
             <div style={{display:"flex",gap:10}}>
               <button style={{flex:1,background:C.success+"22",border:"1px solid "+C.success,color:C.success,borderRadius:10,padding:"12px",fontWeight:800,fontSize:14,cursor:"pointer",opacity:cargando?0.6:1}}
                 disabled={!!cargando} onClick={()=>cerrar(s.id,"completada")}>
