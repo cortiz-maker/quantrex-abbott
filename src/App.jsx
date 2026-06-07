@@ -280,6 +280,19 @@ function overnightIds(sols){
 //    se cobra solo overnight (se suprime su SPOT).
 const PRECIO_SPOT = 50000, PRECIO_OVERNIGHT = 85000;
 function _minHora(h){ if(!h) return null; const p=String(h).split(":"); const hh=parseInt(p[0],10); const mm=parseInt(p[1]||"0",10); return isNaN(hh)?null:hh*60+mm; }
+// Momento de cierre (para numerar en orden ascendente según se cierran los registros)
+function _parseFH(fh){
+  if(!fh) return 0;
+  const m = String(fh).match(/(\d{1,2})-(\d{1,2})-(\d{4})\s+(\d{1,2}):(\d{2})/);
+  if(m) return new Date(+m[3],+m[2]-1,+m[1],+m[4],+m[5]).getTime();
+  const d = Date.parse(fh); return isNaN(d)?0:d;
+}
+function _ordenCierre(s){
+  const log = s.statusLog||[];
+  if(log.length){ const t=_parseFH(log[log.length-1].fechaHora); if(t) return t; }
+  const u = Date.parse(s.updatedAt||s.createdAt||"")||0;
+  return u;
+}
 function calcularCobros(solicitudes){
   const sols = solicitudes || [];
   const perId = {};
@@ -292,9 +305,10 @@ function calcularCobros(solicitudes){
       _cargaOL:esCargaOL, _devolNormal:esDevolNormal,
       _cuenta: !esCargaOL && !esDevolNormal };
   }
-  // SPOT: contador global por día (orden del arreglo)
+  // SPOT: contador global por día, numerado en ORDEN DE CIERRE ascendente
   const contN = {};
-  for(const s of sols){
+  const ordenadas = [...sols].sort((a,b)=>_ordenCierre(a)-_ordenCierre(b));
+  for(const s of ordenadas){
     const r = perId[s.id]; if(!r || !r._cuenta) continue;
     const f = s.fecha || "sin-fecha";
     contN[f] = (contN[f]||0) + 1;
@@ -402,6 +416,8 @@ async function loadSolicitudes() {
       devolucionUrgente:s.devolucion_urgente||false,
       fotosManifiesto:s.fotos_manifiesto||[],
       observacionChofer:s.observacion_chofer||"",
+      observacionAutor:s.observacion_autor||"",
+      observacionFecha:s.observacion_fecha||"",
       updatedAt:s.updated_at, createdAt:s.created_at,
     }));
   } catch(e) { console.error(e); return []; }
@@ -430,6 +446,8 @@ async function saveSolicitud(s) {
       devolucion_urgente:s.devolucionUrgente||false,
       fotos_manifiesto:s.fotosManifiesto||[],
       observacion_chofer:s.observacionChofer||null,
+      observacion_autor:s.observacionAutor||null,
+      observacion_fecha:s.observacionFecha||null,
       updated_at:new Date().toISOString(),
     };
     // UPSERT - insert o update si ya existe
@@ -447,10 +465,11 @@ async function saveSolicitud(s) {
     if(!res.ok) {
       const e = await res.text();
       // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
-      if(/column|schema|PGRST|fotos_manifiesto|observacion_chofer|devolucion_urgente/i.test(e)) {
+      if(/column|schema|PGRST|fotos_manifiesto|observacion_chofer|observacion_autor|observacion_fecha|devolucion_urgente/i.test(e)) {
         console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
         const fallback = {...row};
-        delete fallback.fotos_manifiesto; delete fallback.observacion_chofer; delete fallback.devolucion_urgente;
+        delete fallback.fotos_manifiesto; delete fallback.observacion_chofer;
+        delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.devolucion_urgente;
         res = await doUpsert(fallback);
       }
       if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2); }
@@ -692,7 +711,8 @@ async function exportToExcel(solicitudes, nombreArchivo) {
       (cSpot+cOH+cSpotRegional)||"",
       s.choferAsignado||"", tiempoEnPunto,
       s.noPresentacion?(s.vehiculoNP||""):"", s.noPresentacion?(s.motivoNP||""):"",
-      s.noPresentacion?DESCUENTO_DIA:""];
+      s.noPresentacion?DESCUENTO_DIA:"",
+      s.observacionChofer?(s.observacionChofer+(s.observacionAutor?" ("+s.observacionAutor+(s.observacionFecha?", "+new Date(s.observacionFecha).toLocaleString("es-CL"):"")+")":"")):""];
   });
 
   const totalSpot=cobros.spotCount;
@@ -707,13 +727,13 @@ async function exportToExcel(solicitudes, nombreArchivo) {
   const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
-    "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP"];
+    "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP","Observación"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
   ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:28},{wch:13},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
-    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14}];
+    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
 
   const periodoNombre=nombreArchivo.replace("Quantrex_Abbott_","").replace(".xlsx","").replace("_"," ");
@@ -762,15 +782,12 @@ async function exportToExcel(solicitudes, nombreArchivo) {
   r2.push([]);
   r2.push(["── MEDICIÓN CO₂ ──────────────────────────────"]);
   r2.push(["Total solicitudes período:",solicitudes.length]);
-  r2.push(["Entregas consideradas (completadas c/dirección):",solsCO2.length]);
   r2.push(["Total km recorridos (período):",hayKm?totalKmNum.toFixed(1)+" km":"Pendiente cálculo"]);
   r2.push(["Total kg transportados:",totalKgExcel.toLocaleString("es-CL")+" kg"]);
   r2.push([]);
   r2.push(["Índice TKM (Abbott) — km × kg:", tkmAbbot]);
   r2.push([]);
   r2.push(["CO₂ Estimado (Estándar Mercado):", co2Estimado]);
-  r2.push(["Solicitudes SPOT Extra:",totalSpot]);
-  r2.push(["Solicitudes Overnight:",totalOH]);
   const ws2=XLSX.utils.aoa_to_sheet(r2);
   ws2["!cols"]=[{wch:38},{wch:15},{wch:18}];
   XLSX.utils.book_append_sheet(wb, ws2, "Resumen Ejecutivo");
@@ -929,6 +946,11 @@ export default function QuantrexAbbott() {
         statusLog:[...(updatedSol.statusLog||[]),{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",fechaHora,canceladoPor:null}]};
     }
     const solActualizada={...updatedSol,updatedAt:new Date().toISOString()};
+    // Si admin/operador modificó la observación, registrar quién y cuándo
+    if((updatedSol.observacionChofer||"")!==(sol?.observacionChofer||"")){
+      solActualizada.observacionAutor = sesion?.nombre || sesion?.email || "Administrador";
+      solActualizada.observacionFecha = new Date().toISOString();
+    }
     const upd=solicitudes.map(s=>s.id===updatedSol.id?solActualizada:s);
     setSolicitudes(upd); await saveSolicitud(solActualizada); 
     await sincronizarRutas(upd);
@@ -960,6 +982,8 @@ export default function QuantrexAbbott() {
         fotoEntrega:fotoBase64||null, horaLlegada:horaLlegada||null, tiempoEnPunto:tiempoEnPunto||null,
         fotosManifiesto:fotosManifiesto||s.fotosManifiesto||[],
         observacionChofer:(observacion!=null?observacion:s.observacionChofer)||"",
+        observacionAutor:(observacion!=null&&observacion!=="")?(s.choferAsignado||"Chofer"):s.observacionAutor||"",
+        observacionFecha:(observacion!=null&&observacion!=="")?now.toISOString():s.observacionFecha||"",
         coordsEntrega:geoStr!=="Sin geolocalización"?geoStr:null,
         firmaReceptor:firmaData?.dataUrl||null, nombreReceptor:firmaData?.nombre||null,
         rechazoFirma:firmaData?.rechazo||false};
@@ -1256,6 +1280,12 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
             <div style={{fontSize:36,fontWeight:900,color:"#F97316"}}>{stats.no_entregado}</div>
             <div style={{fontSize:13,color:C.textSecondary}}>solicitud(es) marcadas como No Entregado en el período activo</div>
           </div>
+          {(()=>{
+            const sinObs=solicitudesPeriodo.filter(s=>s.status==="no_entregado"&&!(s.observacionChofer||"").trim()).length;
+            return sinObs>0
+              ?<div style={{fontSize:12.5,color:"#F97316",fontWeight:600}}>📝 {sinObs} de ellas no tiene observación registrada. Abre la solicitud y agrega el motivo de la no entrega (queda registrado quién y cuándo).</div>
+              :<div style={{fontSize:12.5,color:C.success,fontWeight:600}}>✓ Todas tienen observación registrada.</div>;
+          })()}
           <button style={{...S.exportBtn,fontSize:12,borderColor:"#F97316",color:"#F97316",alignSelf:"flex-start"}}
             onClick={()=>setView("lista")}>
             Ver solicitudes →
@@ -1495,6 +1525,12 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           <textarea style={{...S.input,minHeight:60,resize:"vertical"}} value={editForm.descripcion} onChange={fe("descripcion")}/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas internas Quantrex</label>
           <textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={editForm.notas} onChange={fe("notas")}/></div>
+        <div style={{...S.fGroup,gridColumn:"1/-1"}}>
+          <label style={S.label}>Observación {editForm.status==="no_entregado"&&<span style={{color:C.danger}}>(recomendada para No Entregado)</span>}</label>
+          <textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={editForm.observacionChofer||""} onChange={fe("observacionChofer")}
+            placeholder="Motivo o situación de la entrega. Si la editas aquí, se registrará tu nombre y la fecha."/>
+          {editForm.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Última edición: {editForm.observacionAutor}{editForm.observacionFecha?" · "+new Date(editForm.observacionFecha).toLocaleString("es-CL"):""}</div>}
+        </div>
         {editForm.tipo==="li_devol"&&<div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
             <input type="checkbox" checked={editForm.devolucionUrgente||false} onChange={e=>setEditForm(p=>({...p,devolucionUrgente:e.target.checked}))}/>
@@ -1559,7 +1595,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
-      {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación del chofer</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div></div>}
+      {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div>{sol.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Por {sol.observacionAutor}{sol.observacionFecha?" · "+new Date(sol.observacionFecha).toLocaleString("es-CL"):""}</div>}</div>}
       {(sol.firmaReceptor||sol.rechazoFirma)&&(
         <div style={S.detailBlock}>
           <div style={S.fieldLabel}>{sol.rechazoFirma?"Rechazo de firma":(sol.tipo==="carga_ol"?"Firma del despachador":"Firma del receptor")}</div>
