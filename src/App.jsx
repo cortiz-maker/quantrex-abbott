@@ -33,13 +33,17 @@ const PRIORIDAD_DEFAULT = {
   li_devol:  "normal",
 };
 
+// Clientes válidos y destinos para Carga Operador Logístico
+const CARGA_OL_CLIENTES = ["000-2 - Dhl Atlantis","81.378.300-2 - Abbott Laboratories De Chile"];
+const DESTINOS_CARGA_OL = ["Ruta Programada","Despacho Coordinado","Ruta/Despacho No Programada"];
+
 const EMPTY_FORM = {
   tipo:"entrega", titulo:"", descripcion:"", direccion:"",
   fecha: new Date().toISOString().split("T")[0],
   hora: new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}),
   contacto:"", guia:"", prioridad:"urgente", notas:"",
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
-  destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[], devolucionUrgente:false,
+  destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[], devolucionUrgente:false, fotosManifiesto:[],
 };
 
 
@@ -383,6 +387,7 @@ async function loadSolicitudes() {
       nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
       canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
       devolucionUrgente:s.devolucion_urgente||false,
+      fotosManifiesto:s.fotos_manifiesto||[],
       updatedAt:s.updated_at, createdAt:s.created_at,
     }));
   } catch(e) { console.error(e); return []; }
@@ -409,6 +414,7 @@ async function saveSolicitud(s) {
       nombre_receptor:s.nombreReceptor||null, rechazo_firma:s.rechazoFirma||false,
       cancelado_por:s.canceladoPor||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
       devolucion_urgente:s.devolucionUrgente||false,
+      fotos_manifiesto:s.fotosManifiesto||[],
       updated_at:new Date().toISOString(),
     };
     // UPSERT - insert o update si ya existe
@@ -909,7 +915,7 @@ export default function QuantrexAbbott() {
     setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada); showToast("Log actualizado.");
   }
 
-  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null){
+  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null, fotosManifiesto=null){
     const now = new Date();
     const fechaHora = now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
     // Obtener geolocalización
@@ -926,6 +932,7 @@ export default function QuantrexAbbott() {
       return {...s, status:nuevoEstado, updatedAt:now.toISOString(),
         statusLog:[...(s.statusLog||[]),entry], geoEntrega:geoStr, horaEntrega:fechaHora,
         fotoEntrega:fotoBase64||null, horaLlegada:horaLlegada||null, tiempoEnPunto:tiempoEnPunto||null,
+        fotosManifiesto:fotosManifiesto||s.fotosManifiesto||[],
         coordsEntrega:geoStr!=="Sin geolocalización"?geoStr:null,
         firmaReceptor:firmaData?.dataUrl||null, nombreReceptor:firmaData?.nombre||null,
         rechazoFirma:firmaData?.rechazo||false};
@@ -1348,6 +1355,10 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         upd.destino="000-2 - Dhl Atlantis";
         upd.direccion=dhl?.direccion||editForm.direccion;
         if(!editForm.hora)upd.hora="16:30";
+      } else if(e.target.value==="carga_ol"){
+        upd.devolucionUrgente=false;
+        if(!CARGA_OL_CLIENTES.includes(upd.titulo)) upd.titulo="";
+        upd.destino="";
       } else {
         upd.devolucionUrgente=false;
       }
@@ -1373,7 +1384,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           <label style={S.label}>Cliente *</label>
           <select style={S.input} value={editForm.titulo} onChange={fe("titulo")}>
             <option value="">-- Seleccionar cliente --</option>
-            {clientes.flatMap((c,i)=>{
+            {(editForm.tipo==="carga_ol"?clientes.filter(c=>CARGA_OL_CLIENTES.includes(c.id?c.id+" - "+c.nombre:c.nombre)):clientes).flatMap((c,i)=>{
               const label=c.id?c.id+" - "+c.nombre:c.nombre;
               const base=[<option key={"c"+i} value={label}>{label}</option>];
               const subs=(c.sucursales||[]).map((s,si)=>{
@@ -1383,7 +1394,13 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
               return [...base,...subs];
             })}
           </select></div>
-        {(editForm.titulo==="000-2 - Dhl Atlantis"||editForm.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
+        {editForm.tipo==="carga_ol"&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
+          <label style={S.label}>Destino</label>
+          <select style={S.input} value={editForm.destino||""} onChange={e=>setEditForm(p=>({...p,destino:e.target.value}))}>
+            <option value="">-- Seleccionar destino --</option>
+            {DESTINOS_CARGA_OL.map(d=><option key={d} value={d}>{d}</option>)}
+          </select></div>}
+        {editForm.tipo!=="carga_ol"&&(editForm.titulo==="000-2 - Dhl Atlantis"||editForm.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
           <select style={{...S.input,...(editForm.tipo==="li_devol"?{opacity:0.7,cursor:"not-allowed"}:{})}} value={editForm.destino||""} disabled={editForm.tipo==="li_devol"} onChange={e=>{
             const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
@@ -1550,6 +1567,18 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
               </a>
             </div>
           )}
+          {(sol.fotosManifiesto||[]).length>0&&(
+            <div style={{marginTop:12}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Registro Fotográfico Manifiesto DHL ({sol.fotosManifiesto.length})</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                {sol.fotosManifiesto.map((b,i)=>(
+                  <a key={i} href={b} download={"manifiesto_"+(i+1)+".jpg"} target="_blank" rel="noreferrer">
+                    <img src={b} alt={"Manifiesto "+(i+1)} style={{width:96,height:96,borderRadius:10,objectFit:"cover",border:"1px solid "+C.border}}/>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div style={S.fieldLabel}>Cambiar estado</div>
@@ -1657,11 +1686,15 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         u.direccion=dhl?.direccion||p.direccion;
         u.notas=dhl?.notas||p.notas;
         u.hora="16:30";
+      } else if(e.target.value==="carga_ol"){
+        u.devolucionUrgente=false;
+        if(!CARGA_OL_CLIENTES.includes(u.titulo)) u.titulo="";
+        u.destino="";
       } else {
         u.devolucionUrgente=false;
       }
     }
-    if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){u.direccion=s.direccion;u.notas=s.notas;u.destino="";}}
+    if(k==="titulo"){const s=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);if(s){u.direccion=s.direccion;u.notas=s.notas;u.contacto=s.contacto||u.contacto;if(u.tipo!=="carga_ol")u.destino="";}}
     return u;
   });
   return(
@@ -1680,7 +1713,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           <label style={S.label}>Cliente *</label>
           <select style={S.input} value={form.titulo} onChange={f("titulo")}>
             <option value="">-- Seleccionar cliente --</option>
-            {clientes.flatMap((c,i)=>{
+            {(form.tipo==="carga_ol"?clientes.filter(c=>CARGA_OL_CLIENTES.includes(c.id?c.id+" - "+c.nombre:c.nombre)):clientes).flatMap((c,i)=>{
               const label=c.id?c.id+" - "+c.nombre:c.nombre;
               const base=[<option key={"c"+i} value={label}>{label}</option>];
               const subs=(c.sucursales||[]).map((s,si)=>{
@@ -1700,7 +1733,13 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
             </div>
           </div>):null;
         })()}
-        {(form.titulo==="000-2 - Dhl Atlantis"||form.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
+        {form.tipo==="carga_ol"&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
+          <label style={S.label}>Destino</label>
+          <select style={S.input} value={form.destino} onChange={e=>setForm(p=>({...p,destino:e.target.value}))}>
+            <option value="">-- Seleccionar destino --</option>
+            {DESTINOS_CARGA_OL.map(d=><option key={d} value={d}>{d}</option>)}
+          </select></div>}
+        {form.tipo!=="carga_ol"&&(form.titulo==="000-2 - Dhl Atlantis"||form.tipo==="li_devol")&&<div style={{...S.fGroup,gridColumn:"1/-1"}}>
           <label style={S.label}>Destino</label>
           <select style={{...S.input,...(form.tipo==="li_devol"?{opacity:0.7,cursor:"not-allowed"}:{})}} value={form.destino} disabled={form.tipo==="li_devol"} onChange={e=>{
             const sel=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)===e.target.value);
@@ -2668,7 +2707,8 @@ function MapaTramo({ sol, solicitudes }) {
 
 
 // ── Modal Firma Receptor ───────────────────────────────────────────────────
-function ModalFirma({ solId, onGuardar, onCerrar }) {
+function ModalFirma({ solId, onGuardar, onCerrar, rol="receptor" }) {
+  const ROL = rol==="despachador" ? "despachador" : "receptor";
   const canvasRef = useRef(null);
   const [dibujando, setDibujando] = useState(false);
   const [nombre, setNombre] = useState("");
@@ -2728,7 +2768,7 @@ function ModalFirma({ solId, onGuardar, onCerrar }) {
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#000000CC",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff",borderRadius:16,padding:20,width:"100%",maxWidth:420,display:"flex",flexDirection:"column",gap:14}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:16,fontWeight:800,color:C.navy}}>Firma del receptor</div>
+          <div style={{fontSize:16,fontWeight:800,color:C.navy}}>{ROL==="despachador"?"Firma del despachador":"Firma del receptor"}</div>
           <button style={{background:"transparent",border:"none",fontSize:20,cursor:"pointer",color:C.muted}} onClick={onCerrar}>✕</button>
         </div>
 
@@ -2741,7 +2781,7 @@ function ModalFirma({ solId, onGuardar, onCerrar }) {
 
         {modo==="firma"?(
           <>
-            <div style={{fontSize:12,color:C.muted}}>El receptor dibuja su firma con el dedo:</div>
+            <div style={{fontSize:12,color:C.muted}}>El {ROL} dibuja su firma con el dedo:</div>
             <div style={{border:"2px solid #ddd",borderRadius:10,overflow:"hidden",background:"#f9f9f9",touchAction:"none"}}>
               <canvas ref={canvasRef} width={380} height={160} style={{display:"block",width:"100%",touchAction:"none"}}
                 onMouseDown={iniciar} onMouseMove={dibujar} onMouseUp={terminar} onMouseLeave={terminar}
@@ -2752,12 +2792,12 @@ function ModalFirma({ solId, onGuardar, onCerrar }) {
           </>
         ):(
           <div style={{background:C.danger+"11",border:"1px solid "+C.danger+"44",borderRadius:10,padding:"12px",fontSize:13,color:C.danger,fontWeight:600}}>
-            Se registrará que el receptor se negó a firmar digitalmente.
+            Se registrará que el {ROL} se negó a firmar digitalmente.
           </div>
         )}
 
         <div style={{display:"flex",flexDirection:"column",gap:6}}>
-          <label style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase"}}>Nombre del receptor</label>
+          <label style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase"}}>Nombre del {ROL}</label>
           <input style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,outline:"none"}}
             placeholder="Nombre completo" value={nombre} onChange={e=>setNombre(e.target.value)}/>
         </div>
@@ -2825,6 +2865,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   );
   const [cargando,setCargando]=useState(null);
   const [fotos,setFotos]=useState({});
+  const [fotosManifiesto,setFotosManifiesto]=useState({}); // {solId: [b64,...]} para Carga OL
   const [errorFoto,setErrorFoto]=useState(null);
   const [firmas,setFirmas]=useState({}); // {solId: {dataUrl, nombre, rechazo}}
   const [modalFirma,setModalFirma]=useState(null); // solId activo
@@ -2889,14 +2930,53 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
     input.click();
   }
 
+  // Carga OL: múltiples fotos del manifiesto (se agregan a un arreglo)
+  function capturarFotoManifiesto(solId){
+    const input=document.createElement("input");
+    input.type="file"; input.accept="image/*"; input.capture="environment";
+    input.onchange=e=>{
+      const file=e.target.files[0];
+      if(!file)return;
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        const img=new Image();
+        img.onload=()=>{
+          const canvas=document.createElement("canvas");
+          const MAX=800;
+          let w=img.width,h=img.height;
+          if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}
+          if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}
+          canvas.width=w; canvas.height=h;
+          canvas.getContext("2d").drawImage(img,0,0,w,h);
+          const b64=canvas.toDataURL("image/jpeg",0.7);
+          setFotosManifiesto(p=>({...p,[solId]:[...(p[solId]||[]),b64].slice(0,10)}));
+        };
+        img.src=ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  }
+  function quitarFotoManifiesto(solId,idx){
+    setFotosManifiesto(p=>({...p,[solId]:(p[solId]||[]).filter((_,i)=>i!==idx)}));
+  }
+
   async function cerrar(id, estado){
-    // Validar foto obligatoria
-    if(!fotos[id]){
+    const sol=misSols.find(x=>x.id===id);
+    const esCargaOL=sol?.tipo==="carga_ol";
+    // Validar foto(s) obligatoria(s) — Carga OL admite varias, mínimo 1
+    if(esCargaOL){
+      if((fotosManifiesto[id]||[]).length<1){
+        setErrorFoto(id);
+        setTimeout(()=>setErrorFoto(null),3000);
+        return;
+      }
+    } else if(!fotos[id]){
       setErrorFoto(id);
       setTimeout(()=>setErrorFoto(null),3000);
       return;
     }
-    // Validar firma obligatoria
+    // Validar firma obligatoria (en Carga OL es la firma del despachador)
     if(!firmas[id]){
       setErrorFoto(id+"firma");
       setTimeout(()=>setErrorFoto(null),3000);
@@ -2910,8 +2990,9 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
     const tiempoStr=tiempoEnPunto!==null?formatTiempo(tiempoEnPunto):null;
     // Detener cronómetro
     if(timerRef.current[id]){clearInterval(timerRef.current[id]);delete timerRef.current[id];}
-    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr, firmas[id]||null);
+    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr, firmas[id]||null, fotosManifiesto[id]||null);
     setFotos(p=>{const n={...p};delete n[id];return n;});
+    setFotosManifiesto(p=>{const n={...p};delete n[id];return n;});
     setFirmas(p=>{const n={...p};delete n[id];return n;});
     setLlegadas(p=>{const n={...p};delete n[id];return n;});
     setTiempos(p=>{const n={...p};delete n[id];return n;});
@@ -2972,6 +3053,27 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
               </div>
             )}
             {/* Captura de foto */}
+            {s.tipo==="carga_ol"?(()=>{
+              const arr=fotosManifiesto[s.id]||[];
+              const ok=arr.length>=1;
+              return(<div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{fontSize:11,fontWeight:700,color:ok?C.success:C.danger,letterSpacing:.5,textTransform:"uppercase"}}>
+                  Registro Fotográfico Manifiesto DHL — {arr.length} foto{arr.length===1?"":"s"} {ok?"✓":"(mínimo 1)"}
+                </div>
+                {arr.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {arr.map((b,i)=>(
+                    <div key={i} style={{position:"relative"}}>
+                      <img src={b} alt={"manifiesto "+(i+1)} style={{width:64,height:64,borderRadius:8,objectFit:"cover",border:"2px solid "+C.success}}/>
+                      <button onClick={()=>quitarFotoManifiesto(s.id,i)} style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:"50%",background:C.danger,color:"#fff",border:"none",cursor:"pointer",fontSize:12,fontWeight:700,lineHeight:1}}>×</button>
+                    </div>
+                  ))}
+                </div>}
+                <button style={{background:ok?C.success+"22":C.danger+"22",border:"1px solid "+(ok?C.success:C.danger),color:ok?C.success:C.danger,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%",justifyContent:"center",display:"flex",alignItems:"center",gap:6}}
+                  onClick={()=>capturarFotoManifiesto(s.id)}>
+                  📷 Agregar foto del manifiesto
+                </button>
+              </div>);
+            })():(
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <button style={{background:fotos[s.id]?C.success+"22":C.danger+"22",border:"1px solid "+(fotos[s.id]?C.success:C.danger),color:fotos[s.id]?C.success:C.danger,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,width:"100%",justifyContent:"center"}}
                 onClick={()=>capturarFoto(s.id)}>
@@ -2979,16 +3081,17 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
               </button>
               {fotos[s.id]&&<img src={fotos[s.id]} alt="preview" style={{width:48,height:48,borderRadius:8,objectFit:"cover",border:"2px solid "+C.success}}/>}
             </div>
+            )}
             {errorFoto===s.id&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>
-              📷 Debes tomar una foto del documento antes de registrar la entrega.
+              📷 {s.tipo==="carga_ol"?"Debes registrar al menos una foto del manifiesto DHL antes de cerrar.":"Debes tomar una foto del documento antes de registrar la entrega."}
             </div>}
-            {/* Firma del receptor */}
+            {/* Firma del receptor (en Carga OL: firma del despachador) */}
             <button style={{background:firmas[s.id]?C.success+"22":"#7C3AED22",border:"1px solid "+(firmas[s.id]?C.success:"#7C3AED"),color:firmas[s.id]?C.success:"#A78BFA",borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
               onClick={()=>setModalFirma(s.id)}>
-              ✍️ {firmas[s.id]?(firmas[s.id].rechazo?"Rechazo registrado ✓":"Firma tomada ✓"):"Firma del receptor (obligatorio)"}
+              ✍️ {firmas[s.id]?(firmas[s.id].rechazo?"Rechazo registrado ✓":"Firma tomada ✓"):(s.tipo==="carga_ol"?"Firma Despachador (obligatorio)":"Firma del receptor (obligatorio)")}
             </button>
             {errorFoto===s.id+"firma"&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>
-              ✍️ Debes registrar la firma o el rechazo del receptor.
+              ✍️ {s.tipo==="carga_ol"?"Debes registrar la firma del despachador.":"Debes registrar la firma o el rechazo del receptor."}
             </div>}
             <div style={{display:"flex",gap:10}}>
               <button style={{flex:1,background:C.success+"22",border:"1px solid "+C.success,color:C.success,borderRadius:10,padding:"12px",fontWeight:800,fontSize:14,cursor:"pointer",opacity:cargando?0.6:1}}
@@ -3004,7 +3107,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
         );
       })}
     </div>
-    {modalFirma&&<ModalFirma solId={modalFirma}
+    {modalFirma&&<ModalFirma solId={modalFirma} rol={misSols.find(x=>x.id===modalFirma)?.tipo==="carga_ol"?"despachador":"receptor"}
       onGuardar={f=>{setFirmas(p=>({...p,[modalFirma]:f}));setModalFirma(null);}}
       onCerrar={()=>setModalFirma(null)}/>}
     </>
