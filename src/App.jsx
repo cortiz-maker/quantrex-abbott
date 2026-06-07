@@ -1296,7 +1296,15 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<ResumenKmDia solicitudes={solicitudes} rutas={rutas}/>}
       {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
-      {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap"}}><div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div><div style={{fontSize:12,color:C.textSecondary}}>✓ <strong style={{color:C.success}}>{solicitudesPeriodo.filter(s=>s.status==="completada").length}</strong> completadas</div><div style={{fontSize:12,color:C.textSecondary}}>🚚 <strong style={{color:C.info}}>{solicitudesPeriodo.filter(s=>s.status==="en_proceso").length}</strong> en tránsito</div></div>}
+      {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
+        <div style={{width:1,height:18,background:C.border}}/>
+        {Object.entries(STATUS_META).map(([k,meta])=>{
+          const n=solicitudesPeriodo.filter(s=>s.status===k).length;
+          if(n===0)return null;
+          return <div key={k} style={{fontSize:12,color:C.textSecondary}}><strong style={{color:meta.color}}>{n}</strong> {meta.label}</div>;
+        })}
+      </div>}
       <div style={S.sectionTitle}>Solicitudes recientes</div>
       {solicitudes.length===0?<EmptyState msg="Sin solicitudes aún." action={()=>setView("nueva")}/>
         :[...solicitudes].sort((a,b)=>{
