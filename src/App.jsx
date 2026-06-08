@@ -1275,25 +1275,24 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           </div>
         ))}
       </div>
-      {stats.no_entregado>0&&(
+      {(()=>{
+        const sinObs=solicitudesPeriodo.filter(s=>s.status==="no_entregado"&&!(s.observacionChofer||"").trim()).length;
+        if(sinObs<1) return null;
+        return(
         <div style={{background:"#F9731611",border:"1px solid #F97316",borderRadius:12,padding:"14px 18px",display:"flex",flexDirection:"column",gap:10}}>
           <div style={{fontSize:11,fontWeight:700,color:"#F97316",letterSpacing:1.5,textTransform:"uppercase"}}>⚠ No Entregados — Requieren atención</div>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
-            <div style={{fontSize:36,fontWeight:900,color:"#F97316"}}>{stats.no_entregado}</div>
-            <div style={{fontSize:13,color:C.textSecondary}}>solicitud(es) marcadas como No Entregado en el período activo</div>
+            <div style={{fontSize:36,fontWeight:900,color:"#F97316"}}>{sinObs}</div>
+            <div style={{fontSize:13,color:C.textSecondary}}>solicitud(es) marcadas como No Entregado sin observación registrada en el período activo</div>
           </div>
-          {(()=>{
-            const sinObs=solicitudesPeriodo.filter(s=>s.status==="no_entregado"&&!(s.observacionChofer||"").trim()).length;
-            return sinObs>0
-              ?<div style={{fontSize:12.5,color:"#F97316",fontWeight:600}}>📝 {sinObs} de ellas no tiene observación registrada. Abre la solicitud y agrega el motivo de la no entrega (queda registrado quién y cuándo).</div>
-              :<div style={{fontSize:12.5,color:C.success,fontWeight:600}}>✓ Todas tienen observación registrada.</div>;
-          })()}
+          <div style={{fontSize:12.5,color:"#F97316",fontWeight:600}}>📝 Abre la solicitud y agrega el motivo de la no entrega (queda registrado quién y cuándo).</div>
           <button style={{...S.exportBtn,fontSize:12,borderColor:"#F97316",color:"#F97316",alignSelf:"flex-start"}}
             onClick={()=>setView("lista")}>
             Ver solicitudes →
           </button>
         </div>
-      )}
+        );
+      })()}
       {esAdmin&&<ResumenMes solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<ResumenKmDia solicitudes={solicitudes} rutas={rutas}/>}
