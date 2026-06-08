@@ -1176,11 +1176,54 @@ function GraficoCobros({ solicitudes }) {
 }
 
 
+// Tarjeta de cobro con detalle emergente (hover en escritorio / toque en móvil).
+// items: [{fecha, hora, tipo, motivo?}]
+function TarjetaCobro({label,color,count,monto,items}){
+  const [open,setOpen]=useState(false);
+  const lista=items||[];
+  return(
+    <div
+      onMouseEnter={()=>setOpen(true)} onMouseLeave={()=>setOpen(false)}
+      onClick={()=>setOpen(o=>!o)}
+      style={{position:"relative",flex:1,minWidth:140,background:C.navy,borderRadius:10,padding:"12px 14px",border:`1px solid ${color}44`,cursor:lista.length?"pointer":"default"}}>
+      <div style={{fontSize:11,color:color,fontWeight:700,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
+        {label}
+        {lista.length>0&&<span style={{fontSize:10,color:C.muted,fontWeight:600}}>ⓘ ver detalle</span>}
+      </div>
+      <div style={{fontSize:11,color:C.muted}}>{count} solicitudes</div>
+      <div style={{fontSize:18,fontWeight:900,color:color,marginTop:4}}>${monto.toLocaleString("es-CL")}</div>
+      {open&&lista.length>0&&(
+        <div style={{position:"absolute",top:"100%",left:0,marginTop:6,zIndex:50,minWidth:260,maxWidth:340,maxHeight:260,overflowY:"auto",background:C.navySurface,border:`1px solid ${color}`,borderRadius:10,padding:"10px 12px",boxShadow:"0 10px 30px rgba(0,0,0,.45)"}}>
+          <div style={{fontSize:10,fontWeight:700,color:color,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>{label} · {lista.length} solicitud(es)</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {lista.map((it,i)=>(
+              <div key={it.id||i} style={{borderTop:i?`1px solid ${C.border}`:"none",paddingTop:i?6:0,display:"flex",flexDirection:"column",gap:1}}>
+                <div style={{fontSize:12,color:C.textPrimary,fontWeight:600}}>
+                  {it.fecha||"sin fecha"}{it.hora?" · "+it.hora:""}
+                </div>
+                <div style={{fontSize:11,color:C.textSecondary}}>
+                  {(TYPE_META[it.tipo]?.label)||it.tipo||"—"}{it.motivo?" · "+it.motivo:""}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResumenMes({solicitudes}){
   const P_SPOT=50000,P_OH=85000,M1=2840000,M2=2840000;
   const cobros=calcularCobros(solicitudes);
   const tSpot=cobros.spotCount;
   const tOH=cobros.ohCount;
+  const _ordItems=arr=>arr.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")||(a.hora||"").localeCompare(b.hora||""));
+  const itemsSpot=_ordItems(solicitudes.filter(s=>cobros.perId[s.id]?.esSpot)
+    .map(s=>({id:s.id,fecha:s.fecha,hora:s.hora,tipo:s.tipo})));
+  const itemsOH=_ordItems(solicitudes.filter(s=>{const r=cobros.perId[s.id];return r&&(r.ohEarly||r.ohLate);})
+    .map(s=>{const r=cobros.perId[s.id];const motivo=r.ohEarly&&r.ohLate?"Temprano + Tarde":(r.ohEarly?"Temprano (<08:30)":"Tarde (≥17:00)");
+      return {id:s.id,fecha:s.fecha,hora:s.hora,tipo:s.tipo,motivo};}));
   const mSpot=tSpot*P_SPOT,mOH=tOH*P_OH,tMov=M1+M2;
   const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(2840000/30);
   const gran=mSpot+mOH+tMov-tNP;
@@ -1194,16 +1237,8 @@ function ResumenMes({solicitudes}){
       </div>
       {(tSpot>0||tOH>0)&&(
         <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-          {tSpot>0&&<div style={{flex:1,minWidth:140,background:C.navy,borderRadius:10,padding:"12px 14px",border:`1px solid ${C.warning}44`}}>
-            <div style={{fontSize:11,color:C.warning,fontWeight:700,marginBottom:4}}>SPOT Extra</div>
-            <div style={{fontSize:11,color:C.muted}}>{tSpot} solicitudes</div>
-            <div style={{fontSize:18,fontWeight:900,color:C.warning,marginTop:4}}>${mSpot.toLocaleString("es-CL")}</div>
-          </div>}
-          {tOH>0&&<div style={{flex:1,minWidth:140,background:C.navy,borderRadius:10,padding:"12px 14px",border:`1px solid ${C.info}44`}}>
-            <div style={{fontSize:11,color:C.info,fontWeight:700,marginBottom:4}}>Overnight</div>
-            <div style={{fontSize:11,color:C.muted}}>{tOH} solicitudes</div>
-            <div style={{fontSize:18,fontWeight:900,color:C.info,marginTop:4}}>${mOH.toLocaleString("es-CL")}</div>
-          </div>}
+          {tSpot>0&&<TarjetaCobro label="SPOT Extra" color={C.warning} count={tSpot} monto={mSpot} items={itemsSpot}/>}
+          {tOH>0&&<TarjetaCobro label="Overnight" color={C.info} count={tOH} monto={mOH} items={itemsOH}/>}
         </div>
       )}
       {tNP>0&&<div style={{background:C.navy,borderRadius:10,padding:"12px 14px",border:`1px solid ${C.danger}44`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
