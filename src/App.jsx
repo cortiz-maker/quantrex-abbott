@@ -83,7 +83,7 @@ async function sbFetch(method, table, body=null, query="") {
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
-const PESO_BASE_KG = 1000; // kg por solicitud (base contractual)
+const PESO_BASE_KG = 20; // kg por solicitud (peso promedio por pedido)
 
 const CLIENTES_DEFAULT = [{"id":"000-2","nombre":"Dhl Atlantis","direccion":"","notas":"Cita XX:XX hrs Andenes 32-33"},{"id":"17004950-0","nombre":"Warner Payamares","direccion":"Marathon 5187, Macul","notas":"Dpto 41, Torre 7"},{"id":"19.684.207-1","nombre":"Felipe Moya Pineda / Dpto 305 / Torre 1","direccion":"Portezuelo de los azules 6975, Puente Alto","notas":""},{"id":"53.125.850-9","nombre":"Comunidad Hospital Del Profesor","direccion":"Avenida Libertador Bernardo O'Higgins 4860, Estación Central, Santiago","notas":"Bodega Hemodinamia Piso 1"},{"id":"60.910.000-1","nombre":"Hospital Clinico U de Chile","direccion":"Santos Dumontt 999, Independencia","notas":""},{"id":"61.101.030-3","nombre":"Hospital Militar De Santiago","direccion":"Av Alcalde Fdo Castillo v 9100, La Reina","notas":"5to Piso, Pabellon Hemodinamia"},{"id":"61.103.007-K","nombre":"Hosp Gral Dr Raul Yazigi","direccion":"Av Las Condes 8631, Las Condes","notas":"Entregar en Hemodinamia Piso 2"},{"id":"61513003-6","nombre":"Dipreca Fondo Hospital","direccion":"Vital Apoquindo 1200, Las condes","notas":"3er Piso Consignacion"},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"El Litre 1012, Valparaiso","notas":""},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"San Ignacio 725, Valparaiso","notas":""},{"id":"61.602.138-9","nombre":"Hospital Rancagua","direccion":"Av. Libertador Bernardo O'Higgins 3065, Rancagua, O'Higgins","notas":""},{"id":"61.602.189-3","nombre":"Hosp Guillermo Grant Benavente","direccion":"San Martin 1436, Concepcion","notas":"Entregar a Warner Payamares"},{"id":"61606602-1","nombre":"Hosp Dr Gustavo Fricke","direccion":"Alvarez 1532, Viña Del Mar","notas":""},{"id":"61.606.903-9","nombre":"HOSP BASE CURICO","direccion":"Archipielago Juan Fernandez 1890, Curico","notas":""},{"id":"61.608.002-4","nombre":"Hospital San Jose","direccion":"Calle San Jose 1030, Santiago Independencia","notas":"Bodega Central"},{"id":"61608004-0","nombre":"Hospital Roberto del Rio","direccion":"Profesor Zanartu 1085, Independencia","notas":"Bodega Central"},{"id":"61.608.101-2","nombre":"Hosp Barros Luco Trudeau","direccion":"Gran Avenida 3204, San Miguel","notas":"Entrega en Equipos Medicos"},{"id":"61608204-3","nombre":"Hospital San Juan de Dios","direccion":"Huerfanos 3255, Santiago","notas":"1er Piso Pabellon Hemodinamia"},{"id":"61.608.402-K","nombre":"Inst Nacional Del Torax","direccion":"Jose Manuel Infante 717, Providencia","notas":"Bodega General"},{"id":"61.608.408-9","nombre":"Hospital Calvo Mackenna","direccion":"Antonio Varas 248, Providencia","notas":""},{"id":"61608502-6","nombre":"Hospital Sotero del Rio","direccion":"Avenida Concha y Toro 3459, Puente alto","notas":"3er Piso, Pabellon 16"},{"id":"61.608.602-2","nombre":"Hosp Urgencia  Asist Pubica","direccion":"Portugal 125, Santiago","notas":"Pabellon 3,  Angiografía 3er piso"},{"id":"61.608.604-9","nombre":"Hospital San Borja De Arriaran","direccion":"Santa Rosa 1234, Santiago","notas":""},{"id":"61980320-5","nombre":"Hospital del Carmen","direccion":"Camino A Rinconada 1201 &, El Olimpo, Maipú, Región Metropolitana","notas":""},{"id":"71.494.700-1","nombre":"Fundacion Diabetes Juvenil","direccion":"Calle Valparaiso 507, Viña del mar","notas":"Piso 2"},{"id":"71.614.000-8","nombre":"Clinica Univer Los Andes","direccion":"Av Plaza 2501, Las Condes","notas":"2do Piso Hemodinamia"},{"id":"76.044.959-8","nombre":"Arlab S.A","direccion":"Alferez Real 1380, Providencia","notas":"Entrega en Bodega"},{"id":"76242774-5","nombre":"Clinica BUPA Santiago S.A.","direccion":"Av. Departamental 1455, La Florida, Region Metropolitana","notas":"Piso -1 Consignacion"},{"id":"76.336.093-3","nombre":"Clinica Meds La Dehesa Spa","direccion":"Jose Alcalde Delano 10581","notas":""},{"id":"76.363.205-9","nombre":"Clinica Ensenada Spa","direccion":"Av Fermin Vivaceta 957, Independencia","notas":"Bodega General"},{"id":"76.871.990-K","nombre":"Nueva Clinica Cordillera Ph S.A","direccion":"Alejandro Fleming  7885, Las Condes","notas":""},{"id":"77.067.168-K","nombre":"Frimed Spa","direccion":"CAMINO LO BOZA 107, Pudahuel","notas":"BODEGA A-08"},{"id":"77487960-9","nombre":"Importadora Y Exportadora CAMIR SPA","direccion":"Perez Valenzuela 1098, Providencia","notas":""},{"id":"78.040.520-1","nombre":"Clin Avansalud Providencia S.A","direccion":"Av Salvador 130, Providencia","notas":""},{"id":"78.800.870-8","nombre":"M Kaplan Y Cia Ltda","direccion":"Marchant Pereira 174, Providencia","notas":""},{"id":"81.378.300-2","nombre":"Abbott Laboratories De Chile","direccion":"Los Militares 4777, Las Condes","notas":"Piso 7 o 8"},{"id":"81698900-0","nombre":"Pontificia Universidad Catolica","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"90.753.000-0","nombre":"Clinica Santa Maria Spa","direccion":"AV Santa Maria 410, Providencia","notas":"Entrega: 4 piso torre C - Pabellón Hemodinamia."},{"id":"92.051.000-0","nombre":"Inst De Diagnostico S.A","direccion":"AV SANTA MARIA 1810, PROVIDENCIA","notas":"Entrega 5to piso Hemodinamia"},{"id":"92.999.000-5","nombre":"Imp. y Distrib.Arquimed S.A","direccion":"Arturo Prat 828, Santiago","notas":""},{"id":"93930000-7","nombre":"Clinica Las Condes S.A.","direccion":"Estoril 450, Las condes","notas":"Piso -2 Consignacion"},{"id":"96.530.470-3","nombre":"Clinica Davila y Servs Medicos Spa","direccion":"Recoleta 464, Recoleta","notas":""},{"id":"96662450-7","nombre":"Clínica Isamédica","direccion":"Carretera El Cobre Presidente Eduardo Frei Montalva N°884, Rancagua, Región del Libertador Bernardo O´Higgins","notas":""},{"id":"96.770.100-9","nombre":"Clin Alemana De Santiago","direccion":"Vitacura 5951, Viitacura","notas":"Pabellon Hemodinamia 5to Piso"},{"id":"96774580-4","nombre":"Clinica Redsalud Mayor Temuco","direccion":"Avenida Gabriela Mistral N°01955, Temuco","notas":""},{"id":"96.885.930-7","nombre":"Clinica Bicentenario SpA","direccion":"Av. Alameda Libertador Bernardo O'Higgins 4850, Estacion Central","notas":""},{"id":"96.885.950-1","nombre":"Clin Ciudad Del Mar S A","direccion":"13 Norte 672, Viña Del Mar","notas":"Entrega en Equipos Medicos"},{"id":"96898980-4","nombre":"Clinica Vespucio SPA","direccion":"Serafin Zamora 190, La Florida, Region Metropolitana","notas":""},{"id":"99.519.620-4","nombre":"Soc De Diag Invasivo Cardiologia Spa","direccion":"Gran Avenida 3204, San Miguel","notas":"Pabellon Hemodinamia"},{"id":"99573490-7","nombre":"UC Christus Servicios Clinicos SPA","direccion":"Camino El Alba 12351, Las Condes","notas":""},{"id":"71.494.700-1","nombre":"Fundacion Diabetes Juvenil","direccion":"Lota 2344, Providencia","notas":"Bodega Central"},{"id":"99573490-7","nombre":"Uc Christus Servicios Clinicos Spa","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"","nombre":"Cenabast","direccion":"San Eugenio 40, Ñuñoa","notas":"Entregar a Solange Arzola"}];
 
@@ -93,6 +93,41 @@ const CHOFERES = [
   { nombre: "Italo Loiza",      ppu: "PBGJ33", usuarioDT: "Quantrex M2", pin: "1981" },
   { nombre: "Cristian Donoso",  ppu: "PZGH22", usuarioDT: "Quantrex M1", pin: "1981" },
 ];
+
+// Mantenedor de vehículos. PPU editable; marca/modelo/año y capacidades (m³ y carga útil kg).
+const VEHICULOS_DEFAULT = [
+  { ppu:"KRYX27", marca:"", modelo:"", anio:"", capacidadM3:"", capacidadKg:"" },
+  { ppu:"PBGJ33", marca:"", modelo:"", anio:"", capacidadM3:"", capacidadKg:"" },
+  { ppu:"PZGH22", marca:"", modelo:"", anio:"", capacidadM3:"", capacidadKg:"" },
+];
+
+// Capacidades referenciales por marca|modelo: volumen útil (m³) y carga útil (kg).
+// Fuentes: fichas técnicas de fabricante (Chile). Valores aprox. y editables.
+const CAPACIDADES_VEHICULO = {
+  "HYUNDAI|PORTER":        { m3:3.5,  kg:1000 },
+  "HYUNDAI|H100":          { m3:3.5,  kg:1300 },
+  "KIA|FRONTIER":          { m3:3.5,  kg:1300 },
+  "PEUGEOT|PARTNER":       { m3:3.8,  kg:800  },
+  "PEUGEOT|BOXER":         { m3:11.5, kg:1500 },
+  "CITROEN|BERLINGO":      { m3:3.8,  kg:800  },
+  "CITROEN|JUMPER":        { m3:11.5, kg:1500 },
+  "RENAULT|KANGOO":        { m3:3.5,  kg:650  },
+  "RENAULT|MASTER":        { m3:13,   kg:1500 },
+  "FIAT|FIORINO":          { m3:2.8,  kg:650  },
+  "FIAT|DUCATO":           { m3:11.5, kg:1500 },
+  "MERCEDES-BENZ|SPRINTER":{ m3:11,   kg:1500 },
+  "VOLKSWAGEN|TRANSPORTER":{ m3:6.7,  kg:1200 },
+  "TOYOTA|HIACE":          { m3:6,    kg:1000 },
+  "JAC|X200":              { m3:4,    kg:1500 },
+  "JAC|SUNRAY":            { m3:10,   kg:1500 },
+  "MAXUS|V80":             { m3:11,   kg:1300 },
+  "CHEVROLET|N300":        { m3:3,    kg:750  },
+  "CHEVROLET|N400":        { m3:3.5,  kg:950  },
+};
+function buscarCapacidad(marca, modelo){
+  const k=((marca||"").trim().toUpperCase())+"|"+((modelo||"").trim().toUpperCase());
+  return CAPACIDADES_VEHICULO[k]||null;
+}
 
 
 const USUARIOS = [
@@ -574,6 +609,26 @@ async function saveChoferes(data) {
     if(rows.length) await sbFetch("POST","choferes",rows,"?on_conflict=id");
   } catch(e) { console.error(e); }
 }
+async function loadVehiculos() {
+  try {
+    const data = await sbFetch("GET","vehiculos","","?order=updated_at.asc");
+    if(!data||!data.length) return null;
+    return data.map(v=>({ppu:v.ppu,marca:v.marca||"",modelo:v.modelo||"",anio:v.anio||"",
+      capacidadM3:v.capacidad_m3==null?"":v.capacidad_m3, capacidadKg:v.capacidad_kg==null?"":v.capacidad_kg}));
+  } catch(e) { return null; }
+}
+async function saveVehiculos(data) {
+  try {
+    await sbFetch("DELETE","vehiculos",null,"?id=not.is.null");
+    const rows=(data||[]).filter(Boolean).map(v=>({
+      id:v.ppu, ppu:v.ppu, marca:v.marca||null, modelo:v.modelo||null, anio:v.anio||null,
+      capacidad_m3:(v.capacidadM3===""||v.capacidadM3==null)?null:Number(v.capacidadM3),
+      capacidad_kg:(v.capacidadKg===""||v.capacidadKg==null)?null:Number(v.capacidadKg),
+      updated_at:new Date().toISOString(),
+    }));
+    if(rows.length) await sbFetch("POST","vehiculos",rows,"?on_conflict=id");
+  } catch(e) { console.error(e); }
+}
 function registrarAcceso(email) {
   try {
     const key = "qx:acceso:" + email;
@@ -653,6 +708,12 @@ async function deleteRuta(id) {
 // Una ruta se cierra cuando tiene paradas y todas sus solicitudes asignadas
 // están en estado terminal (entregadas/completadas, no entregadas o canceladas).
 const ESTADOS_TERMINALES = ["completada","no_entregado","devolucion","cancelada"];
+// True si la solicitud está (o estuvo) completada: estado actual o registro en su log.
+function solCompletada(s){
+  if(!s) return false;
+  if(s.status==="completada") return true;
+  return (s.statusLog||[]).some(e=>e&&(e.a==="Entregado"||e.a==="Completada"));
+}
 function rutaCerrada(ruta, sols) {
   const asignadas = (sols||[]).filter(s => (ruta.paradas||[]).some(p => p.solId===s.id));
   if (asignadas.length === 0) return false;
@@ -813,6 +874,7 @@ export default function QuantrexAbbott() {
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const [usuarios,setUsuarios]=useState(USUARIOS);
   const [choferes,setChoferes]=useState(CHOFERES);
+  const [vehiculos,setVehiculos]=useState(VEHICULOS_DEFAULT);
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
   });
@@ -825,7 +887,7 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes()]).then(async ([s,c,p,cl,r,us,ch])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos()]).then(async ([s,c,p,cl,r,us,ch,ve])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -1083,7 +1145,7 @@ export default function QuantrexAbbott() {
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes}/>)
-        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} onSave={async (u,c)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}}} setView={setView}/>)
+        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} setView={setView}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
@@ -2269,7 +2331,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
   }
 
   const rutaActiva=rutaDetalle?rutas.find(r=>r.id===rutaDetalle):null;
-  const solsDisponibles=solicitudes.filter(s=>!s.rutaId||s.rutaId===rutaDetalle);
+  const solsDisponibles=solicitudes.filter(s=>(!s.rutaId||s.rutaId===rutaDetalle) && !solCompletada(s));
 
   return(
     <div style={S.section}>
@@ -2420,7 +2482,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
 
 
 // ── Admin Usuarios ─────────────────────────────────────────────────────────
-function AdminUsuarios({usuarios,choferes,onSave,setView}){
+function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,setView}){
   const [listaU,setListaU]=useState(usuarios.filter(u=>u.perfil!=="admin"));
   const [listaC,setListaC]=useState(choferes);
   const [tab,setTab]=useState("operadores");
@@ -2430,6 +2492,11 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
   const [formC,setFormC]=useState({nombre:"",ppu:"",usuarioDT:"Quantrex M1"});
   const [nuevoU,setNuevoU]=useState(false);
   const [nuevoC,setNuevoC]=useState(false);
+  const [listaV,setListaV]=useState(vehiculos);
+  const [editV,setEditV]=useState(null);
+  const [nuevoV,setNuevoV]=useState(false);
+  const [formV,setFormV]=useState({ppu:"",marca:"",modelo:"",anio:"",capacidadM3:"",capacidadKg:""});
+  const [autollenado,setAutollenado]=useState(false);
 
   function guardarOperador(){
     if(!formU.email||!formU.password||!formU.nombre)return;
@@ -2454,7 +2521,7 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
     <div style={S.section}>
       <div style={S.pageTitle}>Gestión de Usuarios</div>
       <div style={{display:"flex",gap:8,marginBottom:4,flexWrap:"wrap"}}>
-        {[["operadores","👤 Operadores"],["clientes_acc","🏢 Clientes"],["choferes","🚗 Choferes"]].map(([id,label])=>(
+        {[["operadores","👤 Operadores"],["clientes_acc","🏢 Clientes"],["choferes","🚗 Choferes"],["vehiculos","🚚 Vehículos"]].map(([id,label])=>(
           <button key={id} style={{...S.statusBtn,background:tab===id?C.cyan+"33":"transparent",border:"1px solid "+(tab===id?C.cyan:C.border),color:tab===id?C.cyan:C.muted,fontWeight:700,fontSize:13}}
             onClick={()=>setTab(id)}>{label}</button>
         ))}
@@ -2606,6 +2673,80 @@ function AdminUsuarios({usuarios,choferes,onSave,setView}){
             </div>
           ))}
           {listaC.length===0&&!nuevoC&&<EmptyState msg="No hay choferes registrados."/>}
+        </div>
+      )}
+
+      {tab==="vehiculos"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <button style={S.btnPri} onClick={()=>{setNuevoV(true);setEditV(null);setAutollenado(false);setFormV({ppu:"",marca:"",modelo:"",anio:"",capacidadM3:"",capacidadKg:""});}}>+ Nuevo vehículo</button>
+          </div>
+          {(nuevoV||editV!==null)&&(()=>{
+            const sugerencia=buscarCapacidad(formV.marca,formV.modelo);
+            const aplicarSugerencia=()=>{
+              if(!sugerencia)return;
+              setFormV(p=>({...p,capacidadM3:String(sugerencia.m3),capacidadKg:String(sugerencia.kg)}));
+              setAutollenado(true);
+            };
+            return(
+            <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
+              <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>{editV!==null?"Editar vehículo":"Nuevo vehículo"}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                <div style={S.fGroup}><label style={S.label}>PPU (patente)</label>
+                  <input style={S.input} placeholder="Ej: KRYX27" value={formV.ppu} onChange={e=>setFormV(p=>({...p,ppu:e.target.value.toUpperCase().replace(/\s/g,"")}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Marca</label>
+                  <input style={S.input} placeholder="Ej: Hyundai" value={formV.marca}
+                    onChange={e=>{setAutollenado(false);setFormV(p=>({...p,marca:e.target.value}));}}/></div>
+                <div style={S.fGroup}><label style={S.label}>Modelo</label>
+                  <input style={S.input} placeholder="Ej: Porter" value={formV.modelo}
+                    onChange={e=>{setAutollenado(false);setFormV(p=>({...p,modelo:e.target.value}));}}/></div>
+                <div style={S.fGroup}><label style={S.label}>Año</label>
+                  <input style={S.input} inputMode="numeric" maxLength={4} placeholder="Ej: 2022" value={formV.anio}
+                    onChange={e=>setFormV(p=>({...p,anio:e.target.value.replace(/\D/g,"").slice(0,4)}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Capacidad (m³)</label>
+                  <input style={S.input} inputMode="decimal" placeholder="Ej: 3.5" value={formV.capacidadM3}
+                    onChange={e=>setFormV(p=>({...p,capacidadM3:e.target.value.replace(/[^\d.]/g,"")}))}/></div>
+                <div style={S.fGroup}><label style={S.label}>Carga útil (kg)</label>
+                  <input style={S.input} inputMode="numeric" placeholder="Ej: 1000" value={formV.capacidadKg}
+                    onChange={e=>setFormV(p=>({...p,capacidadKg:e.target.value.replace(/\D/g,"")}))}/></div>
+              </div>
+              {sugerencia&&(
+                <div style={{marginTop:10,background:C.cyan+"15",border:"1px solid "+C.cyan+"55",borderRadius:8,padding:"8px 12px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,color:C.textSecondary}}>Capacidad referencial encontrada: <b style={{color:C.cyan}}>{sugerencia.m3} m³ · {sugerencia.kg} kg</b></span>
+                  <button style={{...S.exportBtn,fontSize:11}} onClick={aplicarSugerencia}>Autocompletar</button>
+                  {autollenado&&<span style={{fontSize:11,color:C.success}}>✓ aplicado (puedes ajustarlo)</span>}
+                </div>
+              )}
+              <div style={{fontSize:11,color:C.muted,marginTop:8}}>Las capacidades son referenciales por marca/modelo. Verifica con el padrón del vehículo y ajústalas si es necesario.</div>
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+                <button style={S.btnSec} onClick={()=>{setNuevoV(false);setEditV(null);}}>Cancelar</button>
+                <button style={S.btnPri} onClick={()=>{
+                  if(!formV.ppu){window.alert("La PPU es obligatoria.");return;}
+                  const dup=listaV.findIndex(v=>v.ppu===formV.ppu);
+                  if(editV===null&&dup>=0){window.alert("Ya existe un vehículo con esa PPU.");return;}
+                  const upd=editV!==null?listaV.map((v,i)=>i===editV?{...formV}:v):[...listaV,{...formV}];
+                  setListaV(upd);setNuevoV(false);setEditV(null);
+                  onSave(null,null,upd);
+                }}>Guardar</button>
+              </div>
+            </div>
+            );
+          })()}
+          {listaV.map((v,i)=>(
+            <div key={i} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13}}>{v.ppu} {(v.marca||v.modelo)?<span style={{color:C.muted,fontWeight:500}}>· {[v.marca,v.modelo,v.anio].filter(Boolean).join(" ")}</span>:null}</div>
+                <div style={{fontSize:12,color:C.muted}}>
+                  {v.capacidadM3?`${v.capacidadM3} m³`:"m³ —"} · {v.capacidadKg?`${Number(v.capacidadKg).toLocaleString("es-CL")} kg`:"kg —"}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{setEditV(i);setNuevoV(false);setAutollenado(false);setFormV({ppu:v.ppu||"",marca:v.marca||"",modelo:v.modelo||"",anio:v.anio||"",capacidadM3:v.capacidadM3===""||v.capacidadM3==null?"":String(v.capacidadM3),capacidadKg:v.capacidadKg===""||v.capacidadKg==null?"":String(v.capacidadKg)});}}>✎ Editar</button>
+                <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{if(!window.confirm("¿Eliminar este vehículo?"))return;const upd=listaV.filter((_,j)=>j!==i);setListaV(upd);onSave(null,null,upd);}}>✕</button>
+              </div>
+            </div>
+          ))}
+          {listaV.length===0&&!nuevoV&&<EmptyState msg="No hay vehículos registrados."/>}
         </div>
       )}
     </div>
@@ -3432,7 +3573,7 @@ function ResumenCO2({ solicitudes, rutas=[] }) {
             <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
               <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KG TRANSPORTADOS</div>
               <div style={{fontSize:20,fontWeight:900,color:C.warning}}>{co2Data.totalKg.toLocaleString("es-CL")} kg</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{co2Data.nSols} entregas × 1.000 kg</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{co2Data.nSols} entregas × 20 kg</div>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
