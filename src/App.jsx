@@ -1170,7 +1170,7 @@ export default function QuantrexAbbott() {
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes}/>)
         :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} setView={setView}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
-        :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion}/>)
+        :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion} vehiculos={vehiculos} choferes={choferes}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
             onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
         :view==="cierre_detalle"&&cierreDetalle?(<CierreDetalle cierre={cierreDetalle} setView={setView}
@@ -2194,10 +2194,29 @@ const VEHICULOS = [
   {id:"M3", label:"M3 · Cristian Donoso", ppu:"PZGH22"},
 ];
 
-function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDeleteRuta,onSaveSolicitud,setView,sesion}){
+function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDeleteRuta,onSaveSolicitud,setView,sesion,vehiculos=[],choferes=[]}){
   const hoy=new Date().toISOString().split("T")[0];
+  // ── Vehículos alineados con el mantenedor (Gestión de Usuarios) ───────────
+  // Opciones derivadas del estado sincronizado con Supabase. La identidad es la
+  // PPU; se enriquece con el chofer asignado (match por PPU en `choferes`).
+  const opcionesVehiculo=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>{
+    const ch=(choferes||[]).find(c=>c.ppu===v.ppu);
+    const desc=ch?.nombre||[v.marca,v.modelo].filter(Boolean).join(" ");
+    return {value:v.ppu, label:desc?`${v.ppu} · ${desc}`:v.ppu};
+  });
+  // Compatibilidad con rutas antiguas que guardaron códigos M1/M2/M3.
+  function resolverVehiculo(code){
+    if(!code) return {value:"",label:"—"};
+    const legacy=VEHICULOS.find(v=>v.id===code);
+    const ppu=legacy?legacy.ppu:code;
+    const opt=opcionesVehiculo.find(o=>o.value===ppu);
+    if(opt) return opt;
+    if(legacy) return {value:ppu,label:legacy.label};
+    return {value:ppu,label:ppu};
+  }
+  const vehiculoDefault=opcionesVehiculo[0]?.value||"";
   const [nuevaRuta,setNuevaRuta]=useState(false);
-  const [formRuta,setFormRuta]=useState({nombre:"",fecha:hoy,vehiculo:"M1"});
+  const [formRuta,setFormRuta]=useState({nombre:"",fecha:hoy,vehiculo:""});
   const [rutaDetalle,setRutaDetalle]=useState(null);
   const [agregandoParada,setAgregandoParada]=useState(false);
   const [kmCalculando,setKmCalculando]=useState(false);
@@ -2207,12 +2226,13 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
   }
 
   async function crearRuta(){
+    if(!formRuta.vehiculo){window.alert("Selecciona un vehículo. Si no aparece ninguno, agrégalo en Gestión de Usuarios → Vehículos.");return;}
     const idRuta=generarIdRuta();
     const r={id:idRuta,nombre:idRuta,fecha:formRuta.fecha,
       vehiculo:formRuta.vehiculo,paradas:[],kmTotal:null,estado:"abierta",cerradaPor:null,reaperturas:[],createdAt:new Date().toISOString()};
     const upd=[r,...rutas];
     setRutas(upd); await onSaveRuta(r);
-    setNuevaRuta(false); setFormRuta({nombre:"",fecha:hoy,vehiculo:"M1"});
+    setNuevaRuta(false); setFormRuta({nombre:"",fecha:hoy,vehiculo:vehiculoDefault});
     setRutaDetalle(r.id);
   }
 
@@ -2361,7 +2381,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Gestión de Rutas</div>
-        <button style={S.btnPri} onClick={()=>setNuevaRuta(true)}>+ Nueva Ruta</button>
+        <button style={S.btnPri} onClick={()=>{setFormRuta(p=>({...p,fecha:hoy,vehiculo:vehiculoDefault}));setNuevaRuta(true);}}>+ Nueva Ruta</button>
       </div>
 
       {nuevaRuta&&(
@@ -2372,7 +2392,9 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
               <input style={S.input} type="date" value={formRuta.fecha} onChange={e=>setFormRuta(p=>({...p,fecha:e.target.value}))}/></div>
             <div style={S.fGroup}><label style={S.label}>Vehículo</label>
               <select style={S.input} value={formRuta.vehiculo} onChange={e=>setFormRuta(p=>({...p,vehiculo:e.target.value}))}>
-                {VEHICULOS.map(v=><option key={v.id} value={v.id}>{v.label}</option>)}
+                {opcionesVehiculo.length===0
+                  ? <option value="">Sin vehículos — agrégalos en Gestión de Usuarios</option>
+                  : opcionesVehiculo.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
               </select></div>
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
@@ -2385,7 +2407,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
       {/* Lista de rutas */}
       {rutas.length===0&&!nuevaRuta&&<EmptyState msg="No hay rutas creadas aún."/>}
       {rutas.map(r=>{
-        const veh=VEHICULOS.find(v=>v.id===r.vehiculo);
+        const veh=resolverVehiculo(r.vehiculo);
         const isOpen=rutaDetalle===r.id;
         const paradaSols=r.paradas.map(p=>solicitudes.find(s=>s.id===p.solId)).filter(Boolean);
         const listaParaCerrar=paradaSols.length>0&&paradaSols.every(s=>ESTADOS_TERMINALES.includes(s.status));
@@ -2398,7 +2420,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                   <span style={{fontWeight:800,fontSize:14}}>{r.id}</span>
                   <span style={{fontSize:13,color:C.textSecondary}}>{r.nombre}</span>
-                  <span style={{fontSize:11,background:C.cyan+"22",color:C.cyan,padding:"2px 8px",borderRadius:6,fontWeight:700}}>{veh?.label||r.vehiculo}</span>
+                  <span style={{fontSize:11,background:C.cyan+"22",color:C.cyan,padding:"2px 8px",borderRadius:6,fontWeight:700}}>{veh.label||r.vehiculo}</span>
                   <span style={{fontSize:11,background:(estaCerrada?"#22C55E":"#F59E0B")+"22",color:estaCerrada?"#22C55E":"#F59E0B",padding:"2px 8px",borderRadius:6,fontWeight:700}}>{estaCerrada?"✓ Cerrada":"Abierta"}</span>
                   {!estaCerrada&&listaParaCerrar&&<span style={{fontSize:11,background:"#22C55E22",color:"#22C55E",padding:"2px 8px",borderRadius:6,fontWeight:700}}>Lista para cerrar</span>}
                 </div>
@@ -2439,9 +2461,11 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
                 {!estaCerrada&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                   <label style={{...S.label,marginBottom:0}}>Vehículo:</label>
-                  {VEHICULOS.map(v=>(
-                    <button key={v.id} style={{...S.statusBtn,background:r.vehiculo===v.id?C.cyan+"33":"transparent",border:"1px solid "+(r.vehiculo===v.id?C.cyan:C.border),color:r.vehiculo===v.id?C.cyan:C.muted,fontSize:12}}
-                      onClick={()=>cambiarVehiculo(r.id,v.id)}>{v.label}</button>
+                  {opcionesVehiculo.length===0
+                    ? <span style={{fontSize:12,color:C.muted}}>Sin vehículos registrados (Gestión de Usuarios → Vehículos)</span>
+                    : opcionesVehiculo.map(o=>(
+                    <button key={o.value} style={{...S.statusBtn,background:resolverVehiculo(r.vehiculo).value===o.value?C.cyan+"33":"transparent",border:"1px solid "+(resolverVehiculo(r.vehiculo).value===o.value?C.cyan:C.border),color:resolverVehiculo(r.vehiculo).value===o.value?C.cyan:C.muted,fontSize:12}}
+                      onClick={()=>cambiarVehiculo(r.id,o.value)}>{o.label}</button>
                   ))}
                 </div>
                 )}
