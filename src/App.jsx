@@ -83,7 +83,7 @@ async function sbFetch(method, table, body=null, query="") {
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
-const PESO_BASE_KG = 20; // kg por solicitud (peso promedio por pedido)
+const PESO_BASE_KG = 200; // kg por solicitud (peso promedio por pedido)
 
 const CLIENTES_DEFAULT = [{"id":"000-2","nombre":"Dhl Atlantis","direccion":"","notas":"Cita XX:XX hrs Andenes 32-33"},{"id":"17004950-0","nombre":"Warner Payamares","direccion":"Marathon 5187, Macul","notas":"Dpto 41, Torre 7"},{"id":"19.684.207-1","nombre":"Felipe Moya Pineda / Dpto 305 / Torre 1","direccion":"Portezuelo de los azules 6975, Puente Alto","notas":""},{"id":"53.125.850-9","nombre":"Comunidad Hospital Del Profesor","direccion":"Avenida Libertador Bernardo O'Higgins 4860, Estación Central, Santiago","notas":"Bodega Hemodinamia Piso 1"},{"id":"60.910.000-1","nombre":"Hospital Clinico U de Chile","direccion":"Santos Dumontt 999, Independencia","notas":""},{"id":"61.101.030-3","nombre":"Hospital Militar De Santiago","direccion":"Av Alcalde Fdo Castillo v 9100, La Reina","notas":"5to Piso, Pabellon Hemodinamia"},{"id":"61.103.007-K","nombre":"Hosp Gral Dr Raul Yazigi","direccion":"Av Las Condes 8631, Las Condes","notas":"Entregar en Hemodinamia Piso 2"},{"id":"61513003-6","nombre":"Dipreca Fondo Hospital","direccion":"Vital Apoquindo 1200, Las condes","notas":"3er Piso Consignacion"},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"El Litre 1012, Valparaiso","notas":""},{"id":"61.602.054-4","nombre":"Hospital Carlos Van Buren","direccion":"San Ignacio 725, Valparaiso","notas":""},{"id":"61.602.138-9","nombre":"Hospital Rancagua","direccion":"Av. Libertador Bernardo O'Higgins 3065, Rancagua, O'Higgins","notas":""},{"id":"61.602.189-3","nombre":"Hosp Guillermo Grant Benavente","direccion":"San Martin 1436, Concepcion","notas":"Entregar a Warner Payamares"},{"id":"61606602-1","nombre":"Hosp Dr Gustavo Fricke","direccion":"Alvarez 1532, Viña Del Mar","notas":""},{"id":"61.606.903-9","nombre":"HOSP BASE CURICO","direccion":"Archipielago Juan Fernandez 1890, Curico","notas":""},{"id":"61.608.002-4","nombre":"Hospital San Jose","direccion":"Calle San Jose 1030, Santiago Independencia","notas":"Bodega Central"},{"id":"61608004-0","nombre":"Hospital Roberto del Rio","direccion":"Profesor Zanartu 1085, Independencia","notas":"Bodega Central"},{"id":"61.608.101-2","nombre":"Hosp Barros Luco Trudeau","direccion":"Gran Avenida 3204, San Miguel","notas":"Entrega en Equipos Medicos"},{"id":"61608204-3","nombre":"Hospital San Juan de Dios","direccion":"Huerfanos 3255, Santiago","notas":"1er Piso Pabellon Hemodinamia"},{"id":"61.608.402-K","nombre":"Inst Nacional Del Torax","direccion":"Jose Manuel Infante 717, Providencia","notas":"Bodega General"},{"id":"61.608.408-9","nombre":"Hospital Calvo Mackenna","direccion":"Antonio Varas 248, Providencia","notas":""},{"id":"61608502-6","nombre":"Hospital Sotero del Rio","direccion":"Avenida Concha y Toro 3459, Puente alto","notas":"3er Piso, Pabellon 16"},{"id":"61.608.602-2","nombre":"Hosp Urgencia  Asist Pubica","direccion":"Portugal 125, Santiago","notas":"Pabellon 3,  Angiografía 3er piso"},{"id":"61.608.604-9","nombre":"Hospital San Borja De Arriaran","direccion":"Santa Rosa 1234, Santiago","notas":""},{"id":"61980320-5","nombre":"Hospital del Carmen","direccion":"Camino A Rinconada 1201 &, El Olimpo, Maipú, Región Metropolitana","notas":""},{"id":"71.494.700-1","nombre":"Fundacion Diabetes Juvenil","direccion":"Calle Valparaiso 507, Viña del mar","notas":"Piso 2"},{"id":"71.614.000-8","nombre":"Clinica Univer Los Andes","direccion":"Av Plaza 2501, Las Condes","notas":"2do Piso Hemodinamia"},{"id":"76.044.959-8","nombre":"Arlab S.A","direccion":"Alferez Real 1380, Providencia","notas":"Entrega en Bodega"},{"id":"76242774-5","nombre":"Clinica BUPA Santiago S.A.","direccion":"Av. Departamental 1455, La Florida, Region Metropolitana","notas":"Piso -1 Consignacion"},{"id":"76.336.093-3","nombre":"Clinica Meds La Dehesa Spa","direccion":"Jose Alcalde Delano 10581","notas":""},{"id":"76.363.205-9","nombre":"Clinica Ensenada Spa","direccion":"Av Fermin Vivaceta 957, Independencia","notas":"Bodega General"},{"id":"76.871.990-K","nombre":"Nueva Clinica Cordillera Ph S.A","direccion":"Alejandro Fleming  7885, Las Condes","notas":""},{"id":"77.067.168-K","nombre":"Frimed Spa","direccion":"CAMINO LO BOZA 107, Pudahuel","notas":"BODEGA A-08"},{"id":"77487960-9","nombre":"Importadora Y Exportadora CAMIR SPA","direccion":"Perez Valenzuela 1098, Providencia","notas":""},{"id":"78.040.520-1","nombre":"Clin Avansalud Providencia S.A","direccion":"Av Salvador 130, Providencia","notas":""},{"id":"78.800.870-8","nombre":"M Kaplan Y Cia Ltda","direccion":"Marchant Pereira 174, Providencia","notas":""},{"id":"81.378.300-2","nombre":"Abbott Laboratories De Chile","direccion":"Los Militares 4777, Las Condes","notas":"Piso 7 o 8"},{"id":"81698900-0","nombre":"Pontificia Universidad Catolica","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"90.753.000-0","nombre":"Clinica Santa Maria Spa","direccion":"AV Santa Maria 410, Providencia","notas":"Entrega: 4 piso torre C - Pabellón Hemodinamia."},{"id":"92.051.000-0","nombre":"Inst De Diagnostico S.A","direccion":"AV SANTA MARIA 1810, PROVIDENCIA","notas":"Entrega 5to piso Hemodinamia"},{"id":"92.999.000-5","nombre":"Imp. y Distrib.Arquimed S.A","direccion":"Arturo Prat 828, Santiago","notas":""},{"id":"93930000-7","nombre":"Clinica Las Condes S.A.","direccion":"Estoril 450, Las condes","notas":"Piso -2 Consignacion"},{"id":"96.530.470-3","nombre":"Clinica Davila y Servs Medicos Spa","direccion":"Recoleta 464, Recoleta","notas":""},{"id":"96662450-7","nombre":"Clínica Isamédica","direccion":"Carretera El Cobre Presidente Eduardo Frei Montalva N°884, Rancagua, Región del Libertador Bernardo O´Higgins","notas":""},{"id":"96.770.100-9","nombre":"Clin Alemana De Santiago","direccion":"Vitacura 5951, Viitacura","notas":"Pabellon Hemodinamia 5to Piso"},{"id":"96774580-4","nombre":"Clinica Redsalud Mayor Temuco","direccion":"Avenida Gabriela Mistral N°01955, Temuco","notas":""},{"id":"96.885.930-7","nombre":"Clinica Bicentenario SpA","direccion":"Av. Alameda Libertador Bernardo O'Higgins 4850, Estacion Central","notas":""},{"id":"96.885.950-1","nombre":"Clin Ciudad Del Mar S A","direccion":"13 Norte 672, Viña Del Mar","notas":"Entrega en Equipos Medicos"},{"id":"96898980-4","nombre":"Clinica Vespucio SPA","direccion":"Serafin Zamora 190, La Florida, Region Metropolitana","notas":""},{"id":"99.519.620-4","nombre":"Soc De Diag Invasivo Cardiologia Spa","direccion":"Gran Avenida 3204, San Miguel","notas":"Pabellon Hemodinamia"},{"id":"99573490-7","nombre":"UC Christus Servicios Clinicos SPA","direccion":"Camino El Alba 12351, Las Condes","notas":""},{"id":"71.494.700-1","nombre":"Fundacion Diabetes Juvenil","direccion":"Lota 2344, Providencia","notas":"Bodega Central"},{"id":"99573490-7","nombre":"Uc Christus Servicios Clinicos Spa","direccion":"Marcoleta 367, Santiago","notas":""},{"id":"","nombre":"Cenabast","direccion":"San Eugenio 40, Ñuñoa","notas":"Entregar a Solange Arzola"}];
 
@@ -986,7 +986,7 @@ export default function QuantrexAbbott() {
     const upd=solicitudes.map(s=>{
       if(s.id!==id)return s;
       const entry={de:STATUS_META[s.status]?.label||s.status,a:STATUS_META[newStatus]?.label||newStatus,
-        fechaHora,canceladoPor:canceladoPor||null,id:Date.now().toString()};
+        fechaHora,canceladoPor:canceladoPor||null,usuario:sesion?.nombre||sesion?.email||"—",id:Date.now().toString()};
       return{...s,status:newStatus,updatedAt:now.toISOString(),
         statusLog:[...(s.statusLog||[]),entry],...(canceladoPor?{canceladoPor}:{})};
     });
@@ -1005,7 +1005,7 @@ export default function QuantrexAbbott() {
       const now=new Date();
       const fechaHora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
       updatedSol = {...updatedSol, status:newStatus,
-        statusLog:[...(updatedSol.statusLog||[]),{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",fechaHora,canceladoPor:null}]};
+        statusLog:[...(updatedSol.statusLog||[]),{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",fechaHora,canceladoPor:null,usuario:sesion?.nombre||sesion?.email||"—"}]};
     }
     const solActualizada={...updatedSol,updatedAt:new Date().toISOString()};
     // Si admin/operador modificó la observación, registrar quién y cuándo
@@ -1040,7 +1040,8 @@ export default function QuantrexAbbott() {
     const upd = solicitudes.map(s => {
       if(s.id !== id) return s;
       const entry = {id:Date.now().toString(), de:STATUS_META[s.status]?.label||s.status,
-        a:statusLabel, fechaHora, canceladoPor:null, geo:geoStr};
+        a:statusLabel, fechaHora, canceladoPor:null, geo:geoStr,
+        usuario:perfilChofer?.nombre||sesion?.nombre||s.choferAsignado||"Chofer"};
       return {...s, status:nuevoEstado, updatedAt:now.toISOString(),
         statusLog:[...(s.statusLog||[]),entry], geoEntrega:geoStr, horaEntrega:fechaHora,
         fotoEntrega:fotosDoc[0]||null, fotosEntrega:fotosDoc, horaLlegada:horaLlegada||null, tiempoEnPunto:tiempoEnPunto||null,
@@ -1780,7 +1781,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           </div>
         </div>
       )}
-      <LogEstados log={sol.statusLog||[]} solId={sol.id} onEditLog={onEditLog} esAdmin={esAdmin}/>
+      <LogEstados log={sol.statusLog||[]} solId={sol.id} onEditLog={onEditLog} esAdmin={esAdmin} usuarioActual={sesion?.nombre||sesion?.email||"Administrador"}/>
       {esAdmin&&<div style={{marginTop:16}}>
         {!confirmDel
           ?<button style={S.deleteBtn} onClick={()=>setConfirmDel(true)}>Eliminar solicitud</button>
@@ -1796,13 +1797,13 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
 }
 
 // ── LogEstados ─────────────────────────────────────────────────────────────
-function LogEstados({log,solId,onEditLog,esAdmin=true}){
+function LogEstados({log,solId,onEditLog,esAdmin=true,usuarioActual="Administrador"}){
   const [editMode,setEditMode]=useState(false);
   const [editLog,setEditLog]=useState(log);
   const upd=(id,f,v)=>setEditLog(p=>p.map(e=>e.id===id?{...e,[f]:v}:e));
   const del=id=>setEditLog(p=>p.filter(e=>e.id!==id));
   const add=()=>{const n=new Date();setEditLog(p=>[...p,{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",
-    fechaHora:n.toLocaleDateString("es-CL")+" "+n.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}),canceladoPor:null}]);};
+    fechaHora:n.toLocaleDateString("es-CL")+" "+n.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}),canceladoPor:null,usuario:usuarioActual+" (manual)"}]);};
   return(
     <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1818,6 +1819,7 @@ function LogEstados({log,solId,onEditLog,esAdmin=true}){
           <span style={{color:C.textPrimary,fontWeight:600}}>{e.de} → {e.a}</span>
           <span style={{color:C.muted}}>· {(e.fechaHora||"").split(" ")[1]||e.fechaHora}</span>
           {e.canceladoPor&&<span style={{color:C.danger}}>· {e.canceladoPor}</span>}
+          {esAdmin&&e.usuario&&<span style={{color:C.muted,fontStyle:"italic"}}>· por {e.usuario}</span>}
         </div>
       )):(
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -3573,7 +3575,7 @@ function ResumenCO2({ solicitudes, rutas=[] }) {
             <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
               <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KG TRANSPORTADOS</div>
               <div style={{fontSize:20,fontWeight:900,color:C.warning}}>{co2Data.totalKg.toLocaleString("es-CL")} kg</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{co2Data.nSols} entregas × 20 kg</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{co2Data.nSols} entregas × 200 kg</div>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
