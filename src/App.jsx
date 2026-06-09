@@ -376,6 +376,16 @@ function calcularCobros(solicitudes){
   }
   for(const k of Object.keys(lateRep)) perId[lateRep[k].id].ohLate = true;
   for(const id of lateNoPpu) perId[id].ohLate = true;
+  // ── Reclasificación puntual por OT (decisión comercial, no altera reglas) ──
+  // QX-078: se factura como SPOT en lugar de Overnight. Sólo afecta a esta
+  // solicitud; el resto de cobros se mantienen según las reglas vigentes.
+  const OVERRIDE_OT_A_SPOT = ["QX-078"];
+  for(const s of sols){
+    if(OVERRIDE_OT_A_SPOT.includes((s.ot||"").trim())){
+      const r = perId[s.id];
+      if(r){ r.ohEarly = false; r.ohLate = false; r.esSpot = true; }
+    }
+  }
   // Prevalece overnight sobre SPOT
   let spotCount = 0, ohCount = 0;
   for(const s of sols){
@@ -403,16 +413,28 @@ const SPOT_REGIONAL = [
 
 function detectarRegion(direccion) {
   if (!direccion) return null;
-  const dir = direccion.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const norm = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const dir = norm(direccion);
+
+  // Coincidencia por palabra completa: evita falsos positivos por subcadena
+  // (p. ej. "La Florida" RM vs. comuna "Florida" de Biobío, o calles tipo "Lota").
+  const matchKw = (kw) => {
+    const k = norm(kw).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${k}([^a-z0-9]|$)`).test(dir);
+  };
+
+  // 1) RM primero: si el destino menciona una comuna/keyword de RM, es RM (recargo 0)
+  const rm = SPOT_REGIONAL[0];
+  if (rm.keywords.some(matchKw)) return rm;
+
+  // 2) Resto de regiones
   for (const r of SPOT_REGIONAL) {
-    if (r.region === "RM") continue; // RM se evalúa al final
-    for (const kw of r.keywords) {
-      const kwNorm = kw.normalize("NFD").replace(/[̀-ͯ]/g, "");
-      if (dir.includes(kwNorm)) return r;
-    }
+    if (r.region === "RM") continue;
+    if (r.keywords.some(matchKw)) return r;
   }
-  // Si no encontró otra región, asume RM
-  return SPOT_REGIONAL[0];
+
+  // 3) Sin coincidencia → asume RM
+  return rm;
 }
 
 // ── Período ────────────────────────────────────────────────────────────────
