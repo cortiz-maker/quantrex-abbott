@@ -730,6 +730,10 @@ async function deleteRuta(id) {
 // Una ruta se cierra cuando tiene paradas y todas sus solicitudes asignadas
 // están en estado terminal (entregadas/completadas, no entregadas o canceladas).
 const ESTADOS_TERMINALES = ["completada","no_entregado","devolucion","cancelada"];
+// Estados elegibles para asignar a una ruta: solo Pendiente y En Tránsito.
+// (en_proceso es la clave interna de "En Tránsito"). Excluye terminales.
+const ESTADOS_RUTABLES = ["pendiente","en_proceso"];
+function solRutable(s){ return !!s && ESTADOS_RUTABLES.includes(s.status); }
 // True si la solicitud está (o estuvo) completada: estado actual o registro en su log.
 function solCompletada(s){
   if(!s) return false;
@@ -2375,7 +2379,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
   }
 
   const rutaActiva=rutaDetalle?rutas.find(r=>r.id===rutaDetalle):null;
-  const solsDisponibles=solicitudes.filter(s=>(!s.rutaId||s.rutaId===rutaDetalle) && !solCompletada(s));
+  const solsDisponibles=solicitudes.filter(s=>(!s.rutaId||s.rutaId===rutaDetalle) && solRutable(s));
 
   return(
     <div style={S.section}>
@@ -2503,7 +2507,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
                   <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Agregar solicitud a la ruta</div>
                   <select style={S.input} value="" onChange={e=>{if(e.target.value)agregarParada(r.id,e.target.value);}}>
                     <option value="">-- Seleccionar solicitud --</option>
-                    {solicitudes.filter(s=>(!s.rutaId||s.rutaId===r.id)&&!r.paradas.find(p=>p.solId===s.id)).map(s=>(
+                    {solicitudes.filter(s=>(!s.rutaId||s.rutaId===r.id)&&!r.paradas.find(p=>p.solId===s.id)&&solRutable(s)).map(s=>(
                       <option key={s.id} value={s.id}>{s.ot||s.id} · {s.titulo} · {s.fecha}</option>
                     ))}
                   </select>
