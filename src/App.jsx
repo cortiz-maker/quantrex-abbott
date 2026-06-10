@@ -456,7 +456,7 @@ function fechaEnPeriodo(fechaStr, inicio, fin) {
 async function loadSolicitudes() {
   try {
     const data = await sbFetch("GET","solicitudes","","?order=created_at.desc");
-    if(!data) return null; // null = fallo de consulta (NO sobrescribir estado con esto)
+    if(!data) return [];
     return data.map(s=>({
       id:s.id, ot:s.ot, fecha:s.fecha, hora:s.hora, tipo:s.tipo, titulo:s.titulo,
       descripcion:s.descripcion, direccion:s.direccion, contacto:s.contacto, guia:s.guia,
@@ -477,16 +477,11 @@ async function loadSolicitudes() {
       observacionFecha:s.observacion_fecha||"",
       updatedAt:s.updated_at, createdAt:s.created_at,
     }));
-  } catch(e) { console.error(e); return null; }
+  } catch(e) { console.error(e); return []; }
 }
 async function saveSolicitudes(data) {
   // Persiste cada registro mediante el guardado individual (upsert real).
-  const fallos = [];
-  for (const s of (data||[])) {
-    const r = await saveSolicitud(s);
-    if(r && !r.ok) fallos.push({ id:s.id, error:r.error });
-  }
-  return { ok: fallos.length===0, fallos };
+  for (const s of (data||[])) await saveSolicitud(s);
 }
 async function saveSolicitud(s) {
   try {
@@ -523,38 +518,20 @@ async function saveSolicitud(s) {
       },
       body: JSON.stringify(payload),
     });
-    // Columnas que JAMÁS se deben descartar: sin ellas el cierre quedaría incompleto.
-    const COLS_CRITICAS = ["id","status","status_log","updated_at"];
-    let payload = {...row};
-    let res = await doUpsert(payload);
-    let intentos = 0;
-    // Fallback robusto: si falla por una columna inexistente, identifica esa columna
-    // exacta desde el mensaje de PostgREST, la quita y reintenta (hasta 8 veces).
-    while(!res.ok && intentos < 8) {
-      const e = await res.text();
-      const m = e.match(/'([a-z0-9_]+)' column/i) || e.match(/column "([a-z0-9_]+)"/i);
-      const col = m && m[1];
-      if(col && col in payload && !COLS_CRITICAS.includes(col)) {
-        console.warn(`saveSolicitud: la columna '${col}' no existe en Supabase. Se reintenta sin ella. Falta correr la migración SQL.`, e);
-        delete payload[col];
-        res = await doUpsert(payload);
-        intentos++;
-      } else {
-        // No es un error de columna recuperable (o afecta una columna crítica): se aborta.
-        console.error("saveSolicitud error:", e);
-        return { ok:false, error:e, columnaCritica: col && COLS_CRITICAS.includes(col) ? col : null };
-      }
-    }
+    let res = await doUpsert(row);
     if(!res.ok) {
-      const e2 = await res.text();
-      console.error("saveSolicitud error (sin reintentos restantes):", e2);
-      return { ok:false, error:e2 };
+      const e = await res.text();
+      // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
+      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|devolucion_urgente/i.test(e)) {
+        console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
+        const fallback = {...row};
+        delete fallback.fotos_manifiesto; delete fallback.fotos_entrega; delete fallback.observacion_chofer;
+        delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.devolucion_urgente;
+        res = await doUpsert(fallback);
+      }
+      if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2); }
     }
-    return { ok:true };
-  } catch(e) {
-    console.error(e);
-    return { ok:false, error: e?.message || String(e) };
-  }
+  } catch(e) { console.error(e); }
 }
 async function deleteSolicitud(id) {
   try {
@@ -708,7 +685,7 @@ function marcarPasswordCambiado(email) {
 async function loadRutas() {
   try {
     const data = await sbFetch("GET","rutas","","?order=created_at.desc");
-    if(!data) return null; // null = fallo de consulta (NO sobrescribir estado con esto)
+    if(!data) return [];
     return data.map(r=>({
       id:r.id, nombre:r.nombre, fecha:r.fecha, vehiculo:r.vehiculo,
       paradas:r.paradas||[], kmTotal:r.km_total||null,
@@ -716,7 +693,7 @@ async function loadRutas() {
       cerradaPor:r.cerrada_por||null, reaperturas:r.reaperturas||[],
       createdAt:r.created_at,
     }));
-  } catch(e) { return null; }
+  } catch(e) { return []; }
 }
 async function saveRuta(r) {
   try {
@@ -909,7 +886,6 @@ export default function QuantrexAbbott() {
   const [solicitudes,setSolicitudes]=useState([]);
   const [cierres,setCierres]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [loadError,setLoadError]=useState(null); // mensaje si la carga inicial de solicitudes falló
   const [view,setView]=useState("dashboard");
   const [selectedId,setSelectedId]=useState(null);
   const [cierreDetalle,setCierreDetalle]=useState(null);
@@ -936,67 +912,8 @@ export default function QuantrexAbbott() {
   const [abrirPeriodo,setAbrirPeriodo]=useState(false); // Se activa automáticamente post-cierre
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
-  const capturaChoferRef=useRef(false); // true mientras un chofer tiene una captura en curso (no refrescar)
 
-  async function cargarInicial(){
-    setLoading(true);
-    try{
-      const [s,c,p,cl,r,us,ch,ve] = await Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos()]);
-      // s === null significa que la CONSULTA falló (no que no haya datos).
-      if(s===null){
-        setLoadError("No se pudieron cargar las solicitudes desde Supabase. Puede ser una caída momentánea de red o que el proyecto Supabase esté pausado/inactivo. Tus datos NO se han borrado. Reintenta en unos segundos.");
-      } else {
-        setLoadError(null);
-        setSolicitudes(s);
-      }
-      setCierres(c||[]); setPeriodo(p); if(cl)setClientes(cl); if(Array.isArray(r))setRutas(r);
-      if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}
-      if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}
-      if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}
-      if((c||[]).length>0&&!p)setAbrirPeriodo(true);
-    }catch(e){
-      console.error("cargarInicial falló:",e);
-      setLoadError("Error al conectar con el servidor. Tus datos NO se han borrado. Reintenta.");
-    }finally{
-      setLoading(false);
-    }
-  }
-  useEffect(()=>{cargarInicial();},[]);
-
-
-  // ── Auto-refresco seguro de datos ──────────────────────────────────────────
-  // Vuelve a leer SOLO los datos desde Supabase (loadSolicitudes/loadRutas).
-  // NUNCA recarga la página, así que la sesión (qx:sesion) jamás se pierde y la
-  // captura en curso del chofer (fotos/firma, que viven en VistaChofer) se conserva.
-  useEffect(()=>{
-    if(loading || !sesion) return;
-    const esChoferSesion = !!perfilChofer || sesion?.perfil==="chofer";
-    async function refrescar(){
-      if(typeof document!=="undefined" && document.hidden) return;     // pestaña en background
-      if(esChoferSesion && capturaChoferRef.current) return;           // no interrumpir captura del chofer
-      try{
-        const [s,r] = await Promise.all([loadSolicitudes(), loadRutas()]);
-        // Solo se aplica un resultado si es un arreglo REAL (no null por fallo de fetch).
-        // Salvaguarda extra: nunca reemplazar una lista con datos por una vacía.
-        if(Array.isArray(s)) setSolicitudes(prev => (s.length===0 && (prev||[]).length>0) ? prev : s);
-        if(Array.isArray(r)) setRutas(prev => (r.length===0 && (prev||[]).length>0) ? prev : r);
-      }catch(e){ console.warn("refrescar() falló:", e); }
-    }
-    const onFocus = ()=>refrescar();
-    const onVisible = ()=>{ if(!document.hidden) refrescar(); };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    // Sondeo periódico solo para perfiles de escritorio (admin/operador/cliente).
-    // El chofer NO sondea por intervalo: solo refresca al volver el foco y sin captura activa.
-    let timer = null;
-    if(!esChoferSesion) timer = setInterval(refrescar, 25000);
-    return ()=>{
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-      if(timer) clearInterval(timer);
-    };
-  },[loading, sesion, perfilChofer]);
-
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos()]).then(async ([s,c,p,cl,r,us,ch,ve])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -1062,11 +979,10 @@ export default function QuantrexAbbott() {
     const otGenerada = generarOT(solicitudes);
     const nueva={...form,id:Date.now().toString(),status:autoTransito,ot:form.ot||otGenerada,
       createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-    const upd=[nueva,...solicitudes]; setSolicitudes(upd); const rN=await saveSolicitud(nueva);
+    const upd=[nueva,...solicitudes]; setSolicitudes(upd); await saveSolicitud(nueva);
     setSaving(false); setForm({...EMPTY_FORM,
       fecha:new Date().toISOString().split("T")[0],
       hora:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false})});
-    if(rN && !rN.ok){ showToast("⚠ La solicitud no se guardó en el servidor. Reintenta.","danger"); return; }
     showToast("Solicitud creada correctamente."); setView("lista");
   }
 
@@ -1101,9 +1017,8 @@ export default function QuantrexAbbott() {
         statusLog:[...(s.statusLog||[]),entry],...(canceladoPor?{canceladoPor}:{})};
     });
     const cambiada=upd.find(s=>s.id===id);
-    setSolicitudes(upd); const rSC = cambiada ? await saveSolicitud(cambiada) : {ok:true};
+    setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada);
     await sincronizarRutas(upd);
-    if(rSC && !rSC.ok){ showToast("⚠ El cambio de estado no se guardó en el servidor. Reintenta.","danger"); return; }
     showToast(newStatus==="cancelada"?`Cancelada por ${canceladoPor}.`:"Estado actualizado.");
   }
 
@@ -1125,18 +1040,15 @@ export default function QuantrexAbbott() {
       solActualizada.observacionFecha = new Date().toISOString();
     }
     const upd=solicitudes.map(s=>s.id===updatedSol.id?solActualizada:s);
-    setSolicitudes(upd); const rE=await saveSolicitud(solActualizada);
+    setSolicitudes(upd); await saveSolicitud(solActualizada); 
     await sincronizarRutas(upd);
-    if(rE && !rE.ok){ showToast("⚠ Los cambios no se guardaron en el servidor. Reintenta.","danger"); return; }
     showToast("Solicitud actualizada.");
   }
 
   async function handleEditLog(id,updatedLog){
     const upd=solicitudes.map(s=>s.id===id?{...s,statusLog:updatedLog,updatedAt:new Date().toISOString()}:s);
     const cambiada=upd.find(s=>s.id===id);
-    setSolicitudes(upd); const rL = cambiada ? await saveSolicitud(cambiada) : {ok:true};
-    if(rL && !rL.ok){ showToast("⚠ El log no se guardó en el servidor. Reintenta.","danger"); return; }
-    showToast("Log actualizado.");
+    setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada); showToast("Log actualizado.");
   }
 
   async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null, fotosManifiesto=null, observacion=null){
@@ -1169,13 +1081,9 @@ export default function QuantrexAbbott() {
     });
     setSolicitudes(upd);
     const solUpd=upd.find(s=>s.id===id);
-    const r = solUpd ? await saveSolicitud(solUpd) : {ok:true};
+    if(solUpd) await saveSolicitud(solUpd);
     await sincronizarRutas(upd);
-    if(r && !r.ok){
-      showToast("⚠ No se pudo guardar el cierre en el servidor. Reintenta o avisa a Quantrex (no cierres la app).","danger");
-    } else {
-      showToast(statusLabel+" registrado.");
-    }
+    showToast(statusLabel+" registrado.");
   }
 
   async function handleDelete(id){
@@ -1220,21 +1128,10 @@ export default function QuantrexAbbott() {
           ))}
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:11,color:C.muted}}>{sesion?.nombre}</span>
-            <button style={{...S.exportBtn,fontSize:11}} onClick={()=>cargarInicial()} title="Recargar datos desde el servidor">↻ Recargar</button>
             <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{localStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
           </div>
         </nav>
       </header>}
-      {sesion&&loadError&&(
-        <div style={{margin:"12px 16px 0",background:C.danger+"1A",border:"1px solid "+C.danger+"66",borderRadius:12,padding:"14px 18px",display:"flex",gap:14,alignItems:"flex-start",flexWrap:"wrap"}}>
-          <div style={{fontSize:22,lineHeight:1}}>⚠️</div>
-          <div style={{flex:1,minWidth:240}}>
-            <div style={{fontWeight:800,color:C.danger,fontSize:14,marginBottom:4}}>No se pudieron cargar los datos</div>
-            <div style={{fontSize:13,color:C.textSecondary,lineHeight:1.5}}>{loadError}</div>
-          </div>
-          <button style={{...S.btnPri,fontSize:13,padding:"10px 18px",alignSelf:"center"}} onClick={()=>cargarInicial()}>↻ Reintentar</button>
-        </div>
-      )}
       {sesion?.perfil==="admin"&&sidebarOpen&&(
         <div style={{position:"fixed",top:0,left:0,bottom:0,width:260,background:C.navySurface,borderRight:"1px solid "+C.border,zIndex:200,display:"flex",flexDirection:"column",boxShadow:"4px 0 20px #0006"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:"1px solid "+C.border}}>
@@ -1262,7 +1159,7 @@ export default function QuantrexAbbott() {
       <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
         :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}registrarAcceso(u.email);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
-        :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onCapturaChange={(v)=>{capturaChoferRef.current=v;}} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
+        :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
@@ -3294,7 +3191,7 @@ function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver,choferes=CHOFERE
 }
 
 // ── Vista Chofer ───────────────────────────────────────────────────────────
-function VistaChofer({chofer,solicitudes,onEstado,onCapturaChange,onSalir}){
+function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   const hoy = new Date().toISOString().split("T")[0];
   const misSols = solicitudes.filter(s =>
     (s.ppuAsignada === chofer.ppu || s.choferAsignado === chofer.nombre) &&
@@ -3315,21 +3212,6 @@ function VistaChofer({chofer,solicitudes,onEstado,onCapturaChange,onSalir}){
   useEffect(()=>{
     return ()=>{ Object.values(timerRef.current).forEach(t=>clearInterval(t)); };
   },[]);
-
-  // Informa al contenedor si hay una captura en curso, para que el auto-refresco
-  // NO actualice los datos en medio de un cierre y haga desaparecer una tarjeta.
-  const hayCapturaEnCurso =
-    Object.values(fotos).some(a=>(a||[]).length>0) ||
-    Object.values(fotosManifiesto).some(a=>(a||[]).length>0) ||
-    Object.keys(firmas).length>0 ||
-    Object.keys(llegadas).length>0 ||
-    Object.values(observaciones).some(t=>(t||"").trim().length>0) ||
-    !!modalFirma || !!cargando;
-  useEffect(()=>{
-    onCapturaChange && onCapturaChange(hayCapturaEnCurso);
-    return ()=>{ onCapturaChange && onCapturaChange(false); };
-  },[hayCapturaEnCurso]);
-
 
   function registrarLlegada(solId){
     const now=new Date();
