@@ -909,6 +909,7 @@ export default function QuantrexAbbott() {
   const [solicitudes,setSolicitudes]=useState([]);
   const [cierres,setCierres]=useState([]);
   const [loading,setLoading]=useState(true);
+  const [loadError,setLoadError]=useState(null); // mensaje si la carga inicial de solicitudes falló
   const [view,setView]=useState("dashboard");
   const [selectedId,setSelectedId]=useState(null);
   const [cierreDetalle,setCierreDetalle]=useState(null);
@@ -937,7 +938,31 @@ export default function QuantrexAbbott() {
   const toastRef=useRef();
   const capturaChoferRef=useRef(false); // true mientras un chofer tiene una captura en curso (no refrescar)
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos()]).then(async ([s,c,p,cl,r,us,ch,ve])=>{setSolicitudes(s||[]);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  async function cargarInicial(){
+    setLoading(true);
+    try{
+      const [s,c,p,cl,r,us,ch,ve] = await Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos()]);
+      // s === null significa que la CONSULTA falló (no que no haya datos).
+      if(s===null){
+        setLoadError("No se pudieron cargar las solicitudes desde Supabase. Puede ser una caída momentánea de red o que el proyecto Supabase esté pausado/inactivo. Tus datos NO se han borrado. Reintenta en unos segundos.");
+      } else {
+        setLoadError(null);
+        setSolicitudes(s);
+      }
+      setCierres(c||[]); setPeriodo(p); if(cl)setClientes(cl); if(Array.isArray(r))setRutas(r);
+      if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}
+      if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}
+      if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}
+      if((c||[]).length>0&&!p)setAbrirPeriodo(true);
+    }catch(e){
+      console.error("cargarInicial falló:",e);
+      setLoadError("Error al conectar con el servidor. Tus datos NO se han borrado. Reintenta.");
+    }finally{
+      setLoading(false);
+    }
+  }
+  useEffect(()=>{cargarInicial();},[]);
+
 
   // ── Auto-refresco seguro de datos ──────────────────────────────────────────
   // Vuelve a leer SOLO los datos desde Supabase (loadSolicitudes/loadRutas).
@@ -1195,10 +1220,21 @@ export default function QuantrexAbbott() {
           ))}
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:11,color:C.muted}}>{sesion?.nombre}</span>
+            <button style={{...S.exportBtn,fontSize:11}} onClick={()=>cargarInicial()} title="Recargar datos desde el servidor">↻ Recargar</button>
             <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{localStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
           </div>
         </nav>
       </header>}
+      {sesion&&loadError&&(
+        <div style={{margin:"12px 16px 0",background:C.danger+"1A",border:"1px solid "+C.danger+"66",borderRadius:12,padding:"14px 18px",display:"flex",gap:14,alignItems:"flex-start",flexWrap:"wrap"}}>
+          <div style={{fontSize:22,lineHeight:1}}>⚠️</div>
+          <div style={{flex:1,minWidth:240}}>
+            <div style={{fontWeight:800,color:C.danger,fontSize:14,marginBottom:4}}>No se pudieron cargar los datos</div>
+            <div style={{fontSize:13,color:C.textSecondary,lineHeight:1.5}}>{loadError}</div>
+          </div>
+          <button style={{...S.btnPri,fontSize:13,padding:"10px 18px",alignSelf:"center"}} onClick={()=>cargarInicial()}>↻ Reintentar</button>
+        </div>
+      )}
       {sesion?.perfil==="admin"&&sidebarOpen&&(
         <div style={{position:"fixed",top:0,left:0,bottom:0,width:260,background:C.navySurface,borderRight:"1px solid "+C.border,zIndex:200,display:"flex",flexDirection:"column",boxShadow:"4px 0 20px #0006"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:"1px solid "+C.border}}>
