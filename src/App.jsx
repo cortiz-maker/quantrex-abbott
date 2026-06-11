@@ -1169,9 +1169,9 @@ export default function QuantrexAbbott() {
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
             onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion}
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
-        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes}/>)
+        :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
-            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes}/>)
+            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} setView={setView}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion} vehiculos={vehiculos} choferes={choferes}/>)
@@ -1527,7 +1527,12 @@ function SolicitudRow({sol,onSelect}){
 }
 
 // ── Detalle ────────────────────────────────────────────────────────────────
-function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES}){
+function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
+  const opcionesPPU=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>{
+    const ch=(choferes||[]).find(c=>c.ppu===v.ppu);
+    const desc=ch?.nombre||[v.marca,v.modelo].filter(Boolean).join(" ");
+    return {value:v.ppu, label:desc?`${v.ppu} · ${desc}`:v.ppu};
+  });
   const esAdmin=sesion?.perfil==="admin";
   const tm=TYPE_META[sol.tipo]||{label:sol.tipo,icon:"·",color:"#6B8CAE"};
   const sm=STATUS_META[sol.status]||{label:sol.status,color:"#6B8CAE"};
@@ -1652,7 +1657,8 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         <div style={S.fGroup}><label style={S.label}>PPU Asignada</label>
           <select style={S.input} value={editForm.ppuAsignada} onChange={fe("ppuAsignada")}>
             <option value="">-- Seleccionar --</option>
-            {["KRYX27","PBGJ33","PZGH22","THVZ21","PJSF91","THFY22","Otro"].map(p=><option key={p} value={p}>{p}</option>)}
+            {opcionesPPU.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+            {editForm.ppuAsignada && !opcionesPPU.some(o=>o.value===editForm.ppuAsignada) && <option value={editForm.ppuAsignada}>{editForm.ppuAsignada} (no en mantenedor)</option>}
           </select></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Descripción</label>
           <textarea style={{...S.input,minHeight:60,resize:"vertical"}} value={editForm.descripcion} onChange={fe("descripcion")}/></div>
@@ -1878,7 +1884,12 @@ function LogEstados({log,solId,onEditLog,esAdmin=true,usuarioActual="Administrad
 }
 
 // ── FormNueva ──────────────────────────────────────────────────────────────
-function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[],rutas=[],choferes=CHOFERES}){
+function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_DEFAULT,solicitudes=[],rutas=[],choferes=CHOFERES,vehiculos=[]}){
+  const opcionesPPU=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>{
+    const ch=(choferes||[]).find(c=>c.ppu===v.ppu);
+    const desc=ch?.nombre||[v.marca,v.modelo].filter(Boolean).join(" ");
+    return {value:v.ppu, label:desc?`${v.ppu} · ${desc}`:v.ppu};
+  });
   const [clienteQ,setClienteQ]=useState("");
   const [clienteOpen,setClienteOpen]=useState(false);
   // Opciones de cliente aplanadas (cliente + sucursales) para el buscador
@@ -2024,7 +2035,8 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         <div style={S.fGroup}><label style={S.label}>PPU Asignada</label>
           <select style={S.input} value={form.ppuAsignada} onChange={f("ppuAsignada")}>
             <option value="">-- Seleccionar --</option>
-            {["KRYX27","PBGJ33","PZGH22","THVZ21","PJSF91","THFY22","Otro"].map(p=><option key={p} value={p}>{p}</option>)}
+            {opcionesPPU.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+            {form.ppuAsignada && !opcionesPPU.some(o=>o.value===form.ppuAsignada) && <option value={form.ppuAsignada}>{form.ppuAsignada} (no en mantenedor)</option>}
           </select></div>
         <div style={S.fGroup}><label style={S.label}>Chofer Asignado</label>
           <select style={S.input} value={form.choferAsignado} onChange={f("choferAsignado")}>
