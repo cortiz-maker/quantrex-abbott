@@ -453,9 +453,22 @@ function fechaEnPeriodo(fechaStr, inicio, fin) {
 }
 
 // ── Storage ────────────────────────────────────────────────────────────────
+// Columnas LIGERAS para el listado (sin fotos/documentos base64).
+const COLS_LISTA = [
+  "id","ot","fecha","hora","tipo","titulo","descripcion","direccion","contacto",
+  "guia","prioridad","notas","solicitante","canal_solicitud","usuario_dt",
+  "ppu_asignada","destino","chofer_asignado","documentos","status","status_log",
+  "no_presentacion","vehiculo_np","motivo_np","geo_entrega","hora_entrega",
+  "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
+  "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
+  "observacion_chofer","observacion_autor","observacion_fecha",
+  "updated_at","created_at"
+].join(",");
+
 async function loadSolicitudes() {
   try {
-    const data = await sbFetch("GET","solicitudes","","?order=created_at.desc");
+    const data = await sbFetch("GET","solicitudes","",
+      `?select=${COLS_LISTA}&order=created_at.desc`);
     if(!data) return [];
     return data.map(s=>({
       id:s.id, ot:s.ot, fecha:s.fecha, hora:s.hora, tipo:s.tipo, titulo:s.titulo,
@@ -467,17 +480,36 @@ async function loadSolicitudes() {
       noPresentacion:s.no_presentacion, vehiculoNP:s.vehiculo_np, motivoNP:s.motivo_np,
       geoEntrega:s.geo_entrega, horaEntrega:s.hora_entrega, horaLlegada:s.hora_llegada,
       tiempoEnPunto:s.tiempo_en_punto, coordsEntrega:s.coords_entrega,
-      fotoEntrega:s.foto_entrega, fotosEntrega:s.fotos_entrega||[], firmaReceptor:s.firma_receptor,
       nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
       canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
       devolucionUrgente:s.devolucion_urgente||false,
-      fotosManifiesto:s.fotos_manifiesto||[],
       observacionChofer:s.observacion_chofer||"",
       observacionAutor:s.observacion_autor||"",
       observacionFecha:s.observacion_fecha||"",
       updatedAt:s.updated_at, createdAt:s.created_at,
+      // Campos pesados vacíos hasta que se abra el detalle:
+      fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
+      fotosManifiesto:[],
+      _fotosCargadas:false,
     }));
   } catch(e) { console.error(e); return []; }
+}
+
+// Trae SOLO los campos pesados de UNA solicitud (al abrir el detalle).
+async function loadFotosSolicitud(id) {
+  try {
+    const data = await sbFetch("GET","solicitudes","",
+      `?id=eq.${id}&select=foto_entrega,fotos_entrega,firma_receptor,fotos_manifiesto`);
+    if(!data || !data[0]) return null;
+    const s = data[0];
+    return {
+      fotoEntrega:s.foto_entrega||null,
+      fotosEntrega:s.fotos_entrega||[],
+      firmaReceptor:s.firma_receptor||null,
+      fotosManifiesto:s.fotos_manifiesto||[],
+      _fotosCargadas:true,
+    };
+  } catch(e) { console.error("loadFotosSolicitud error:",e); return null; }
 }
 async function saveSolicitudes(data) {
   // Persiste cada registro mediante el guardado individual (upsert real).
@@ -1099,6 +1131,19 @@ export default function QuantrexAbbott() {
   });
 
   const selected=solicitudes.find(s=>s.id===selectedId);
+  // Al abrir el detalle, si la solicitud aún no tiene sus fotos, las pide.
+  useEffect(()=>{
+    if(!selectedId) return;
+    const s = solicitudes.find(x=>x.id===selectedId);
+    if(!s || s._fotosCargadas) return;
+    let cancelado=false;
+    loadFotosSolicitud(selectedId).then(fotos=>{
+      if(cancelado || !fotos) return;
+      setSolicitudes(prev=>prev.map(x=>
+        x.id===selectedId ? {...x, ...fotos} : x));
+    });
+    return ()=>{ cancelado=true; };
+  },[selectedId]); // eslint-disable-line
   const stats={total:solicitudesPeriodo.length,
     pendiente:solicitudesPeriodo.filter(s=>s.status==="pendiente").length,
     en_proceso:solicitudesPeriodo.filter(s=>s.status==="en_proceso").length,
