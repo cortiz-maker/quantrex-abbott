@@ -80,6 +80,39 @@ async function sbFetch(method, table, body=null, query="") {
   return text ? JSON.parse(text) : null;
 }
 
+// UPSERT seguro: devuelve true SOLO si Supabase confirmó la escritura (res.ok).
+// Así la UI no asume "guardado" cuando el servidor rechazó la operación.
+async function sbUpsert(table, rows) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=id`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`,
+        "Prefer":"resolution=merge-duplicates,return=minimal",
+      },
+      body:JSON.stringify(rows),
+    });
+    if(!res.ok){ const e=await res.text(); console.error(`sbUpsert ${table} error:`,e); return false; }
+    return true;
+  } catch(e){ console.error(`sbUpsert ${table} excepción:`,e); return false; }
+}
+
+// Elimina de la tabla solo los IDs que ya no están en la lista actual.
+// Nunca borra todo: si no hay IDs vigentes, no hace nada (evita vaciar la tabla).
+async function sbDeleteFaltantes(table, idsVigentes) {
+  try {
+    if(!idsVigentes || !idsVigentes.length) return; // no borrar nada si la lista llegó vacía
+    const enc = idsVigentes.map(id=>`"${String(id).replace(/"/g,'\\"')}"`).join(",");
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=not.in.(${encodeURIComponent(enc)})`, {
+      method:"DELETE",
+      headers:{ "apikey":SUPABASE_KEY, "Authorization":`Bearer ${SUPABASE_KEY}` },
+    });
+    if(!res.ok){ const e=await res.text(); console.error(`sbDeleteFaltantes ${table} error:`,e); }
+  } catch(e){ console.error(`sbDeleteFaltantes ${table} excepción:`,e); }
+}
+
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
@@ -638,12 +671,17 @@ async function loadUsuarios() {
 }
 async function saveUsuarios(data) {
   try {
-    await sbFetch("DELETE","usuarios",null,"?id=not.is.null");
     const rows=(data||[]).filter(Boolean).map(u=>({
       id:u.email, email:u.email, password:u.password, perfil:u.perfil, nombre:u.nombre,
       updated_at:new Date().toISOString(),
     }));
-    if(rows.length) await sbFetch("POST","usuarios",rows,"?on_conflict=id");
+    // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
+    if(rows.length){
+      const ok = await sbUpsert("usuarios",rows);
+      if(!ok){ console.error("saveUsuarios: upsert falló, se aborta para no perder datos."); return; }
+    }
+    // 2) Eliminar solo los IDs que ya no están en la lista.
+    await sbDeleteFaltantes("usuarios", rows.map(r=>r.id));
   } catch(e) { console.error(e); }
 }
 async function loadChoferes() {
@@ -655,12 +693,15 @@ async function loadChoferes() {
 }
 async function saveChoferes(data) {
   try {
-    await sbFetch("DELETE","choferes",null,"?id=not.is.null");
     const rows=(data||[]).filter(Boolean).map(c=>({
       id:c.nombre, nombre:c.nombre, ppu:c.ppu, usuario_dt:c.usuarioDT, pin:c.pin,
       updated_at:new Date().toISOString(),
     }));
-    if(rows.length) await sbFetch("POST","choferes",rows,"?on_conflict=id");
+    if(rows.length){
+      const ok = await sbUpsert("choferes",rows);
+      if(!ok){ console.error("saveChoferes: upsert falló, se aborta para no perder datos."); return; }
+    }
+    await sbDeleteFaltantes("choferes", rows.map(r=>r.id));
   } catch(e) { console.error(e); }
 }
 async function loadVehiculos() {
@@ -673,14 +714,17 @@ async function loadVehiculos() {
 }
 async function saveVehiculos(data) {
   try {
-    await sbFetch("DELETE","vehiculos",null,"?id=not.is.null");
     const rows=(data||[]).filter(Boolean).map(v=>({
       id:v.ppu, ppu:v.ppu, marca:v.marca||null, modelo:v.modelo||null, anio:v.anio||null,
       capacidad_m3:(v.capacidadM3===""||v.capacidadM3==null)?null:Number(v.capacidadM3),
       capacidad_kg:(v.capacidadKg===""||v.capacidadKg==null)?null:Number(v.capacidadKg),
       updated_at:new Date().toISOString(),
     }));
-    if(rows.length) await sbFetch("POST","vehiculos",rows,"?on_conflict=id");
+    if(rows.length){
+      const ok = await sbUpsert("vehiculos",rows);
+      if(!ok){ console.error("saveVehiculos: upsert falló, se aborta para no perder datos."); return; }
+    }
+    await sbDeleteFaltantes("vehiculos", rows.map(r=>r.id));
   } catch(e) { console.error(e); }
 }
 function registrarAcceso(email) {
@@ -1673,7 +1717,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         <div style={S.fGroup}><label style={S.label}>Chofer Asignado</label>
           <select style={S.input} value={editForm.choferAsignado||""} onChange={fe("choferAsignado")}>
             <option value="">-- Seleccionar --</option>
-            {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+            {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre}</option>)}
           </select></div>
         <div style={S.fGroup}><label style={S.label}>OT Quantrex</label>
           <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={editForm.ot||""} readOnly/></div>
@@ -2086,7 +2130,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         <div style={S.fGroup}><label style={S.label}>Chofer Asignado</label>
           <select style={S.input} value={form.choferAsignado} onChange={f("choferAsignado")}>
             <option value="">-- Seleccionar --</option>
-            {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre} · {c.ppu}</option>)}
+            {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre}</option>)}
           </select></div>
         <div style={S.fGroup}><label style={S.label}>Asignar a Ruta</label>
           <select style={S.input} value={form.rutaId} onChange={f("rutaId")}>
