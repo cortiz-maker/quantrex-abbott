@@ -1019,7 +1019,7 @@ async function exportToExcel(solicitudes, nombreArchivo) {
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
       s.usuarioDT||"", s.ppuAsignada||"", nro,
-      (s.statusLog||[]).map(e=>(e.fechaHora||"").split(" ")[1]||"").join(" | "),
+      (() => { const log=s.statusLog||[]; if(!log.length) return ""; const ultima=log[log.length-1]; return (ultima.fechaHora||"").split(" ")[1]||""; })(),
       esSpot?"Sí":"No", cSpot||"", ohCharge?"Sí":"No", motivoOH, cOH||"",
       esSpotRegional?(regionSol?.label||""):"", cSpotRegional||"",
       (cSpot+cOH+cSpotRegional)||"",
