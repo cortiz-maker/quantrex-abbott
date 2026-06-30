@@ -162,6 +162,30 @@ function buscarCapacidad(marca, modelo){
   return CAPACIDADES_VEHICULO[k]||null;
 }
 
+// ── Bitácora de costos por vehículo ────────────────────────────────────────
+// Categorías de gasto/costo asociadas a cada PPU. Clasificadas en:
+//   · fijo     → costos recurrentes/anuales (permiso, revisión técnica, SOAP, seguro)
+//   · variable → costos por uso (combustible, mantención, repuestos, multas, peajes...)
+// "vencimiento:true" habilita el campo de próximo vencimiento (útil para no atrasarse
+// con permiso de circulación, revisión técnica y SOAP en Chile).
+const GASTO_CATEGORIAS = {
+  combustible: { label:"Combustible",             tipo:"variable", icon:"⛽", color:"#F59E0B" },
+  mantencion:  { label:"Mantención preventiva",   tipo:"variable", icon:"🔧", color:"#00AEEF" },
+  reparacion:  { label:"Reparación / Repuestos",  tipo:"variable", icon:"🛠", color:"#38BDF8" },
+  neumaticos:  { label:"Neumáticos",              tipo:"variable", icon:"🛞", color:"#A78BFA" },
+  accesorios:  { label:"Accesorios / Equipamiento",tipo:"variable",icon:"📦", color:"#14B8A6" },
+  permiso:     { label:"Permiso de Circulación",  tipo:"fijo",     icon:"🏛", color:"#22C55E", vencimiento:true },
+  rev_tecnica: { label:"Revisión Técnica / Gases",tipo:"fijo",     icon:"📋", color:"#16A34A", vencimiento:true },
+  soap:        { label:"SOAP",                    tipo:"fijo",     icon:"🛡", color:"#15803D", vencimiento:true },
+  seguro:      { label:"Seguro (póliza)",         tipo:"fijo",     icon:"📑", color:"#0EA5E9", vencimiento:true },
+  peaje_tag:   { label:"Peajes / TAG",            tipo:"variable", icon:"🛣", color:"#F97316" },
+  multa:       { label:"Multa / Parte",           tipo:"variable", icon:"⚠", color:"#EF4444" },
+  lavado:      { label:"Lavado / Aseo",           tipo:"variable", icon:"🧽", color:"#06B6D4" },
+  otro:        { label:"Otro gasto",              tipo:"variable", icon:"•",  color:"#8BAFD4" },
+};
+function metaCategoria(cat){ return GASTO_CATEGORIAS[cat] || GASTO_CATEGORIAS.otro; }
+function fmtCLP(n){ return "$"+Math.round(Number(n)||0).toLocaleString("es-CL"); }
+
 
 const USUARIOS = [
   { email:"cortiz@quantrex.cl",     password:"Qx@Admin2026", perfil:"admin",    nombre:"César Ortiz" },
@@ -727,6 +751,52 @@ async function saveVehiculos(data) {
     await sbDeleteFaltantes("vehiculos", rows.map(r=>r.id));
   } catch(e) { console.error(e); }
 }
+// ── Gastos de vehículo (bitácora) — patrón por registro (no se reemplaza el set) ──
+async function loadGastos() {
+  try {
+    const data = await sbFetch("GET","gastos_vehiculo","","?order=fecha.desc");
+    if(!data) return [];
+    return data.map(g=>({
+      id:g.id, ppu:g.ppu||"", fecha:g.fecha||"", categoria:g.categoria||"otro",
+      descripcion:g.descripcion||"", monto:g.monto==null?0:Number(g.monto),
+      proveedor:g.proveedor||"", documento:g.documento||"",
+      odometro:g.odometro==null?"":g.odometro, vencimiento:g.vencimiento||"",
+      notas:g.notas||"", createdAt:g.created_at||"",
+    }));
+  } catch(e) { return []; }
+}
+async function saveGasto(g) {
+  try {
+    const payload = {
+      id:g.id, ppu:g.ppu||null, fecha:g.fecha||null, categoria:g.categoria||"otro",
+      descripcion:g.descripcion||null, monto:(g.monto===""||g.monto==null)?0:Number(g.monto),
+      proveedor:g.proveedor||null, documento:g.documento||null,
+      odometro:(g.odometro===""||g.odometro==null)?null:Number(g.odometro),
+      vencimiento:g.vencimiento||null, notas:g.notas||null,
+      updated_at:new Date().toISOString(),
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/gastos_vehiculo?on_conflict=id`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`,
+        "Prefer":"resolution=merge-duplicates,return=minimal",
+      },
+      body:JSON.stringify([payload]),
+    });
+    return res.ok;
+  } catch(e) { console.error("saveGasto:",e); return false; }
+}
+async function deleteGasto(id) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/gastos_vehiculo?id=eq.${encodeURIComponent(id)}`, {
+      method:"DELETE",
+      headers:{ "apikey":SUPABASE_KEY, "Authorization":`Bearer ${SUPABASE_KEY}` },
+    });
+    return res.ok;
+  } catch(e) { console.error("deleteGasto:",e); return false; }
+}
 function registrarAcceso(email) {
   try {
     const key = "qx:acceso:" + email;
@@ -977,6 +1047,7 @@ export default function QuantrexAbbott() {
   const [usuarios,setUsuarios]=useState(USUARIOS);
   const [choferes,setChoferes]=useState(CHOFERES);
   const [vehiculos,setVehiculos]=useState(VEHICULOS_DEFAULT);
+  const [gastos,setGastos]=useState([]);
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
   });
@@ -989,7 +1060,7 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos()]).then(async ([s,c,p,cl,r,us,ch,ve])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos()]).then(async ([s,c,p,cl,r,us,ch,ve,ga])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -1167,6 +1238,23 @@ export default function QuantrexAbbott() {
     showToast("Solicitud eliminada.","danger"); setView("lista");
   }
 
+  async function handleSaveGasto(g){
+    const existe=gastos.some(x=>x.id===g.id);
+    const upd=existe?gastos.map(x=>x.id===g.id?g:x):[g,...gastos];
+    setGastos(upd);
+    const ok=await saveGasto(g);
+    if(!ok){ setGastos(gastos); showToast("No se pudo guardar el gasto. Reintenta.","danger"); return false; }
+    showToast(existe?"Gasto actualizado.":"Gasto registrado.");
+    return true;
+  }
+  async function handleDeleteGasto(id){
+    const prev=gastos;
+    setGastos(gastos.filter(x=>x.id!==id));
+    const ok=await deleteGasto(id);
+    if(!ok){ setGastos(prev); showToast("No se pudo eliminar el gasto.","danger"); return; }
+    showToast("Gasto eliminado.","danger");
+  }
+
   const filtered=solicitudes.filter(s=>{
     if(filterTipo!=="todos"&&s.tipo!==filterTipo)return false;
     if(filterStatus!=="todos"&&s.status!==filterStatus)return false;
@@ -1231,6 +1319,7 @@ export default function QuantrexAbbott() {
             {[
               {id:"usuarios",label:"👥 Gestión de Usuarios"},
               {id:"clientes",label:"🏥 Clientes Abbott"},
+              {id:"gastos",label:"🚚 Costos / Bitácora Vehículos"},
               {id:"cierres",label:"📁 Cierres de Período"},
             ].map(item=>(
               <button key={item.id} style={{background:view===item.id?C.cyan+"22":"transparent",border:"1px solid "+(view===item.id?C.cyan:C.border),color:view===item.id?C.cyan:C.textSecondary,borderRadius:8,padding:"10px 14px",textAlign:"left",cursor:"pointer",fontSize:13,fontWeight:600}}
@@ -1252,7 +1341,7 @@ export default function QuantrexAbbott() {
         :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
-            setView={setView} setSelectedId={setSelectedId}
+            setView={setView} setSelectedId={setSelectedId} gastos={gastos} vehiculos={vehiculos}
             confirmCierre={confirmCierre} setConfirmCierre={setConfirmCierre} onCerrarMes={handleCerrarMes}
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
@@ -1262,6 +1351,7 @@ export default function QuantrexAbbott() {
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} setView={setView}/>)
+        :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion} vehiculos={vehiculos} choferes={choferes}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
@@ -1433,7 +1523,7 @@ function ResumenMes({solicitudes}){
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
-function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport}){
+function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[]}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
@@ -1509,6 +1599,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&<ResumenMes solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
       {esAdmin&&<ResumenKmDia solicitudes={solicitudes} rutas={rutas}/>}
+      {esAdmin&&<ResumenCostosVehiculo gastos={gastos} vehiculos={vehiculos} inicio={inicio} fin={fin} setView={setView}/>}
       {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
       {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
@@ -3845,6 +3936,325 @@ function EmptyState({msg,action}){
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"40px 0",color:C.muted}}>
       <p style={{margin:0}}>{msg}</p>
       {action&&<button style={S.btnPri} onClick={action}>+ Nueva solicitud</button>}
+    </div>
+  );
+}
+
+// ── Bitácora de costos por vehículo (mantenedor) ───────────────────────────
+function estadoVencimiento(fecha){
+  if(!fecha) return null;
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const v=new Date(fecha+"T12:00:00");
+  if(isNaN(v)) return null;
+  const dias=Math.round((v-hoy)/86400000);
+  if(dias<0) return {dias, label:`Vencido hace ${Math.abs(dias)} d`, color:C.danger};
+  if(dias<=30) return {dias, label:`Vence en ${dias} d`, color:C.warning};
+  return {dias, label:"Vigente", color:C.success};
+}
+
+function GastosVehiculos({gastos=[],vehiculos=[],choferes=[],onSaveGasto,onDeleteGasto,setView,sesion}){
+  const soloLectura = sesion?.perfil==="cliente";
+  const [fPpu,setFPpu]=useState("todos");
+  const [fCat,setFCat]=useState("todos");
+  const [fMes,setFMes]=useState("todos");
+  const [fQ,setFQ]=useState("");
+  const [nuevo,setNuevo]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const EMPTY={ppu:"",fecha:new Date().toISOString().slice(0,10),categoria:"combustible",monto:"",proveedor:"",documento:"",odometro:"",vencimiento:"",notas:""};
+  const [form,setForm]=useState(EMPTY);
+
+  const ppusDisponibles=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>v.ppu);
+  const descPpu=(ppu)=>{
+    const v=(vehiculos||[]).find(x=>x.ppu===ppu);
+    const ch=(choferes||[]).find(c=>c.ppu===ppu);
+    const partes=[v&&[v.marca,v.modelo].filter(Boolean).join(" "),ch&&ch.nombre].filter(Boolean);
+    return partes.length?partes.join(" · "):"";
+  };
+
+  const meses=Array.from(new Set(gastos.map(g=>(g.fecha||"").slice(0,7)).filter(Boolean))).sort().reverse();
+
+  const lista=gastos.filter(g=>{
+    if(fPpu!=="todos"&&g.ppu!==fPpu)return false;
+    if(fCat!=="todos"&&g.categoria!==fCat)return false;
+    if(fMes!=="todos"&&(g.fecha||"").slice(0,7)!==fMes)return false;
+    if(fQ.trim()){
+      const q=fQ.toLowerCase();
+      const hay=[g.descripcion,g.proveedor,g.documento,g.ppu,metaCategoria(g.categoria).label].join(" ").toLowerCase();
+      if(!hay.includes(q))return false;
+    }
+    return true;
+  }).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+
+  const total=lista.reduce((s,g)=>s+(Number(g.monto)||0),0);
+  const totalFijo=lista.filter(g=>metaCategoria(g.categoria).tipo==="fijo").reduce((s,g)=>s+(Number(g.monto)||0),0);
+  const totalVar=total-totalFijo;
+
+  // Próximos vencimientos: último registro por (ppu+categoría con vencimiento)
+  const vencs=(()=>{
+    const map={};
+    gastos.forEach(g=>{
+      if(!g.vencimiento||!metaCategoria(g.categoria).vencimiento)return;
+      const k=g.ppu+"|"+g.categoria;
+      if(!map[k]||(g.vencimiento>map[k].vencimiento)) map[k]=g;
+    });
+    return Object.values(map)
+      .map(g=>({...g,est:estadoVencimiento(g.vencimiento)}))
+      .filter(g=>g.est&&g.est.dias<=45)
+      .sort((a,b)=>a.est.dias-b.est.dias);
+  })();
+
+  function guardar(){
+    if(!form.ppu){window.alert("Selecciona la PPU del vehículo.");return;}
+    if(form.monto===""||isNaN(Number(form.monto))){window.alert("Ingresa el monto del gasto.");return;}
+    const g={
+      id: editId || ("g_"+Date.now()+"_"+Math.random().toString(36).slice(2,7)),
+      ppu:form.ppu, fecha:form.fecha||new Date().toISOString().slice(0,10),
+      categoria:form.categoria, descripcion:form.descripcion||"",
+      monto:Number(form.monto), proveedor:form.proveedor||"", documento:form.documento||"",
+      odometro:form.odometro===""?"":Number(form.odometro),
+      vencimiento:metaCategoria(form.categoria).vencimiento?(form.vencimiento||""):"",
+      notas:form.notas||"",
+    };
+    onSaveGasto(g).then(ok=>{ if(ok){ setNuevo(false); setEditId(null); setForm(EMPTY); } });
+  }
+
+  function exportarBitacora(){
+    const cab=["Fecha","PPU","Vehículo","Categoría","Tipo","Descripción","Monto (CLP)","Proveedor/Taller","N° Documento","Odómetro (km)","Próx. vencimiento"];
+    const filas=lista.map(g=>{
+      const m=metaCategoria(g.categoria);
+      return [g.fecha||"", g.ppu||"", descPpu(g.ppu), m.label, m.tipo, g.descripcion||"",
+        Number(g.monto)||0, g.proveedor||"", g.documento||"", g.odometro===""||g.odometro==null?"":Number(g.odometro), g.vencimiento||""];
+    });
+    filas.push([]);
+    filas.push(["","","","","","TOTAL", total, "", "", "", ""]);
+    const ws=XLSX.utils.aoa_to_sheet([cab,...filas]);
+    ws["!cols"]=[{wch:12},{wch:10},{wch:22},{wch:22},{wch:9},{wch:30},{wch:14},{wch:22},{wch:16},{wch:14},{wch:14}];
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Bitácora");
+    XLSX.writeFile(wb,`Quantrex_Bitacora_Vehiculos_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  const catMeta=metaCategoria(form.categoria);
+
+  return(
+    <div style={S.section}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={S.pageTitle}>Bitácora de Costos por Vehículo</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {gastos.length>0&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={exportarBitacora}><span>📥</span><span>Excel</span></button>}
+          {!soloLectura&&<button style={S.btnPri} onClick={()=>{setNuevo(true);setEditId(null);setForm(EMPTY);}}>+ Nuevo gasto</button>}
+        </div>
+      </div>
+      <div style={{fontSize:12.5,color:C.textSecondary,marginTop:-6}}>
+        Registra todo costo asociado a cada patente (PPU): combustible, mantención, repuestos, neumáticos, accesorios, revisión técnica, permiso de circulación, SOAP, seguros, peajes/TAG, multas y partes. Cada registro alimenta el total por vehículo del panel.
+      </div>
+
+      {/* Resumen filtrado */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.cyan}`}}>
+          <div style={{fontSize:24,fontWeight:900,color:C.cyan,lineHeight:1.1}}>{fmtCLP(total)}</div>
+          <div style={S.statLabel}>Total ({lista.length} registros)</div>
+        </div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.warning}`}}>
+          <div style={{fontSize:24,fontWeight:900,color:C.warning,lineHeight:1.1}}>{fmtCLP(totalVar)}</div>
+          <div style={S.statLabel}>Costos variables</div>
+        </div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.success}`}}>
+          <div style={{fontSize:24,fontWeight:900,color:C.success,lineHeight:1.1}}>{fmtCLP(totalFijo)}</div>
+          <div style={S.statLabel}>Costos fijos</div>
+        </div>
+      </div>
+
+      {/* Próximos vencimientos */}
+      {vencs.length>0&&(
+        <div style={{background:C.navySurface,border:"1px solid "+C.warning,borderRadius:12,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.warning,letterSpacing:1.2,textTransform:"uppercase"}}>⏰ Próximos vencimientos (45 días)</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {vencs.map((g,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",fontSize:13}}>
+                <span style={{fontWeight:700,color:C.textPrimary}}>{g.ppu}</span>
+                <span style={{color:C.textSecondary}}>{metaCategoria(g.categoria).icon} {metaCategoria(g.categoria).label}</span>
+                <span style={{color:C.muted}}>· {g.vencimiento}</span>
+                <span style={{...S.badge,background:g.est.color+"22",color:g.est.color}}>{g.est.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Formulario */}
+      {(nuevo||editId)&&!soloLectura&&(
+        <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
+          <div style={{fontWeight:700,color:C.cyan,marginBottom:12}}>{editId?"Editar gasto":"Nuevo gasto"}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10}}>
+            <div style={S.fGroup}><label style={S.label}>Vehículo (PPU)</label>
+              {ppusDisponibles.length>0?(
+                <select style={S.input} value={form.ppu} onChange={e=>setForm(p=>({...p,ppu:e.target.value}))}>
+                  <option value="">— Selecciona —</option>
+                  {ppusDisponibles.map(p=><option key={p} value={p}>{p}{descPpu(p)?" · "+descPpu(p):""}</option>)}
+                </select>
+              ):(
+                <input style={S.input} placeholder="Ej: KRYX27" value={form.ppu} onChange={e=>setForm(p=>({...p,ppu:e.target.value.toUpperCase().replace(/\s/g,"")}))}/>
+              )}
+            </div>
+            <div style={S.fGroup}><label style={S.label}>Fecha</label>
+              <input style={S.input} type="date" value={form.fecha} onChange={e=>setForm(p=>({...p,fecha:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Categoría</label>
+              <select style={S.input} value={form.categoria} onChange={e=>setForm(p=>({...p,categoria:e.target.value}))}>
+                {Object.entries(GASTO_CATEGORIAS).map(([k,m])=><option key={k} value={k}>{m.icon} {m.label}</option>)}
+              </select></div>
+            <div style={S.fGroup}><label style={S.label}>Monto (CLP)</label>
+              <input style={S.input} inputMode="numeric" placeholder="Ej: 45000" value={form.monto}
+                onChange={e=>setForm(p=>({...p,monto:e.target.value.replace(/\D/g,"")}))}/>
+              {form.monto!==""&&<div style={{fontSize:11,color:C.cyan,marginTop:2}}>{fmtCLP(form.monto)}</div>}
+            </div>
+            <div style={S.fGroup}><label style={S.label}>Proveedor / Taller</label>
+              <input style={S.input} placeholder="Ej: Copec, Taller X" value={form.proveedor} onChange={e=>setForm(p=>({...p,proveedor:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>N° Documento (boleta/factura/folio)</label>
+              <input style={S.input} placeholder="Ej: 12345" value={form.documento} onChange={e=>setForm(p=>({...p,documento:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Odómetro (km) — opcional</label>
+              <input style={S.input} inputMode="numeric" placeholder="Ej: 84200" value={form.odometro}
+                onChange={e=>setForm(p=>({...p,odometro:e.target.value.replace(/\D/g,"")}))}/></div>
+            {catMeta.vencimiento&&(
+              <div style={S.fGroup}><label style={S.label}>Próximo vencimiento</label>
+                <input style={S.input} type="date" value={form.vencimiento} onChange={e=>setForm(p=>({...p,vencimiento:e.target.value}))}/></div>
+            )}
+          </div>
+          <div style={{...S.fGroup,marginTop:10}}><label style={S.label}>Descripción / Notas</label>
+            <input style={S.input} placeholder="Ej: Cambio de aceite y filtros" value={form.notas} onChange={e=>setForm(p=>({...p,notas:e.target.value}))}/></div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <button style={S.btnSec} onClick={()=>{setNuevo(false);setEditId(null);setForm(EMPTY);}}>Cancelar</button>
+            <button style={S.btnPri} onClick={guardar}>Guardar</button>
+          </div>
+        </div>
+      )}
+
+      {/* Filtros */}
+      <div style={S.filters}>
+        <input style={S.searchInput} placeholder="Buscar (descripción, proveedor, documento...)" value={fQ} onChange={e=>setFQ(e.target.value)}/>
+        <select style={S.select} value={fPpu} onChange={e=>setFPpu(e.target.value)}>
+          <option value="todos">Todas las PPU</option>
+          {Array.from(new Set([...ppusDisponibles,...gastos.map(g=>g.ppu)].filter(Boolean))).map(p=><option key={p} value={p}>{p}</option>)}
+        </select>
+        <select style={S.select} value={fCat} onChange={e=>setFCat(e.target.value)}>
+          <option value="todos">Todas las categorías</option>
+          {Object.entries(GASTO_CATEGORIAS).map(([k,m])=><option key={k} value={k}>{m.label}</option>)}
+        </select>
+        <select style={S.select} value={fMes} onChange={e=>setFMes(e.target.value)}>
+          <option value="todos">Todos los meses</option>
+          {meses.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+
+      {/* Listado */}
+      {lista.length===0?<EmptyState msg="No hay gastos registrados con estos filtros." action={!soloLectura?()=>{setNuevo(true);setEditId(null);setForm(EMPTY);}:undefined}/>
+        :lista.map(g=>{
+          const m=metaCategoria(g.categoria);
+          const est=estadoVencimiento(g.vencimiento);
+          return(
+            <div key={g.id} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"12px 16px",display:"flex",alignItems:"center",gap:14}}>
+              <div style={{width:40,height:40,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,background:m.color+"22",color:m.color,flexShrink:0}}>{m.icon}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:13.5,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{color:C.cyan}}>{g.ppu}</span>
+                  <span style={{color:C.textPrimary}}>{m.label}</span>
+                  {est&&<span style={{...S.badge,background:est.color+"22",color:est.color,fontSize:10}}>{est.label}</span>}
+                </div>
+                <div style={{fontSize:12,color:C.muted,marginTop:2}}>
+                  {g.fecha}{g.notas?" · "+g.notas:""}{g.proveedor?" · "+g.proveedor:""}{g.documento?" · N° "+g.documento:""}{g.odometro!==""&&g.odometro!=null?" · "+Number(g.odometro).toLocaleString("es-CL")+" km":""}
+                </div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:15,fontWeight:900,color:m.color}}>{fmtCLP(g.monto)}</div>
+                {!soloLectura&&<div style={{display:"flex",gap:6,marginTop:6,justifyContent:"flex-end"}}>
+                  <button style={{...S.exportBtn,fontSize:11,padding:"4px 8px"}} onClick={()=>{setEditId(g.id);setNuevo(false);setForm({ppu:g.ppu||"",fecha:g.fecha||new Date().toISOString().slice(0,10),categoria:g.categoria||"otro",monto:g.monto===""||g.monto==null?"":String(g.monto),proveedor:g.proveedor||"",documento:g.documento||"",odometro:g.odometro===""||g.odometro==null?"":String(g.odometro),vencimiento:g.vencimiento||"",notas:g.notas||""});}}>✎</button>
+                  <button style={{...S.exportBtn,fontSize:11,padding:"4px 8px",borderColor:C.danger,color:C.danger}} onClick={()=>{if(window.confirm("¿Eliminar este gasto?"))onDeleteGasto(g.id);}}>✕</button>
+                </div>}
+              </div>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+// ── Resumen de costos por vehículo (dashboard) ─────────────────────────────
+function ResumenCostosVehiculo({gastos=[],vehiculos=[],inicio,fin,setView}){
+  const [modo,setModo]=useState("periodo"); // periodo | historico
+  const di=inicio?inicio.toISOString().slice(0,10):null;
+  const df=fin?fin.toISOString().slice(0,10):null;
+  const enRango=(g)=>{
+    if(modo==="historico"||!di||!df)return true;
+    const f=g.fecha||"";
+    return f>=di&&f<=df;
+  };
+  const datos=gastos.filter(enRango);
+  const total=datos.reduce((s,g)=>s+(Number(g.monto)||0),0);
+
+  // Agrupar por PPU
+  const porPpu={};
+  datos.forEach(g=>{
+    const k=g.ppu||"(sin PPU)";
+    if(!porPpu[k])porPpu[k]={ppu:k,total:0,cats:{}};
+    porPpu[k].total+=Number(g.monto)||0;
+    porPpu[k].cats[g.categoria]=(porPpu[k].cats[g.categoria]||0)+(Number(g.monto)||0);
+  });
+  const filas=Object.values(porPpu).sort((a,b)=>b.total-a.total);
+  const descPpu=(ppu)=>{const v=(vehiculos||[]).find(x=>x.ppu===ppu);return v?[v.marca,v.modelo].filter(Boolean).join(" "):"";};
+  const maxTotal=Math.max(1,...filas.map(f=>f.total));
+
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1.5,textTransform:"uppercase"}}>🚚 Costos por Vehículo (PPU)</div>
+        <div style={{display:"flex",gap:6}}>
+          {[["periodo","Período"],["historico","Histórico"]].map(([id,l])=>(
+            <button key={id} style={{...S.statusBtn,fontSize:11,padding:"5px 12px",background:modo===id?C.cyan+"33":"transparent",border:"1px solid "+(modo===id?C.cyan:C.border),color:modo===id?C.cyan:C.muted,fontWeight:700}}
+              onClick={()=>setModo(id)}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {filas.length===0?(
+        <div style={{fontSize:13,color:C.textSecondary,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span>Sin gastos registrados {modo==="periodo"?"en el período activo":"aún"}.</span>
+          <button style={{...S.exportBtn,fontSize:11}} onClick={()=>setView("gastos")}>Ir a la bitácora →</button>
+        </div>
+      ):(<>
+        <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+          <div style={{fontSize:26,fontWeight:900,color:C.cyan}}>{fmtCLP(total)}</div>
+          <div style={{fontSize:12,color:C.textSecondary}}>total {modo==="periodo"?"del período":"histórico"} · {filas.length} vehículo(s)</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {filas.map(f=>{
+            const cats=Object.entries(f.cats).sort((a,b)=>b[1]-a[1]);
+            return(
+              <div key={f.ppu} style={{display:"flex",flexDirection:"column",gap:6}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.textPrimary}}>{f.ppu}{descPpu(f.ppu)?<span style={{color:C.muted,fontWeight:500}}> · {descPpu(f.ppu)}</span>:null}</div>
+                  <div style={{fontSize:14,fontWeight:900,color:C.cyan}}>{fmtCLP(f.total)}</div>
+                </div>
+                {/* Barra apilada por categoría */}
+                <div style={{display:"flex",height:10,borderRadius:6,overflow:"hidden",background:C.navy,width:`${Math.max(8,(f.total/maxTotal)*100)}%`,minWidth:60}}>
+                  {cats.map(([cat,val])=>(
+                    <div key={cat} title={`${metaCategoria(cat).label}: ${fmtCLP(val)}`} style={{width:`${(val/f.total)*100}%`,background:metaCategoria(cat).color}}/>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:11,color:C.textSecondary}}>
+                  {cats.slice(0,4).map(([cat,val])=>(
+                    <span key={cat} style={{display:"inline-flex",alignItems:"center",gap:4}}>
+                      <span style={{width:8,height:8,borderRadius:2,background:metaCategoria(cat).color,display:"inline-block"}}/>
+                      {metaCategoria(cat).label} {fmtCLP(val)}
+                    </span>
+                  ))}
+                  {cats.length>4&&<span style={{color:C.muted}}>+{cats.length-4} más</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <button style={{...S.linkBtn,alignSelf:"flex-start"}} onClick={()=>setView("gastos")}>Ver bitácora completa →</button>
+      </>)}
     </div>
   );
 }
