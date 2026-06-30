@@ -1016,6 +1016,7 @@ async function exportToExcel(solicitudes, nombreArchivo) {
     const cSpotRegional = regionSol ? (regionSol.valor || 0) : 0;
     const esSpotRegional = cSpotRegional > 0;
     return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
+      s.documentos||"",
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
       s.usuarioDT||"", s.ppuAsignada||"", nro,
@@ -1031,21 +1032,21 @@ async function exportToExcel(solicitudes, nombreArchivo) {
 
   const totalSpot=cobros.spotCount;
   const totalOH=cobros.ohCount;
-  const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[21])||0),0);
-  const cantSpotRegional=rows.filter(r=>(Number(r[21])||0)>0).length;
+  const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[22])||0),0);
+  const cantSpotRegional=rows.filter(r=>(Number(r[22])||0)>0).length;
   const totalCobro=cobros.montoSpot+cobros.montoOH+totalSpotRegional;
   const totalNP=solicitudes.filter(s=>s.noPresentacion).length;
   const totalDescNP=totalNP*DESCUENTO_DIA;
   const granTotal=totalCobro+COBRO_M1+COBRO_M2-totalDescNP;
 
-  const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","Tipo","Estado","Prioridad",
+  const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
     "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP","Observación"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
-  ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:28},{wch:13},{wch:10},
+  ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:30},{wch:28},{wch:13},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
     {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
