@@ -797,6 +797,46 @@ async function deleteGasto(id) {
     return res.ok;
   } catch(e) { console.error("deleteGasto:",e); return false; }
 }
+// ── Recordatorios / eventos (alertas del dashboard) ────────────────────────
+async function loadRecordatorios() {
+  try {
+    const data = await sbFetch("GET","recordatorios","","?order=fecha.asc");
+    if(!data) return [];
+    return data.map(r=>({
+      id:r.id, titulo:r.titulo||"", fecha:r.fecha||"", tipo:r.tipo||"otro",
+      ppu:r.ppu||"", notas:r.notas||"", hecho:!!r.hecho, createdAt:r.created_at||"",
+    }));
+  } catch(e) { return []; }
+}
+async function saveRecordatorio(r) {
+  try {
+    const payload = {
+      id:r.id, titulo:r.titulo||null, fecha:r.fecha||null, tipo:r.tipo||"otro",
+      ppu:r.ppu||null, notas:r.notas||null, hecho:!!r.hecho,
+      updated_at:new Date().toISOString(),
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/recordatorios?on_conflict=id`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`,
+        "Prefer":"resolution=merge-duplicates,return=minimal",
+      },
+      body:JSON.stringify([payload]),
+    });
+    return res.ok;
+  } catch(e) { console.error("saveRecordatorio:",e); return false; }
+}
+async function deleteRecordatorio(id) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/recordatorios?id=eq.${encodeURIComponent(id)}`, {
+      method:"DELETE",
+      headers:{ "apikey":SUPABASE_KEY, "Authorization":`Bearer ${SUPABASE_KEY}` },
+    });
+    return res.ok;
+  } catch(e) { console.error("deleteRecordatorio:",e); return false; }
+}
 function registrarAcceso(email) {
   try {
     const key = "qx:acceso:" + email;
@@ -1048,6 +1088,7 @@ export default function QuantrexAbbott() {
   const [choferes,setChoferes]=useState(CHOFERES);
   const [vehiculos,setVehiculos]=useState(VEHICULOS_DEFAULT);
   const [gastos,setGastos]=useState([]);
+  const [recordatorios,setRecordatorios]=useState([]);
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
   });
@@ -1060,7 +1101,7 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos()]).then(async ([s,c,p,cl,r,us,ch,ve,ga])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);setRecordatorios(re||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -1255,6 +1296,23 @@ export default function QuantrexAbbott() {
     showToast("Gasto eliminado.","danger");
   }
 
+  async function handleSaveRecordatorio(r){
+    const existe=recordatorios.some(x=>x.id===r.id);
+    const upd=existe?recordatorios.map(x=>x.id===r.id?r:x):[...recordatorios,r];
+    setRecordatorios(upd);
+    const ok=await saveRecordatorio(r);
+    if(!ok){ setRecordatorios(recordatorios); showToast("No se pudo guardar el recordatorio.","danger"); return false; }
+    showToast(existe?"Recordatorio actualizado.":"Recordatorio creado.");
+    return true;
+  }
+  async function handleDeleteRecordatorio(id){
+    const prev=recordatorios;
+    setRecordatorios(recordatorios.filter(x=>x.id!==id));
+    const ok=await deleteRecordatorio(id);
+    if(!ok){ setRecordatorios(prev); showToast("No se pudo eliminar el recordatorio.","danger"); return; }
+    showToast("Recordatorio eliminado.","danger");
+  }
+
   const filtered=solicitudes.filter(s=>{
     if(filterTipo!=="todos"&&s.tipo!==filterTipo)return false;
     if(filterStatus!=="todos"&&s.status!==filterStatus)return false;
@@ -1342,6 +1400,7 @@ export default function QuantrexAbbott() {
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
             setView={setView} setSelectedId={setSelectedId} gastos={gastos} vehiculos={vehiculos}
+            recordatorios={recordatorios} onSaveRecordatorio={handleSaveRecordatorio} onDeleteRecordatorio={handleDeleteRecordatorio}
             confirmCierre={confirmCierre} setConfirmCierre={setConfirmCierre} onCerrarMes={handleCerrarMes}
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
@@ -1523,7 +1582,7 @@ function ResumenMes({solicitudes}){
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
-function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[]}){
+function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
@@ -1568,6 +1627,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           </div>
         </div>
       )}
+      {esAdmin&&<AlertasRecordatorios gastos={gastos} vehiculos={vehiculos} recordatorios={recordatorios} onSave={onSaveRecordatorio} onDelete={onDeleteRecordatorio} setView={setView}/>}
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
           ...(stats.no_entregado>0?[["No Entregado",stats.no_entregado,"#F97316"]]:[]),
@@ -4255,6 +4315,155 @@ function ResumenCostosVehiculo({gastos=[],vehiculos=[],inicio,fin,setView}){
         </div>
         <button style={{...S.linkBtn,alignSelf:"flex-start"}} onClick={()=>setView("gastos")}>Ver bitácora completa →</button>
       </>)}
+    </div>
+  );
+}
+
+// ── Alertas y recordatorios (dashboard) ────────────────────────────────────
+const TIPO_RECORDATORIO = {
+  pago:       { label:"Pago",              icon:"💳", color:"#F59E0B" },
+  tramite:    { label:"Documento / Trámite",icon:"📄", color:"#00AEEF" },
+  mantencion: { label:"Mantención prog.",  icon:"🔧", color:"#A78BFA" },
+  reunion:    { label:"Reunión / Evento",  icon:"📅", color:"#14B8A6" },
+  otro:       { label:"Otro",              icon:"📌", color:"#8BAFD4" },
+};
+function metaTipoRec(t){ return TIPO_RECORDATORIO[t] || TIPO_RECORDATORIO.otro; }
+
+function AlertasRecordatorios({gastos=[],vehiculos=[],recordatorios=[],onSave,onDelete,setView}){
+  const [ventana,setVentana]=useState("mes"); // mes | 60
+  const [verHechos,setVerHechos]=useState(false);
+  const [nuevo,setNuevo]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const EMPTY={titulo:"",fecha:new Date().toISOString().slice(0,10),tipo:"pago",ppu:"",notas:""};
+  const [form,setForm]=useState(EMPTY);
+
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  const finMes=new Date(hoy.getFullYear(),hoy.getMonth()+1,0); finMes.setHours(0,0,0,0);
+  const diasFinMes=Math.round((finMes-hoy)/86400000);
+  const limite=ventana==="mes"?diasFinMes:60;
+
+  const ppusDisponibles=Array.from(new Set([...(vehiculos||[]).map(v=>v&&v.ppu),...gastos.map(g=>g.ppu)].filter(Boolean)));
+
+  // a) Vencimientos automáticos desde la bitácora (gastos fijos con vencimiento)
+  const auto=(()=>{
+    const map={};
+    gastos.forEach(g=>{
+      if(!g.vencimiento||!metaCategoria(g.categoria).vencimiento)return;
+      const k=g.ppu+"|"+g.categoria;
+      if(!map[k]||g.vencimiento>map[k].vencimiento)map[k]=g;
+    });
+    return Object.values(map).map(g=>{
+      const m=metaCategoria(g.categoria);
+      return {kind:"venc", id:"venc_"+g.ppu+"_"+g.categoria, fecha:g.vencimiento,
+        titulo:m.label, ppu:g.ppu, icon:m.icon, color:m.color, est:estadoVencimiento(g.vencimiento)};
+    });
+  })();
+
+  // b) Recordatorios manuales
+  const manual=recordatorios.map(r=>{
+    const m=metaTipoRec(r.tipo);
+    return {kind:"rec", id:r.id, fecha:r.fecha, titulo:r.titulo, ppu:r.ppu, tipo:r.tipo,
+      notas:r.notas, hecho:r.hecho, icon:m.icon, color:m.color, est:estadoVencimiento(r.fecha), raw:r};
+  });
+
+  const items=[...auto,...manual]
+    .filter(it=>it.est) // requiere fecha válida
+    .filter(it=>it.kind==="venc" ? it.est.dias<=limite
+              : (verHechos ? true : (!it.hecho && it.est.dias<=limite)))
+    .sort((a,b)=>a.est.dias-b.est.dias);
+
+  const nVencidos=items.filter(it=>it.est.dias<0&&!(it.kind==="rec"&&it.hecho)).length;
+
+  function guardar(){
+    if(!form.titulo.trim()){window.alert("Ponle un título al recordatorio.");return;}
+    if(!form.fecha){window.alert("Indica la fecha.");return;}
+    const r={
+      id: editId || ("r_"+Date.now()+"_"+Math.random().toString(36).slice(2,7)),
+      titulo:form.titulo.trim(), fecha:form.fecha, tipo:form.tipo,
+      ppu:form.ppu||"", notas:form.notas||"",
+      hecho: editId ? (recordatorios.find(x=>x.id===editId)?.hecho||false) : false,
+    };
+    onSave(r).then(ok=>{ if(ok){ setNuevo(false); setEditId(null); setForm(EMPTY); } });
+  }
+  function toggleHecho(r){ onSave({...r, hecho:!r.hecho}); }
+
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+(nVencidos>0?C.danger:C.border),borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+        <div style={{fontSize:11,fontWeight:700,color:nVencidos>0?C.danger:C.muted,letterSpacing:1.4,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+          🔔 Alertas y recordatorios
+          {items.length>0&&<span style={{...S.badge,background:(nVencidos>0?C.danger:C.cyan)+"22",color:nVencidos>0?C.danger:C.cyan,fontSize:10}}>{items.length}{nVencidos>0?` · ${nVencidos} vencido(s)`:""}</span>}
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {[["mes","Este mes"],["60","60 días"]].map(([id,l])=>(
+            <button key={id} style={{...S.statusBtn,fontSize:11,padding:"5px 12px",background:ventana===id?C.cyan+"33":"transparent",border:"1px solid "+(ventana===id?C.cyan:C.border),color:ventana===id?C.cyan:C.muted,fontWeight:700}}
+              onClick={()=>setVentana(id)}>{l}</button>
+          ))}
+          <button style={{...S.exportBtn,fontSize:11,padding:"5px 12px"}} onClick={()=>{setNuevo(v=>!v);setEditId(null);setForm(EMPTY);}}>+ Recordatorio</button>
+        </div>
+      </div>
+
+      {(nuevo||editId)&&(
+        <div style={{background:C.navy,border:"1px solid "+C.cyan,borderRadius:10,padding:"12px 14px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+            <div style={S.fGroup}><label style={S.label}>Título</label>
+              <input style={S.input} placeholder="Ej: Pagar permiso circulación" value={form.titulo} onChange={e=>setForm(p=>({...p,titulo:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Fecha</label>
+              <input style={S.input} type="date" value={form.fecha} onChange={e=>setForm(p=>({...p,fecha:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Tipo</label>
+              <select style={S.input} value={form.tipo} onChange={e=>setForm(p=>({...p,tipo:e.target.value}))}>
+                {Object.entries(TIPO_RECORDATORIO).map(([k,m])=><option key={k} value={k}>{m.icon} {m.label}</option>)}
+              </select></div>
+            <div style={S.fGroup}><label style={S.label}>Vehículo (PPU) — opcional</label>
+              <select style={S.input} value={form.ppu} onChange={e=>setForm(p=>({...p,ppu:e.target.value}))}>
+                <option value="">— Ninguno —</option>
+                {ppusDisponibles.map(p=><option key={p} value={p}>{p}</option>)}
+              </select></div>
+          </div>
+          <div style={{...S.fGroup,marginTop:10}}><label style={S.label}>Notas — opcional</label>
+            <input style={S.input} placeholder="Detalle del recordatorio" value={form.notas} onChange={e=>setForm(p=>({...p,notas:e.target.value}))}/></div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:10}}>
+            <button style={S.btnSec} onClick={()=>{setNuevo(false);setEditId(null);setForm(EMPTY);}}>Cancelar</button>
+            <button style={S.btnPri} onClick={guardar}>Guardar</button>
+          </div>
+        </div>
+      )}
+
+      {items.length===0&&!nuevo&&!editId?(
+        <div style={{fontSize:13,color:C.textSecondary}}>Sin vencimientos ni recordatorios {ventana==="mes"?"para este mes":"en los próximos 60 días"}. 👍</div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {items.map(it=>(
+            <div key={it.id} style={{display:"flex",alignItems:"center",gap:12,background:C.navy,border:"1px solid "+C.border,borderLeft:"3px solid "+it.est.color,borderRadius:10,padding:"10px 12px",opacity:(it.kind==="rec"&&it.hecho)?0.55:1}}>
+              <div style={{fontSize:18,flexShrink:0}}>{it.icon}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13.5,fontWeight:700,color:C.textPrimary,textDecoration:(it.kind==="rec"&&it.hecho)?"line-through":"none"}}>
+                  {it.titulo}{it.ppu?<span style={{color:C.cyan,fontWeight:700}}> · {it.ppu}</span>:null}
+                </div>
+                <div style={{fontSize:11.5,color:C.muted,marginTop:2}}>
+                  {it.fecha}{it.kind==="venc"?" · vencimiento (bitácora)":(it.notas?" · "+it.notas:"")}
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                <span style={{...S.badge,background:it.est.color+"22",color:it.est.color,fontSize:10}}>{it.est.label}</span>
+                {it.kind==="venc"
+                  ?<button style={{...S.exportBtn,fontSize:11,padding:"4px 8px"}} onClick={()=>setView("gastos")}>Ver →</button>
+                  :<>
+                    <button title={it.hecho?"Marcar pendiente":"Marcar hecho"} style={{...S.exportBtn,fontSize:11,padding:"4px 8px",borderColor:it.hecho?C.muted:C.success,color:it.hecho?C.muted:C.success}} onClick={()=>toggleHecho(it.raw)}>✓</button>
+                    <button style={{...S.exportBtn,fontSize:11,padding:"4px 8px"}} onClick={()=>{setEditId(it.id);setNuevo(false);setForm({titulo:it.titulo||"",fecha:it.fecha||new Date().toISOString().slice(0,10),tipo:it.tipo||"otro",ppu:it.ppu||"",notas:it.notas||""});}}>✎</button>
+                    <button style={{...S.exportBtn,fontSize:11,padding:"4px 8px",borderColor:C.danger,color:C.danger}} onClick={()=>{if(window.confirm("¿Eliminar este recordatorio?"))onDelete(it.id);}}>✕</button>
+                  </>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {recordatorios.some(r=>r.hecho)&&(
+        <button style={{...S.linkBtn,alignSelf:"flex-start",fontSize:12}} onClick={()=>setVerHechos(v=>!v)}>
+          {verHechos?"Ocultar completados":"Ver completados"}
+        </button>
+      )}
     </div>
   );
 }
