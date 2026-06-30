@@ -455,6 +455,26 @@ function calcularCobros(solicitudes){
   return { perId, spotCount, ohCount, montoSpot: spotCount*PRECIO_SPOT, montoOH: ohCount*PRECIO_OVERNIGHT };
 }
 
+// Métricas ejecutivas de un período (mismas reglas que ResumenMes / Excel)
+const COBRO_M1_FIJO = 2840000, COBRO_M2_FIJO = 2840000, DESC_NP_DIA = Math.round(2840000/30);
+function metricasPeriodo(sols){
+  const arr = sols || [];
+  const c = calcularCobros(arr);
+  const np = arr.filter(s=>s.noPresentacion).length * DESC_NP_DIA;
+  const extras = c.montoSpot + c.montoOH;                 // Overnight + Extra SPOT
+  const facturacion = COBRO_M1_FIJO + COBRO_M2_FIJO + extras - np;
+  const completadas = arr.filter(s=>s.status==="completada"||s.status==="devolucion").length;
+  const noEnt = arr.filter(s=>s.status==="no_entregado").length;
+  const baseEnt = completadas + noEnt;
+  const cumplimiento = baseEnt>0 ? (completadas/baseEnt*100) : null;
+  return { facturacion, extras, montoSpot:c.montoSpot, montoOH:c.montoOH, spotCount:c.spotCount, ohCount:c.ohCount,
+    total:arr.length, completadas, noEnt, cumplimiento };
+}
+function costosEnRango(gastos, di, df){
+  if(!di||!df) return 0;
+  return (gastos||[]).reduce((s,g)=>{ const f=g.fecha||""; return (f>=di&&f<=df)?s+(Number(g.monto)||0):s; },0);
+}
+
 
 
 // ── Tabla SPOT Regional ────────────────────────────────────────────────────
@@ -837,6 +857,27 @@ async function deleteRecordatorio(id) {
     return res.ok;
   } catch(e) { console.error("deleteRecordatorio:",e); return false; }
 }
+// ── Metas por período (facturación, tope de costos) ────────────────────────
+async function loadMetas() {
+  try {
+    const data = await sbFetch("GET","metas","","?order=periodo.asc");
+    if(!data) return [];
+    return data.map(m=>({ id:m.id, periodo:m.periodo||"", kpi:m.kpi||"", valor:m.valor==null?0:Number(m.valor) }));
+  } catch(e) { return []; }
+}
+async function saveMeta(m) {
+  try {
+    const payload = { id:m.id, periodo:m.periodo||null, kpi:m.kpi||null,
+      valor:(m.valor===""||m.valor==null)?0:Number(m.valor), updated_at:new Date().toISOString() };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/metas?on_conflict=id`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`, "Prefer":"resolution=merge-duplicates,return=minimal" },
+      body:JSON.stringify([payload]),
+    });
+    return res.ok;
+  } catch(e) { console.error("saveMeta:",e); return false; }
+}
 function registrarAcceso(email) {
   try {
     const key = "qx:acceso:" + email;
@@ -1089,6 +1130,7 @@ export default function QuantrexAbbott() {
   const [vehiculos,setVehiculos]=useState(VEHICULOS_DEFAULT);
   const [gastos,setGastos]=useState([]);
   const [recordatorios,setRecordatorios]=useState([]);
+  const [metas,setMetas]=useState([]);
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
   });
@@ -1101,7 +1143,7 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);setRecordatorios(re||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios(),loadMetas()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re,me])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);setRecordatorios(re||[]);setMetas(me||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -1313,6 +1355,17 @@ export default function QuantrexAbbott() {
     showToast("Recordatorio eliminado.","danger");
   }
 
+  async function handleSaveMeta(periodo,kpi,valor){
+    const id=periodo+"|"+kpi;
+    const m={id,periodo,kpi,valor:Number(valor)||0};
+    const upd=metas.some(x=>x.id===id)?metas.map(x=>x.id===id?m:x):[...metas,m];
+    setMetas(upd);
+    const ok=await saveMeta(m);
+    if(!ok){ setMetas(metas); showToast("No se pudo guardar la meta.","danger"); return false; }
+    showToast("Meta guardada.");
+    return true;
+  }
+
   const filtered=solicitudes.filter(s=>{
     if(filterTipo!=="todos"&&s.tipo!==filterTipo)return false;
     if(filterStatus!=="todos"&&s.status!==filterStatus)return false;
@@ -1401,6 +1454,7 @@ export default function QuantrexAbbott() {
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
             setView={setView} setSelectedId={setSelectedId} gastos={gastos} vehiculos={vehiculos}
             recordatorios={recordatorios} onSaveRecordatorio={handleSaveRecordatorio} onDeleteRecordatorio={handleDeleteRecordatorio}
+            cierres={cierres} metas={metas} onSaveMeta={handleSaveMeta}
             confirmCierre={confirmCierre} setConfirmCierre={setConfirmCierre} onCerrarMes={handleCerrarMes}
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
@@ -1581,11 +1635,165 @@ function ResumenMes({solicitudes}){
   );
 }
 
+// ── Componentes ejecutivos del dashboard ───────────────────────────────────
+function sparkPoints(vals,w,h){
+  if(!vals||vals.length<2) return "";
+  const min=Math.min(...vals), max=Math.max(...vals); const rng=(max-min)||1;
+  return vals.map((v,i)=>{ const x=(i/(vals.length-1))*w; const y=h-((v-min)/rng)*(h-3)-1.5; return `${x.toFixed(1)},${y.toFixed(1)}`; }).join(" ");
+}
+function KpiEjecutivo({label,valor,delta,deltaColor,sub,subColor,spark,color}){
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px",display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{fontSize:12,color:C.textSecondary,fontWeight:600}}>{label}</div>
+      <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:23,fontWeight:900,color:C.textPrimary,letterSpacing:-.5}}>{valor}</span>
+        {delta!=null&&<span style={{fontSize:12,fontWeight:700,color:deltaColor||(delta>=0?C.success:C.danger)}}>{delta>=0?"▲":"▼"} {Math.abs(Math.round(delta))}%</span>}
+      </div>
+      {spark&&spark.length>=2&&(
+        <svg viewBox="0 0 100 26" preserveAspectRatio="none" style={{width:"100%",height:24}} aria-hidden="true">
+          <polyline points={sparkPoints(spark,100,26)} fill="none" stroke={color||C.cyan} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+        </svg>
+      )}
+      {sub&&<div style={{fontSize:11.5,color:subColor||C.muted,fontWeight:600}}>{sub}</div>}
+    </div>
+  );
+}
+function BulletMeta({label,actual,meta,lessIsBetter,record}){
+  const pct = meta>0 ? (actual/meta*100) : null;
+  let color=C.muted, pctTxt="—";
+  if(pct!=null){
+    pctTxt=Math.round(pct)+"%";
+    if(lessIsBetter){ color = actual<=meta ? C.success : (actual<=meta*1.1? C.warning : C.danger); }
+    else { color = pct>=100 ? C.success : (pct>=90? C.cyan : (pct>=75? C.warning : C.danger)); }
+  }
+  const scaleMax = lessIsBetter ? (Math.max(actual,meta)*1.1||1) : (Math.max(meta*1.2, actual)||1);
+  const fillW = Math.min(100,(actual/scaleMax)*100);
+  const metaLeft = Math.min(100,(meta/scaleMax)*100);
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"minmax(120px,150px) 1fr minmax(96px,120px)",gap:10,alignItems:"center"}}>
+      <div style={{fontSize:12.5,color:C.textSecondary}}>{label}{record?<span style={{color:C.muted}}> · récord</span>:null}</div>
+      <div style={{position:"relative",height:14,background:C.navy,border:"1px solid "+C.border,borderRadius:7}}>
+        <div style={{position:"absolute",left:0,top:0,bottom:0,width:fillW+"%",background:color,borderRadius:7}}/>
+        {meta>0&&<div style={{position:"absolute",left:metaLeft+"%",top:-3,bottom:-3,width:2,background:C.textPrimary}}/>}
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{fontSize:13,fontWeight:900,color}}>{pctTxt}</div>
+        <div style={{fontSize:10,color:C.muted}}>{fmtCLP(actual)} / {fmtCLP(meta)}</div>
+      </div>
+    </div>
+  );
+}
+function TendenciaPeriodos({serie,metasMap,recordExtras}){
+  const [modo,setModo]=useState("facturacion");
+  const data=serie.map(p=>({
+    nombre:p.nombre,
+    valor: modo==="facturacion"?p.facturacion:p.extras,
+    meta: modo==="facturacion" ? (metasMap[p.nombre]?.facturacion||0) : recordExtras,
+  }));
+  const max=Math.max(1,...data.map(d=>Math.max(d.valor,d.meta||0)));
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Tendencia mes a mes</div>
+        <div style={{display:"flex",gap:6}}>
+          {[["facturacion","Facturación"],["extras","Extras"]].map(([id,l])=>(
+            <button key={id} style={{...S.statusBtn,fontSize:11,padding:"5px 12px",background:modo===id?C.cyan+"33":"transparent",border:"1px solid "+(modo===id?C.cyan:C.border),color:modo===id?C.cyan:C.muted,fontWeight:700}}
+              onClick={()=>setModo(id)}>{l}</button>
+          ))}
+        </div>
+      </div>
+      {data.length===0?(
+        <div style={{fontSize:12.5,color:C.muted}}>Aún no hay períodos para graficar. Cierra un mes y aparecerá la tendencia.</div>
+      ):(<>
+        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:150}}>
+          {data.map((d,i)=>{
+            const h=(d.valor/max)*125;
+            const metaH=(d.meta||0)/max*125;
+            const ok = d.meta>0 ? d.valor>=d.meta : true;
+            return(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,minWidth:0}}>
+                <div style={{fontSize:9.5,color:C.textSecondary,whiteSpace:"nowrap"}}>${Math.round(d.valor/1000000*10)/10}M</div>
+                <div style={{position:"relative",width:"100%",height:125,display:"flex",alignItems:"flex-end"}} title={`${d.nombre}: ${fmtCLP(d.valor)}${d.meta>0?" · meta "+fmtCLP(d.meta):""}`}>
+                  {d.meta>0&&<div style={{position:"absolute",left:0,right:0,bottom:metaH,borderTop:"2px dashed "+C.muted}}/>}
+                  <div style={{width:"100%",height:Math.max(2,h),background:ok?C.cyan:C.danger,borderRadius:"4px 4px 0 0"}}/>
+                </div>
+                <div style={{fontSize:9.5,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{d.nombre.split(" ")[0].slice(0,3)}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,color:C.textSecondary}}>
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.cyan}}/>Sobre/igual meta</span>
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.danger}}/>Bajo meta</span>
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:14,borderTop:"2px dashed "+C.muted}}/>{modo==="extras"?"Récord":"Meta"}</span>
+        </div>
+      </>)}
+    </div>
+  );
+}
+function MetasEditor({periodo,metasMap,onSaveMeta,recordExtras,recordPeriodo,esRecordActual}){
+  const cur=metasMap[periodo]||{};
+  const [open,setOpen]=useState(false);
+  const [fact,setFact]=useState(cur.facturacion?String(cur.facturacion):"");
+  const [tope,setTope]=useState(cur.costos?String(cur.costos):"");
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1.2,textTransform:"uppercase"}}>🎯 Metas de {periodo}</div>
+        <button style={{...S.exportBtn,fontSize:11,padding:"5px 12px"}} onClick={()=>setOpen(o=>!o)}>{open?"Cerrar":"Definir metas"}</button>
+      </div>
+      <div style={{fontSize:11.5,color:C.textSecondary}}>Meta de extras = tu récord histórico: <b style={{color:C.cyan}}>{fmtCLP(recordExtras)}</b>{recordPeriodo?` (${recordPeriodo})`:""}{esRecordActual?" · este período va liderando":""}</div>
+      {open&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,alignItems:"end"}}>
+          <div style={S.fGroup}><label style={S.label}>Meta facturación (CLP)</label>
+            <input style={S.input} inputMode="numeric" placeholder="Ej: 6500000" value={fact} onChange={e=>setFact(e.target.value.replace(/\D/g,""))}/></div>
+          <div style={S.fGroup}><label style={S.label}>Tope costos flota (CLP)</label>
+            <input style={S.input} inputMode="numeric" placeholder="Ej: 1200000" value={tope} onChange={e=>setTope(e.target.value.replace(/\D/g,""))}/></div>
+          <button style={S.btnPri} onClick={async()=>{
+            if(fact!=="")await onSaveMeta(periodo,"facturacion",Number(fact));
+            if(tope!=="")await onSaveMeta(periodo,"costos",Number(tope));
+            setOpen(false);
+          }}>Guardar metas</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Dashboard ──────────────────────────────────────────────────────────────
-function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio}){
+function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
+
+  // ── Cálculo ejecutivo: serie de períodos (cierres + período actual) ──
+  const metasMap={};
+  (metas||[]).forEach(m=>{ (metasMap[m.periodo]=metasMap[m.periodo]||{})[m.kpi]=m.valor; });
+  const diAct=inicio?inicio.toISOString().slice(0,10):null;
+  const dfAct=fin?fin.toISOString().slice(0,10):null;
+  const mpActual=metricasPeriodo(solicitudesPeriodo);
+  const costosActual=costosEnRango(gastos,diAct,dfAct);
+  const serie=[];
+  (cierres||[]).forEach(c=>{
+    if(c.nombre===nombrePeriodo) return; // evita duplicar el período activo
+    const mp=metricasPeriodo(c.solicitudes||[]);
+    serie.push({nombre:c.nombre, facturacion:mp.facturacion, extras:mp.extras,
+      costos:costosEnRango(gastos,c.fechaInicio,c.fechaFin), _orden:c.fechaFin||c.fechaInicio||"", actual:false});
+  });
+  serie.push({nombre:nombrePeriodo, facturacion:mpActual.facturacion, extras:mpActual.extras, costos:costosActual, _orden:dfAct||"zzzz", actual:true});
+  serie.sort((a,b)=>(a._orden||"").localeCompare(b._orden||""));
+  const serieView=serie.slice(-8);
+  const idxCur=serie.length-1;
+  const prevP=serie[idxCur-1];
+  const mom=(field)=>{ if(!prevP||!prevP[field]) return null; return ((serie[idxCur][field]-prevP[field])/Math.abs(prevP[field]))*100; };
+  const pasados=serie.filter(p=>!p.actual);
+  const recExtrasObj = pasados.length ? pasados.reduce((a,b)=>b.extras>a.extras?b:a) : null;
+  const recordExtras = recExtrasObj ? recExtrasObj.extras : mpActual.extras;
+  const recordPeriodo = recExtrasObj ? recExtrasObj.nombre : nombrePeriodo;
+  const esRecordActual = mpActual.extras>=recordExtras;
+  const metaFact = metasMap[nombrePeriodo]?.facturacion||0;
+  const topeCostos = metasMap[nombrePeriodo]?.costos||0;
+
   return(
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
@@ -1628,6 +1836,43 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </div>
       )}
       {esAdmin&&<AlertasRecordatorios gastos={gastos} vehiculos={vehiculos} recordatorios={recordatorios} onSave={onSaveRecordatorio} onDelete={onDeleteRecordatorio} setView={setView}/>}
+
+      {esAdmin&&(<>
+        <div style={S.sectionTitle}>Resumen ejecutivo · {nombrePeriodo}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
+          <KpiEjecutivo label="Facturación del período" valor={fmtCLP(mpActual.facturacion)}
+            delta={mom("facturacion")} spark={serieView.map(p=>p.facturacion)} color={C.cyan}
+            sub={metaFact>0?`${Math.round(mpActual.facturacion/metaFact*100)}% de la meta`:"sin meta definida"}
+            subColor={metaFact>0?(mpActual.facturacion>=metaFact?C.success:C.warning):C.muted}/>
+          <KpiEjecutivo label="Costos de flota" valor={fmtCLP(costosActual)}
+            delta={mom("costos")} deltaColor={mom("costos")==null?undefined:(mom("costos")>0?C.danger:C.success)}
+            spark={serieView.map(p=>p.costos)} color={C.warning}
+            sub={topeCostos>0?`${costosActual<=topeCostos?"bajo el tope":"sobre el tope"} (${Math.round(costosActual/topeCostos*100)}%)`:"sin tope definido"}
+            subColor={topeCostos>0?(costosActual<=topeCostos?C.success:C.danger):C.muted}/>
+          <KpiEjecutivo label="Extras · Overnight + SPOT" valor={fmtCLP(mpActual.extras)}
+            delta={mom("extras")} spark={serieView.map(p=>p.extras)} color={C.info}
+            sub={esRecordActual?"🏆 nuevo récord":`récord: ${fmtCLP(recordExtras)} · ${Math.round((recordExtras?mpActual.extras/recordExtras:1)*100)}%`}
+            subColor={esRecordActual?C.success:C.muted}/>
+        </div>
+
+        <MetasEditor periodo={nombrePeriodo} metasMap={metasMap} onSaveMeta={onSaveMeta}
+          recordExtras={recordExtras} recordPeriodo={recordPeriodo} esRecordActual={esRecordActual}/>
+
+        <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Cumplimiento de metas</div>
+          {metaFact>0
+            ? <BulletMeta label="Facturación" actual={mpActual.facturacion} meta={metaFact}/>
+            : <div style={{fontSize:12,color:C.muted}}>Define la meta de facturación para ver su cumplimiento.</div>}
+          <BulletMeta label="Extras (O/N + SPOT)" actual={mpActual.extras} meta={recordExtras} record/>
+          {topeCostos>0
+            ? <BulletMeta label="Costos de flota" actual={costosActual} meta={topeCostos} lessIsBetter/>
+            : <div style={{fontSize:12,color:C.muted}}>Define el tope de costos para ver su cumplimiento.</div>}
+        </div>
+
+        <TendenciaPeriodos serie={serieView} metasMap={metasMap} recordExtras={recordExtras}/>
+      </>)}
+
+      <div style={S.sectionTitle}>Operación · {nombrePeriodo}</div>
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
           ...(stats.no_entregado>0?[["No Entregado",stats.no_entregado,"#F97316"]]:[]),
@@ -1656,11 +1901,23 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </div>
         );
       })()}
-      {esAdmin&&<ResumenMes solicitudes={solicitudesPeriodo}/>}
-      {esAdmin&&<GraficoCobros solicitudes={solicitudesPeriodo}/>}
-      {esAdmin&&<ResumenKmDia solicitudes={solicitudes} rutas={rutas}/>}
-      {esAdmin&&<ResumenCostosVehiculo gastos={gastos} vehiculos={vehiculos} inicio={inicio} fin={fin} setView={setView}/>}
-      {(esAdmin||esCliente)&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
+      {esAdmin&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
+          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Cobros del período</div>
+            <div style={{fontSize:22,fontWeight:900,color:C.cyan}}>{fmtCLP(mpActual.facturacion)}</div>
+            <div style={{fontSize:10,color:C.muted}}>SPOT ×{mpActual.spotCount} · O/N ×{mpActual.ohCount} · extras {fmtCLP(mpActual.extras)}</div>
+          </div>
+          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.warning,letterSpacing:1.2,textTransform:"uppercase"}}>Costos de flota</div>
+            <div style={{fontSize:22,fontWeight:900,color:C.warning}}>{fmtCLP(costosActual)}</div>
+            <div style={{fontSize:10,color:C.muted}}>{nombrePeriodo} · ver bitácora en menú</div>
+          </div>
+          <ResumenKmDia solicitudes={solicitudes} rutas={rutas} compact/>
+          <ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas} compact/>
+        </div>
+      )}
+      {esCliente&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
       {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
         <div style={{width:1,height:18,background:C.border}}/>
@@ -3719,7 +3976,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
 
 
 // ── Resumen KM del día ────────────────────────────────────────────────────
-function ResumenKmDia({ solicitudes, rutas=[] }) {
+function ResumenKmDia({ solicitudes, rutas=[], compact=false }) {
   const [kmData, setKmData] = useState(null);
   const [calculando, setCalculando] = useState(false);
 
@@ -3781,6 +4038,20 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
     setCalculando(false);
   }
 
+  if (compact) {
+    const sinDatos = solsHoy.length === 0 && rutas.filter(r=>r.fecha===hoy&&r.kmTotal).length===0;
+    return (
+      <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Km del día</div>
+        {kmData
+          ? <><div style={{fontSize:22,fontWeight:900,color:C.cyan}}>{kmData.totalKm} km</div><div style={{fontSize:10,color:C.muted}}>{kmData.nSols} entregas · desde Pudahuel</div></>
+          : sinDatos
+            ? <div style={{fontSize:12,color:C.muted}}>Sin entregas completadas hoy.</div>
+            : <button style={{...S.exportBtn,fontSize:11,alignSelf:"flex-start"}} disabled={calculando} onClick={calcularKmRuta}>{calculando?"Calculando...":"🗺 Calcular"}</button>}
+      </div>
+    );
+  }
+
   if (solsHoy.length === 0 && rutas.filter(r=>r.fecha===hoy&&r.kmTotal).length===0) {
     return (
       <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:8}}>
@@ -3830,7 +4101,7 @@ function ResumenKmDia({ solicitudes, rutas=[] }) {
 
 
 // ── Resumen CO2 mensual ────────────────────────────────────────────────────
-function ResumenCO2({ solicitudes, rutas=[] }) {
+function ResumenCO2({ solicitudes, rutas=[], compact=false }) {
   const [co2Data, setCo2Data] = useState(null);
   const [calculando, setCalculando] = useState(false);
 
@@ -3857,6 +4128,17 @@ function ResumenCO2({ solicitudes, rutas=[] }) {
   }
 
   if (solsConDireccion.length === 0) return null;
+
+  if (compact) {
+    return (
+      <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.success,letterSpacing:1.2,textTransform:"uppercase"}}>CO₂ estimado</div>
+        {co2Data
+          ? <><div style={{fontSize:22,fontWeight:900,color:C.success}}>{(parseInt(co2Data.co2)/1000*0.15).toFixed(1)} kg</div><div style={{fontSize:10,color:C.muted}}>tkm × 0,15 · {co2Data.nSols} entregas</div></>
+          : <button style={{...S.exportBtn,fontSize:11,alignSelf:"flex-start"}} disabled={calculando} onClick={calcularCO2}>{calculando?"Calculando...":"🌿 Calcular"}</button>}
+      </div>
+    );
+  }
 
   return (
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
