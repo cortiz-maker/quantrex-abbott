@@ -4849,6 +4849,11 @@ function CertificadoAseo({gastos=[],vehiculos=[],choferes=[],setView,sesion}){
   const [cargo,setCargo]=useState("Encargado de Flota");
   const [empresa,setEmpresa]=useState("Inversiones Logísticas Quantrex SpA");
   const [programa,setPrograma]=useState("Programa de Aseo Mensual — Control de Plagas y Sanitización de Flota");
+  const todasPpus=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>v.ppu);
+  const [ppusSel,setPpusSel]=useState(todasPpus); // por defecto, toda la flota seleccionada
+  function togglePpu(ppu){
+    setPpusSel(p=>p.includes(ppu)?p.filter(x=>x!==ppu):[...p,ppu]);
+  }
 
   const periodoStr=`${String(mes).padStart(2,"0")}-${anio}`;
   // Período de cierre Quantrex-Abbott: del 26 del mes anterior al 25 del mes
@@ -4876,8 +4881,8 @@ function CertificadoAseo({gastos=[],vehiculos=[],choferes=[],setView,sesion}){
   });
   Object.values(porPpu).forEach(arr=>arr.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")));
 
-  // Universo de vehículos a certificar: toda la flota registrada
-  const flota=(vehiculos||[]).filter(v=>v&&v.ppu);
+  // Universo de vehículos a certificar: solo las PPU seleccionadas
+  const flota=(vehiculos||[]).filter(v=>v&&v.ppu&&ppusSel.includes(v.ppu));
   const filasCert=flota.map(v=>{
     const regs=porPpu[v.ppu]||[];
     return {
@@ -4923,6 +4928,28 @@ function CertificadoAseo({gastos=[],vehiculos=[],choferes=[],setView,sesion}){
         <input style={S.input} placeholder="Cargo" value={cargo} onChange={e=>setCargo(e.target.value)}/>
       </div>
 
+      <div className="no-imprimir" style={{display:"flex",flexDirection:"column",gap:8}}>
+        <div style={S.sectionTitle}>Vehículos a certificar</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button style={{...S.exportBtn,fontSize:11}} onClick={()=>setPpusSel(todasPpus)}>Marcar todos</button>
+          <button style={{...S.exportBtn,fontSize:11}} onClick={()=>setPpusSel([])}>Desmarcar todos</button>
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {todasPpus.map(ppu=>{
+            const v=(vehiculos||[]).find(x=>x.ppu===ppu);
+            const label=v?[ppu,[v.marca,v.modelo].filter(Boolean).join(" ")].filter(Boolean).join(" · "):ppu;
+            const on=ppusSel.includes(ppu);
+            return(
+              <label key={ppu} style={{display:"flex",alignItems:"center",gap:6,background:on?C.cyan+"22":"transparent",border:"1px solid "+(on?C.cyan:C.border),borderRadius:8,padding:"6px 10px",fontSize:12,cursor:"pointer",color:on?C.cyan:C.textSecondary}}>
+                <input type="checkbox" checked={on} onChange={()=>togglePpu(ppu)} style={{cursor:"pointer"}}/>
+                {label}
+              </label>
+            );
+          })}
+          {todasPpus.length===0&&<div style={{fontSize:12,color:C.muted}}>No hay vehículos registrados.</div>}
+        </div>
+      </div>
+
       {/* Área certificable: fondo blanco, formato formal, es lo único visible al imprimir */}
       <div id="areaCertificado" style={{background:"#fff",color:"#111",borderRadius:8,padding:"36px 40px",fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
         <div style={{textAlign:"center",borderBottom:"2px solid #111",paddingBottom:16,marginBottom:20}}>
@@ -4961,7 +4988,7 @@ function CertificadoAseo({gastos=[],vehiculos=[],choferes=[],setView,sesion}){
               </tr>
             ))}
             {filasCert.length===0&&(
-              <tr><td colSpan={5} style={{border:"1px solid #ccc",padding:"10px",textAlign:"center",color:"#777"}}>No hay vehículos registrados en la flota.</td></tr>
+              <tr><td colSpan={5} style={{border:"1px solid #ccc",padding:"10px",textAlign:"center",color:"#777"}}>No hay vehículos seleccionados para certificar.</td></tr>
             )}
           </tbody>
         </table>
