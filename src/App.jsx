@@ -1567,6 +1567,7 @@ export default function QuantrexAbbott() {
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} setView={setView}/>)
         :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
+        :view==="certificado_aseo"?(<CertificadoAseo gastos={gastos} vehiculos={vehiculos} choferes={choferes} setView={setView} sesion={sesion}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion} vehiculos={vehiculos} choferes={choferes}/>)
         :view==="trazabilidad"?(<VistaTrazabilidad vehiculos={vehiculos} choferes={choferes}/>)
@@ -4696,6 +4697,7 @@ function GastosVehiculos({gastos=[],vehiculos=[],choferes=[],onSaveGasto,onDelet
         <div style={S.pageTitle}>Bitácora de Costos por Vehículo</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {gastos.length>0&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={exportarBitacora}><span>📥</span><span>Excel</span></button>}
+          <button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={()=>setView("certificado_aseo")}><span>🧾</span><span>Certificado de Aseo</span></button>
           {!soloLectura&&<button style={S.btnPri} onClick={()=>{setNuevo(true);setEditId(null);setForm(EMPTY);}}>+ Nuevo gasto</button>}
         </div>
       </div>
@@ -4828,6 +4830,152 @@ function GastosVehiculos({gastos=[],vehiculos=[],choferes=[],onSaveGasto,onDelet
             </div>
           );
         })}
+    </div>
+  );
+}
+
+// ── Certificado de Higienización y Sanitización de Flota ───────────────────
+// Filtra solo categoría "Lavado / Aseo" y certifica cumplimiento del programa
+// mensual de aseo (relevante para control de plagas y evidencia frente a
+// Abbott). Formato inspirado en certificados de limpieza/desinfección de
+// transporte usados en logística de alimentos/farma: identifica cada
+// vehículo, fecha del servicio, proveedor/ejecutor, y estado de cumplimiento.
+function CertificadoAseo({gastos=[],vehiculos=[],choferes=[],setView,sesion}){
+  const hoy=new Date();
+  const [anio,setAnio]=useState(hoy.getFullYear());
+  const [mes,setMes]=useState(hoy.getMonth()+1); // 1-12
+  const [responsable,setResponsable]=useState(sesion?.nombre||"");
+  const [cargo,setCargo]=useState("Encargado de Flota");
+  const [empresa,setEmpresa]=useState("Inversiones Logísticas Quantrex SpA");
+  const [programa,setPrograma]=useState("Programa de Aseo Mensual — Control de Plagas y Sanitización de Flota");
+
+  const periodoStr=`${String(mes).padStart(2,"0")}-${anio}`;
+  const mesLabel=new Date(anio,mes-1,1).toLocaleDateString("es-CL",{month:"long",year:"numeric"});
+
+  const descPpu=(ppu)=>{
+    const v=(vehiculos||[]).find(x=>x.ppu===ppu);
+    const ch=(choferes||[]).find(c=>c.ppu===ppu);
+    const partes=[v&&[v.marca,v.modelo].filter(Boolean).join(" "),ch&&ch.nombre].filter(Boolean);
+    return partes.length?partes.join(" · "):"";
+  };
+
+  // Solo categoría "lavado", del mes/año seleccionado
+  const registrosMes=gastos.filter(g=>g.categoria==="lavado"&&(g.fecha||"").slice(0,7)===`${anio}-${String(mes).padStart(2,"0")}`);
+
+  // Agrupa por PPU: todas las fechas de aseo del mes, ordenadas
+  const porPpu={};
+  registrosMes.forEach(g=>{
+    if(!porPpu[g.ppu]) porPpu[g.ppu]=[];
+    porPpu[g.ppu].push(g);
+  });
+  Object.values(porPpu).forEach(arr=>arr.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")));
+
+  // Universo de vehículos a certificar: toda la flota registrada
+  const flota=(vehiculos||[]).filter(v=>v&&v.ppu);
+  const filasCert=flota.map(v=>{
+    const regs=porPpu[v.ppu]||[];
+    return {
+      ppu:v.ppu, desc:descPpu(v.ppu),
+      fechas:regs.map(r=>r.fecha),
+      proveedores:Array.from(new Set(regs.map(r=>r.proveedor).filter(Boolean))),
+      cumple:regs.length>0,
+      cantidad:regs.length,
+    };
+  });
+  const cumplen=filasCert.filter(f=>f.cumple).length;
+  const noCumplen=filasCert.length-cumplen;
+
+  function imprimir(){ window.print(); }
+
+  return(
+    <div style={S.section}>
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #areaCertificado, #areaCertificado * { visibility: visible; }
+          #areaCertificado { position: absolute; top: 0; left: 0; width: 100%; }
+          .no-imprimir { display: none !important; }
+        }
+      `}</style>
+
+      <div className="no-imprimir" style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={S.pageTitle}>Certificado de Aseo — Flota</div>
+        <div style={{display:"flex",gap:8}}>
+          <button style={S.btnSec} onClick={()=>setView("gastos")}>← Volver a Bitácora</button>
+          <button style={S.btnPri} onClick={imprimir}>🖨 Imprimir / Guardar PDF</button>
+        </div>
+      </div>
+
+      <div className="no-imprimir" style={{...S.filters}}>
+        <select style={S.select} value={mes} onChange={e=>setMes(Number(e.target.value))}>
+          {Array.from({length:12},(_,i)=>i+1).map(m=><option key={m} value={m}>{new Date(2024,m-1,1).toLocaleDateString("es-CL",{month:"long"})}</option>)}
+        </select>
+        <select style={S.select} value={anio} onChange={e=>setAnio(Number(e.target.value))}>
+          {[hoy.getFullYear()-1,hoy.getFullYear(),hoy.getFullYear()+1].map(a=><option key={a} value={a}>{a}</option>)}
+        </select>
+        <input style={S.input} placeholder="Nombre responsable" value={responsable} onChange={e=>setResponsable(e.target.value)}/>
+        <input style={S.input} placeholder="Cargo" value={cargo} onChange={e=>setCargo(e.target.value)}/>
+      </div>
+
+      {/* Área certificable: fondo blanco, formato formal, es lo único visible al imprimir */}
+      <div id="areaCertificado" style={{background:"#fff",color:"#111",borderRadius:8,padding:"36px 40px",fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
+        <div style={{textAlign:"center",borderBottom:"2px solid #111",paddingBottom:16,marginBottom:20}}>
+          <div style={{fontSize:12,letterSpacing:2,color:"#555",fontWeight:700}}>{empresa.toUpperCase()}</div>
+          <div style={{fontSize:20,fontWeight:900,marginTop:8,letterSpacing:.5}}>CERTIFICADO DE HIGIENIZACIÓN Y SANITIZACIÓN DE FLOTA VEHICULAR</div>
+          <div style={{fontSize:12,color:"#555",marginTop:4}}>{programa}</div>
+        </div>
+
+        <p style={{fontSize:13,lineHeight:1.6,marginBottom:16}}>
+          Por medio del presente documento, {empresa} certifica que los vehículos detallados a continuación
+          fueron sometidos a procedimiento de aseo, higienización y sanitización durante el período de{" "}
+          <b>{mesLabel}</b>, conforme al programa de aseo mensual vigente de la flota, orientado a mantener
+          condiciones sanitarias adecuadas y prevención de plagas en unidades de transporte.
+        </p>
+
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:16}}>
+          <thead>
+            <tr style={{background:"#f0f0f0"}}>
+              <th style={{border:"1px solid #ccc",padding:"6px 8px",textAlign:"left"}}>PPU</th>
+              <th style={{border:"1px solid #ccc",padding:"6px 8px",textAlign:"left"}}>Vehículo</th>
+              <th style={{border:"1px solid #ccc",padding:"6px 8px",textAlign:"left"}}>Fecha(s) de aseo</th>
+              <th style={{border:"1px solid #ccc",padding:"6px 8px",textAlign:"left"}}>Proveedor / Ejecutor</th>
+              <th style={{border:"1px solid #ccc",padding:"6px 8px",textAlign:"center"}}>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filasCert.map(f=>(
+              <tr key={f.ppu}>
+                <td style={{border:"1px solid #ccc",padding:"6px 8px",fontWeight:700}}>{f.ppu}</td>
+                <td style={{border:"1px solid #ccc",padding:"6px 8px"}}>{f.desc||"—"}</td>
+                <td style={{border:"1px solid #ccc",padding:"6px 8px"}}>{f.fechas.length?f.fechas.join(", "):"—"}</td>
+                <td style={{border:"1px solid #ccc",padding:"6px 8px"}}>{f.proveedores.length?f.proveedores.join(", "):"—"}</td>
+                <td style={{border:"1px solid #ccc",padding:"6px 8px",textAlign:"center",fontWeight:700,color:f.cumple?"#15803D":"#B91C1C"}}>
+                  {f.cumple?"CUMPLE":"SIN REGISTRO"}
+                </td>
+              </tr>
+            ))}
+            {filasCert.length===0&&(
+              <tr><td colSpan={5} style={{border:"1px solid #ccc",padding:"10px",textAlign:"center",color:"#777"}}>No hay vehículos registrados en la flota.</td></tr>
+            )}
+          </tbody>
+        </table>
+
+        <p style={{fontSize:12,color:"#333",marginBottom:24}}>
+          Resumen del período: <b>{cumplen}</b> de <b>{filasCert.length}</b> vehículo(s) con registro de aseo conforme al programa mensual.
+          {noCumplen>0&&<span style={{color:"#B91C1C",fontWeight:700}}> {noCumplen} vehículo(s) sin registro en este período.</span>}
+        </p>
+
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:60,fontSize:12}}>
+          <div style={{textAlign:"center",width:220}}>
+            <div style={{borderTop:"1px solid #111",paddingTop:6}}>{responsable||"________________________"}</div>
+            <div style={{color:"#555"}}>{cargo}</div>
+          </div>
+          <div style={{textAlign:"center",width:220}}>
+            <div style={{borderTop:"1px solid #111",paddingTop:6}}>{hoy.toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"})}</div>
+            <div style={{color:"#555"}}>Fecha de emisión</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
