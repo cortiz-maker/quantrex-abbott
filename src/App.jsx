@@ -190,8 +190,8 @@ function buscarCapacidad(marca, modelo){
 // con permiso de circulación, revisión técnica y SOAP en Chile).
 const GASTO_CATEGORIAS = {
   combustible: { label:"Combustible",             tipo:"variable", icon:"⛽", color:"#F59E0B" },
-  mantencion:  { label:"Mantención preventiva",   tipo:"variable", icon:"🔧", color:"#00AEEF" },
-  reparacion:  { label:"Reparación / Repuestos",  tipo:"variable", icon:"🛠", color:"#38BDF8" },
+  mantencion:  { label:"Mantención preventiva",   tipo:"variable", icon:"🔧", color:"#00AEEF", vencimiento:true },
+  reparacion:  { label:"Reparación / Repuestos",  tipo:"variable", icon:"🛠", color:"#38BDF8", vencimiento:true },
   neumaticos:  { label:"Neumáticos",              tipo:"variable", icon:"🛞", color:"#A78BFA" },
   accesorios:  { label:"Accesorios / Equipamiento",tipo:"variable",icon:"📦", color:"#14B8A6" },
   permiso:     { label:"Permiso de Circulación",  tipo:"fijo",     icon:"🏛", color:"#22C55E", vencimiento:true },
@@ -199,7 +199,7 @@ const GASTO_CATEGORIAS = {
   soap:        { label:"SOAP",                    tipo:"fijo",     icon:"🛡", color:"#15803D", vencimiento:true },
   seguro:      { label:"Seguro (póliza)",         tipo:"fijo",     icon:"📑", color:"#0EA5E9", vencimiento:true },
   peaje_tag:   { label:"Peajes / TAG",            tipo:"variable", icon:"🛣", color:"#F97316" },
-  multa:       { label:"Multa / Parte",           tipo:"variable", icon:"⚠", color:"#EF4444" },
+  multa:       { label:"Multa / Parte",           tipo:"variable", icon:"⚠", color:"#EF4444", vencimiento:true },
   lavado:      { label:"Lavado / Aseo",           tipo:"variable", icon:"🧽", color:"#06B6D4" },
   otro:        { label:"Otro gasto",              tipo:"variable", icon:"•",  color:"#8BAFD4" },
 };
@@ -4654,6 +4654,36 @@ function GastosVehiculos({gastos=[],vehiculos=[],choferes=[],onSaveGasto,onDelet
     const ws=XLSX.utils.aoa_to_sheet([cab,...filas]);
     ws["!cols"]=[{wch:12},{wch:10},{wch:22},{wch:22},{wch:9},{wch:30},{wch:14},{wch:22},{wch:16},{wch:14},{wch:14}];
     const wb=XLSX.utils.book_new();
+
+    // ── Resumen Ejecutivo: costo por vehículo, mes a mes (según filtro activo) ──
+    const mesesOrdenados=Array.from(new Set(lista.map(g=>(g.fecha||"").slice(0,7)).filter(Boolean))).sort();
+    const ppusEnLista=Array.from(new Set(lista.map(g=>g.ppu).filter(Boolean)));
+    const cabResumen=["PPU","Vehículo",...mesesOrdenados,"Total"];
+    const filasResumen=ppusEnLista.map(ppu=>{
+      const porMes={}; mesesOrdenados.forEach(m=>porMes[m]=0);
+      let totalPpu=0;
+      lista.filter(g=>g.ppu===ppu).forEach(g=>{
+        const m=(g.fecha||"").slice(0,7);
+        if(porMes[m]!=null){ const v=Number(g.monto)||0; porMes[m]+=v; totalPpu+=v; }
+      });
+      return [ppu, descPpu(ppu), ...mesesOrdenados.map(m=>porMes[m]), totalPpu];
+    });
+    const totalesPorMes=mesesOrdenados.map(m=>lista.filter(g=>(g.fecha||"").slice(0,7)===m).reduce((s,g)=>s+(Number(g.monto)||0),0));
+    const totalGeneral=totalesPorMes.reduce((a,b)=>a+b,0);
+    filasResumen.push([]);
+    filasResumen.push(["","TOTAL MENSUAL",...totalesPorMes,totalGeneral]);
+
+    // Bloque adicional: total por categoría (todas las PPU del filtro activo)
+    const catsPresentes=Array.from(new Set(lista.map(g=>g.categoria)));
+    const filasCategoria=[[],["Resumen por categoría"],["Categoría","Tipo","Total (CLP)"]];
+    catsPresentes
+      .map(c=>({c,m:metaCategoria(c),t:lista.filter(g=>g.categoria===c).reduce((s,g)=>s+(Number(g.monto)||0),0)}))
+      .sort((a,b)=>b.t-a.t)
+      .forEach(({c,m,t})=>filasCategoria.push([m.label, m.tipo==="fijo"?"Fijo":"Variable", t]));
+
+    const wsResumen=XLSX.utils.aoa_to_sheet([cabResumen,...filasResumen,...filasCategoria]);
+    wsResumen["!cols"]=[{wch:10},{wch:24},...mesesOrdenados.map(()=>({wch:13})),{wch:14}];
+    XLSX.utils.book_append_sheet(wb,wsResumen,"Resumen Ejecutivo");
     XLSX.utils.book_append_sheet(wb,ws,"Bitácora");
     XLSX.writeFile(wb,`Quantrex_Bitacora_Vehiculos_${new Date().toISOString().slice(0,10)}.xlsx`);
   }
