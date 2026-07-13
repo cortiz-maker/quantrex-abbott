@@ -99,6 +99,26 @@ async function sbUpsert(table, rows) {
   } catch(e){ console.error(`sbUpsert ${table} excepción:`,e); return false; }
 }
 
+// Inserta un punto de trazabilidad GPS (tabla tracking_puntos).
+// A diferencia de sbUpsert, no usa on_conflict: cada punto es una fila nueva
+// (id autogenerado), no se actualiza nada existente.
+async function sbInsertTracking(row) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tracking_puntos`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`,
+        "Prefer":"return=minimal",
+      },
+      body:JSON.stringify(row),
+    });
+    if(!res.ok){ const e=await res.text(); console.error("sbInsertTracking error:",e); return false; }
+    return true;
+  } catch(e){ console.error("sbInsertTracking excepción:",e); return false; }
+}
+
 // Elimina de la tabla solo los IDs que ya no están en la lista actual.
 // Nunca borra todo: si no hay IDs vigentes, no hace nada (evita vaciar la tabla).
 async function sbDeleteFaltantes(table, idsVigentes) {
@@ -3722,6 +3742,53 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   useEffect(()=>{
     return ()=>{ Object.values(timerRef.current).forEach(t=>clearInterval(t)); };
   },[]);
+
+  // ── Trazabilidad GPS ──────────────────────────────────────────────
+  // Captura automática desde que el chofer inicia sesión hasta que sale.
+  // Throttle: máx 1 punto cada 15s o cada 30m recorridos (lo que ocurra
+  // primero), para no saturar Supabase ni gastar batería de más.
+  const trackWatchId=useRef(null);
+  const trackUltimo=useRef({lat:null,lng:null,ts:0});
+  useEffect(()=>{
+    if(!("geolocation" in navigator)) return; // dispositivo sin soporte, no bloquea el resto de la vista
+    const INTERVALO_MIN_MS=15000, DIST_MIN_M=30;
+    const distM=(lat1,lng1,lat2,lng2)=>{
+      const R=6371000, rad=x=>x*Math.PI/180;
+      const dLat=rad(lat2-lat1), dLng=rad(lng2-lng1);
+      const a=Math.sin(dLat/2)**2+Math.cos(rad(lat1))*Math.cos(rad(lat2))*Math.sin(dLng/2)**2;
+      return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    };
+    trackWatchId.current=navigator.geolocation.watchPosition(
+      pos=>{
+        const {latitude,longitude,speed,accuracy}=pos.coords;
+        const ahora=Date.now();
+        const prev=trackUltimo.current;
+        const dt=ahora-prev.ts;
+        const dd=prev.lat!=null?distM(prev.lat,prev.lng,latitude,longitude):Infinity;
+        if(prev.ts!==0 && dt<INTERVALO_MIN_MS && dd<DIST_MIN_M) return; // throttle
+        trackUltimo.current={lat:latitude,lng:longitude,ts:ahora};
+        sbInsertTracking({
+          vehiculo_id: chofer.ppu||null,
+          chofer_id: chofer.nombre||null,
+          ruta_id: null,
+          origen: "celular",
+          lat: latitude,
+          lng: longitude,
+          velocidad_kmh: speed!=null?Math.max(0,speed*3.6):null,
+          precision_m: accuracy??null,
+          timestamp_captura: new Date().toISOString(),
+        });
+      },
+      err=>console.error("Tracking GPS error:",err.message),
+      {enableHighAccuracy:true, maximumAge:5000, timeout:20000}
+    );
+    return ()=>{
+      if(trackWatchId.current!=null){
+        navigator.geolocation.clearWatch(trackWatchId.current);
+        trackWatchId.current=null;
+      }
+    };
+  },[chofer.ppu, chofer.nombre]);
 
   function registrarLlegada(solId){
     const now=new Date();
