@@ -237,6 +237,87 @@ function getMapaTramoUrl(origen, destino) {
   return `${base}?${params.toString()}&markers=color:red|label:B|${encodeURIComponent(destino)}`;
 }
 
+// ── Trazabilidad GPS: helpers ───────────────────────────────────────────────
+
+// Codificación de polyline de Google (algoritmo estándar) para dibujar
+// el recorrido completo en Static Maps sin exceder el límite de largo de URL.
+function encodePolyline(points){
+  let plat=0, plng=0, result="";
+  const encNum=(num)=>{
+    let sgn = num<<1;
+    if(num<0) sgn = ~sgn;
+    let out="";
+    while(sgn>=0x20){ out+=String.fromCharCode((0x20|(sgn&0x1f))+63); sgn>>=5; }
+    out+=String.fromCharCode(sgn+63);
+    return out;
+  };
+  for(const [lat,lng] of points){
+    const late5=Math.round(lat*1e5), lnge5=Math.round(lng*1e5);
+    result += encNum(late5-plat) + encNum(lnge5-plng);
+    plat=late5; plng=lnge5;
+  }
+  return result;
+}
+
+function distanciaMetros(lat1,lng1,lat2,lng2){
+  const R=6371000, rad=x=>x*Math.PI/180;
+  const dLat=rad(lat2-lat1), dLng=rad(lng2-lng1);
+  const a=Math.sin(dLat/2)**2+Math.cos(rad(lat1))*Math.cos(rad(lat2))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+// Detecta paradas: agrupa puntos consecutivos dentro de un radio (RADIO_M)
+// que se mantienen así por al menos MIN_MIN minutos. No depende de la
+// velocidad reportada (que en GPS de celular es poco confiable a baja
+// velocidad), sino del desplazamiento real entre puntos.
+function calcularParadas(puntos, MIN_MIN=3, RADIO_M=60){
+  if(!puntos||puntos.length<2) return [];
+  const paradas=[];
+  let grupoInicio=0;
+  for(let i=1;i<=puntos.length;i++){
+    const p0=puntos[grupoInicio];
+    const pActual=puntos[i];
+    const fueraDeRadio = !pActual || distanciaMetros(p0.lat,p0.lng,pActual.lat,pActual.lng) > RADIO_M;
+    if(fueraDeRadio){
+      const pFin=puntos[i-1];
+      const duracionMin=(new Date(pFin.timestamp_captura)-new Date(p0.timestamp_captura))/60000;
+      if(duracionMin>=MIN_MIN){
+        paradas.push({
+          lat:p0.lat, lng:p0.lng,
+          inicio:p0.timestamp_captura, fin:pFin.timestamp_captura,
+          duracionMin:Math.round(duracionMin),
+        });
+      }
+      grupoInicio=i;
+    }
+  }
+  return paradas;
+}
+
+// Genera la URL de Static Maps con el recorrido completo + marcadores de
+// inicio, fin y paradas detectadas. Reduce puntos si son muchos, para no
+// exceder el límite de largo de URL de la API.
+function getMapaTrazabilidadUrl(puntos, paradas){
+  if(!puntos||puntos.length===0) return null;
+  const MAX_PUNTOS=300;
+  const paso=Math.max(1,Math.ceil(puntos.length/MAX_PUNTOS));
+  const muestreados=puntos.filter((_,i)=>i%paso===0);
+  const encoded=encodePolyline(muestreados.map(p=>[p.lat,p.lng]));
+  const params=new URLSearchParams({
+    size:"640x400", maptype:"roadmap", language:"es", region:"CL",
+    key:GOOGLE_MAPS_API_KEY,
+  });
+  params.append("path", `weight:4|color:0x00AEEFff|enc:${encoded}`);
+  const inicio=puntos[0], fin=puntos[puntos.length-1];
+  params.append("markers", `color:green|label:A|${inicio.lat},${inicio.lng}`);
+  params.append("markers", `color:red|label:B|${fin.lat},${fin.lng}`);
+  // Máximo ~8 paradas como marcadores para no saturar el mapa
+  (paradas||[]).slice(0,8).forEach((pa,i)=>{
+    params.append("markers", `color:orange|label:${i+1}|${pa.lat},${pa.lng}`);
+  });
+  return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
+}
+
 async function calcularTramo(origen, destino) {
   try {
     const apiUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origen)}&destinations=${encodeURIComponent(destino)}&mode=driving&language=es&key=${GOOGLE_MAPS_API_KEY}`;
@@ -1431,7 +1512,7 @@ export default function QuantrexAbbott() {
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
         </div>
         <nav style={S.nav}>
-          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
+          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"],["trazabilidad","Trazabilidad"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
               onClick={()=>setView(v)}>{l}</button>
           ))}
@@ -1488,6 +1569,7 @@ export default function QuantrexAbbott() {
         :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion} vehiculos={vehiculos} choferes={choferes}/>)
+        :view==="trazabilidad"?(<VistaTrazabilidad vehiculos={vehiculos} choferes={choferes}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
             onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
         :view==="cierre_detalle"&&cierreDetalle?(<CierreDetalle cierre={cierreDetalle} setView={setView}
@@ -4346,6 +4428,138 @@ function EmptyState({msg,action}){
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"40px 0",color:C.muted}}>
       <p style={{margin:0}}>{msg}</p>
       {action&&<button style={S.btnPri} onClick={action}>+ Nueva solicitud</button>}
+    </div>
+  );
+}
+
+// ── Trazabilidad GPS: vista admin/operador ─────────────────────────────────
+function VistaTrazabilidad({vehiculos=[],choferes=[]}){
+  const hoy=new Date().toISOString().split("T")[0];
+  const [filtroVehiculo,setFiltroVehiculo]=useState("");
+  const [filtroChofer,setFiltroChofer]=useState("");
+  const [fechaDesde,setFechaDesde]=useState(hoy);
+  const [fechaHasta,setFechaHasta]=useState(hoy);
+  const [puntos,setPuntos]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [buscado,setBuscado]=useState(false);
+  const [error,setError]=useState(null);
+
+  async function buscar(){
+    setLoading(true); setError(null); setBuscado(true);
+    try{
+      let q=`?order=timestamp_captura.asc&timestamp_captura=gte.${fechaDesde}T00:00:00&timestamp_captura=lte.${fechaHasta}T23:59:59`;
+      if(filtroVehiculo) q+=`&vehiculo_id=eq.${encodeURIComponent(filtroVehiculo)}`;
+      if(filtroChofer) q+=`&chofer_id=eq.${encodeURIComponent(filtroChofer)}`;
+      const data=await sbFetch("GET","tracking_puntos","",q);
+      setPuntos(data||[]);
+    }catch(e){
+      setError("No se pudo cargar la trazabilidad.");
+    }
+    setLoading(false);
+  }
+
+  const paradas=calcularParadas(puntos);
+  const mapaUrl=getMapaTrazabilidadUrl(puntos,paradas);
+
+  const distanciaTotalKm=(()=>{
+    let d=0;
+    for(let i=1;i<puntos.length;i++){
+      d+=distanciaMetros(puntos[i-1].lat,puntos[i-1].lng,puntos[i].lat,puntos[i].lng);
+    }
+    return (d/1000).toFixed(1);
+  })();
+  const tiempoTotalMin=puntos.length>=2?
+    Math.round((new Date(puntos[puntos.length-1].timestamp_captura)-new Date(puntos[0].timestamp_captura))/60000):0;
+  const tiempoDetenidoMin=paradas.reduce((a,p)=>a+p.duracionMin,0);
+  const tiempoMovimientoMin=Math.max(0,tiempoTotalMin-tiempoDetenidoMin);
+  const velocidadPromKmh=tiempoMovimientoMin>0?(parseFloat(distanciaTotalKm)/(tiempoMovimientoMin/60)).toFixed(1):"0.0";
+
+  function fmtHora(iso){
+    if(!iso) return "";
+    return new Date(iso).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
+  }
+
+  function exportarExcel(){
+    const wb=XLSX.utils.book_new();
+    const hojaPuntos=puntos.map(p=>({
+      Vehiculo:p.vehiculo_id, Chofer:p.chofer_id, Origen:p.origen,
+      Latitud:p.lat, Longitud:p.lng, "Velocidad (km/h)":p.velocidad_kmh,
+      "Precisión (m)":p.precision_m, Timestamp:fmtHora(p.timestamp_captura),
+    }));
+    const hojaParadas=paradas.map((p,i)=>({
+      "#":i+1, Latitud:p.lat, Longitud:p.lng,
+      Inicio:fmtHora(p.inicio), Fin:fmtHora(p.fin), "Duración (min)":p.duracionMin,
+    }));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(hojaPuntos),"Puntos GPS");
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(hojaParadas),"Paradas");
+    const ts=new Date().toISOString().split("T")[0];
+    XLSX.writeFile(wb,`Trazabilidad_${filtroVehiculo||"Flota"}_${ts}.xlsx`);
+  }
+
+  return(
+    <div style={S.section}>
+      <div style={S.pageTitle}>Trazabilidad de Flota</div>
+
+      <div style={S.filters}>
+        <select style={S.select} value={filtroVehiculo} onChange={e=>setFiltroVehiculo(e.target.value)}>
+          <option value="">Todos los vehículos</option>
+          {vehiculos.map(v=><option key={v.ppu} value={v.ppu}>{v.ppu}</option>)}
+        </select>
+        <select style={S.select} value={filtroChofer} onChange={e=>setFiltroChofer(e.target.value)}>
+          <option value="">Todos los choferes</option>
+          {choferes.map(c=><option key={c.nombre} value={c.nombre}>{c.nombre}</option>)}
+        </select>
+        <input style={S.input} type="date" value={fechaDesde} onChange={e=>setFechaDesde(e.target.value)}/>
+        <input style={S.input} type="date" value={fechaHasta} onChange={e=>setFechaHasta(e.target.value)}/>
+        <button style={S.btnPri} onClick={buscar} disabled={loading}>{loading?"Buscando...":"Buscar"}</button>
+        {puntos.length>0&&<button style={S.btnSec} onClick={exportarExcel}>⬇ Exportar Excel</button>}
+      </div>
+
+      {error&&<div style={{color:C.danger,fontSize:13}}>{error}</div>}
+
+      {!buscado?(
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"40px 0",color:C.muted}}>
+          <p style={{margin:0,fontWeight:600}}>Selecciona filtros y presiona Buscar</p>
+        </div>
+      ):loading?(
+        <div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando trazabilidad...</p></div>
+      ):puntos.length===0?(
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"40px 0",color:C.muted}}>
+          <div style={{fontSize:36}}>·</div>
+          <p style={{margin:0,fontWeight:600}}>Sin datos de trazabilidad para este filtro</p>
+        </div>
+      ):(
+        <>
+          <div style={S.statsGrid}>
+            <div style={S.statCard}><div style={{...S.statNum,color:C.cyan}}>{distanciaTotalKm}</div><div style={S.statLabel}>KM recorridos</div></div>
+            <div style={S.statCard}><div style={{...S.statNum,color:C.success}}>{Math.floor(tiempoMovimientoMin/60)}h {tiempoMovimientoMin%60}m</div><div style={S.statLabel}>En movimiento</div></div>
+            <div style={S.statCard}><div style={{...S.statNum,color:C.warning}}>{Math.floor(tiempoDetenidoMin/60)}h {tiempoDetenidoMin%60}m</div><div style={S.statLabel}>Detenido</div></div>
+            <div style={S.statCard}><div style={S.statNum}>{velocidadPromKmh}</div><div style={S.statLabel}>Vel. promedio km/h</div></div>
+            <div style={S.statCard}><div style={S.statNum}>{paradas.length}</div><div style={S.statLabel}>Paradas detectadas</div></div>
+          </div>
+
+          {mapaUrl&&(
+            <div style={{borderRadius:12,overflow:"hidden",border:"1px solid "+C.border}}>
+              <img src={mapaUrl} alt="Recorrido" style={{width:"100%",display:"block"}}/>
+            </div>
+          )}
+
+          <div style={S.sectionTitle}>Paradas detectadas ({paradas.length})</div>
+          {paradas.length===0?(
+            <div style={{color:C.muted,fontSize:13}}>No se detectaron paradas de más de 3 minutos en el rango seleccionado.</div>
+          ):paradas.map((p,i)=>(
+            <div key={i} style={S.row}>
+              <div style={{...S.rowIcon,background:C.warning+"22",color:C.warning}}>{i+1}</div>
+              <div style={S.rowBody}>
+                <div style={S.rowTitle}>{fmtHora(p.inicio)} → {fmtHora(p.fin)}</div>
+                <div style={{...S.rowMeta,color:C.textSecondary}}>
+                  {p.duracionMin} min detenido · {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
