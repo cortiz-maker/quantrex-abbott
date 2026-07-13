@@ -4445,9 +4445,10 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
   const [loading,setLoading]=useState(false);
   const [buscado,setBuscado]=useState(false);
   const [error,setError]=useState(null);
+  const [mapaError,setMapaError]=useState(false);
 
   async function buscar(){
-    setLoading(true); setError(null); setBuscado(true);
+    setLoading(true); setError(null); setBuscado(true); setMapaError(false);
     try{
       let q=`?order=timestamp_captura.asc&timestamp_captura=gte.${fechaDesde}T00:00:00&timestamp_captura=lte.${fechaHasta}T23:59:59`;
       if(filtroVehiculo) q+=`&vehiculo_id=eq.${encodeURIComponent(filtroVehiculo)}`;
@@ -4540,9 +4541,18 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
             <div style={S.statCard}><div style={S.statNum}>{paradas.length}</div><div style={S.statLabel}>Paradas detectadas</div></div>
           </div>
 
-          {mapaUrl&&(
+          {mapaUrl&&!mapaError&&(
             <div style={{borderRadius:12,overflow:"hidden",border:"1px solid "+C.border}}>
-              <img src={mapaUrl} alt="Recorrido" style={{width:"100%",display:"block"}}/>
+              <img src={mapaUrl} alt="Recorrido" style={{width:"100%",display:"block"}} onError={()=>setMapaError(true)}/>
+            </div>
+          )}
+          {mapaUrl&&mapaError&&(
+            <div style={{borderRadius:12,border:"1px solid "+C.warning,padding:16,display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{color:C.warning,fontWeight:700,fontSize:13}}>⚠ El mapa no cargó</div>
+              <div style={{fontSize:12,color:C.textSecondary}}>
+                Abre este link en una pestaña nueva: si Google muestra un mensaje de error (key inválida, API no habilitada, cuota excedida, etc.), ese es el motivo real. Si carga bien ahí pero no aquí, avísame.
+              </div>
+              <a href={mapaUrl} target="_blank" rel="noreferrer" style={{...S.linkBtn,fontSize:12,wordBreak:"break-all"}}>Abrir URL del mapa →</a>
             </div>
           )}
 
