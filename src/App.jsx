@@ -136,22 +136,6 @@ async function sbDeleteFaltantes(table, idsVigentes) {
 
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
-
-// ── Buscador de documentos (DispatchTrack + Drive) ──────────────────────────
-// 1) DT_WIDGET_URL: URL del widget de seguimiento de DispatchTrack/Beetrack
-//    (Configuración > Seguimiento para clientes > Widget). Se embebe directo
-//    dentro de la app en una ventana emergente. El widget trae su propio campo
-//    "Ingrese su número de despacho"; el usuario pega ahí el número (no se
-//    puede precargar desde afuera sin un parámetro oficial de DT documentado).
-const DT_WIDGET_URL = "https://quantrex.dispatchtrack.com/widget/Ah-7HMAviKex7L2T6j3yHg";
-// 2) GOOGLE_DRIVE_FOLDER_ID: ID de la carpeta de Drive donde están los PDF
-//    escaneados (el que va después de /folders/ en la URL de la carpeta).
-//    La carpeta debe estar compartida como "Cualquiera con el enlace puede ver".
-const GOOGLE_DRIVE_FOLDER_ID = "1a_AvHPtyAaNDdFDMJxvnigzgzt7TZHnp";
-// 3) GOOGLE_DRIVE_API_KEY: habilita "Google Drive API" en el mismo proyecto de
-//    Google Cloud donde ya tienes la Maps API (misma consola donde falta
-//    habilitar Maps Static API) y genera/restringe una API key para Drive.
-const GOOGLE_DRIVE_API_KEY = "AIzaSyCVg7hdvGehvFXpnPV4aT_fKb2SFbjlrO0";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
 const PESO_BASE_KG = 50; // kg por solicitud (peso promedio por pedido)
 
@@ -724,16 +708,29 @@ async function saveSolicitud(s) {
       motivo_np:s.motivoNP||null, geo_entrega:s.geoEntrega||null,
       hora_entrega:s.horaEntrega||null, hora_llegada:s.horaLlegada||null,
       tiempo_en_punto:s.tiempoEnPunto||null, coords_entrega:s.coordsEntrega||null,
-      foto_entrega:s.fotoEntrega||null, fotos_entrega:s.fotosEntrega||[], firma_receptor:s.firmaReceptor||null,
       nombre_receptor:s.nombreReceptor||null, rechazo_firma:s.rechazoFirma||false,
       cancelado_por:s.canceladoPor||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
       devolucion_urgente:s.devolucionUrgente||false,
-      fotos_manifiesto:s.fotosManifiesto||[],
       observacion_chofer:s.observacionChofer||null,
       observacion_autor:s.observacionAutor||null,
       observacion_fecha:s.observacionFecha||null,
       updated_at:new Date().toISOString(),
     };
+    // Campos pesados (foto/firma/manifiesto): SOLO se incluyen en el guardado si
+    // vienen de datos reales (ya cargados desde la BD, o con contenido efectivo
+    // capturado en este momento por el chofer). Si vienen vacíos por defecto
+    // (_fotosCargadas=false y sin ningún valor real), se omiten del payload para
+    // no pisar con null lo que ya existe guardado — esto evita que editar una
+    // solicitud antes de que sus fotos terminen de cargar borre foto/firma reales.
+    const hayDatosPesadosReales = s._fotosCargadas ||
+      !!s.fotoEntrega || !!s.firmaReceptor ||
+      (s.fotosEntrega&&s.fotosEntrega.length>0) || (s.fotosManifiesto&&s.fotosManifiesto.length>0);
+    if(hayDatosPesadosReales){
+      row.foto_entrega = s.fotoEntrega||null;
+      row.fotos_entrega = s.fotosEntrega||[];
+      row.firma_receptor = s.firmaReceptor||null;
+      row.fotos_manifiesto = s.fotosManifiesto||[];
+    }
     // UPSERT - insert o update si ya existe
     const doUpsert = async (payload) => fetch(`${SUPABASE_URL}/rest/v1/solicitudes?on_conflict=id`, {
       method: "POST",
@@ -1882,117 +1879,6 @@ function MetasEditor({periodo,metasMap,onSaveMeta,recordExtras,recordPeriodo,esR
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
-// ── Buscador de documentos (DT + Drive) ─────────────────────────────────────
-function BuscadorDocumento(){
-  const [q,setQ]=useState("");
-  const [buscado,setBuscado]=useState(false);
-  const [drive,setDrive]=useState(null); // {loading}|{archivos}|{error}
-  const [copiado,setCopiado]=useState(false);
-  const [showDT,setShowDT]=useState(false);
-
-  const dtConfigurado = DT_WIDGET_URL && !DT_WIDGET_URL.startsWith("TU_");
-  const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
-
-  const buscarDrive=async(numero)=>{
-    if(!driveConfigurado){ setDrive({error:"config"}); return; }
-    setDrive({loading:true});
-    try{
-      const term=numero.replace(/'/g,"\\'");
-      const query=`'${GOOGLE_DRIVE_FOLDER_ID}' in parents and name contains '${term}' and trashed = false`;
-      const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&key=${GOOGLE_DRIVE_API_KEY}`;
-      const res=await fetch(url);
-      const data=await res.json();
-      if(data.error){ setDrive({error:"api"}); return; }
-      setDrive({archivos:data.files||[]});
-    }catch{
-      setDrive({error:"red"});
-    }
-  };
-
-  const buscar=()=>{
-    const numero=q.trim();
-    if(!numero) return;
-    setBuscado(true);
-    setDrive(null);
-    buscarDrive(numero);
-  };
-
-  const copiarNumero=async()=>{
-    try{ await navigator.clipboard.writeText(q.trim()); setCopiado(true); setTimeout(()=>setCopiado(false),2500); }catch{}
-  };
-
-  const resultCard = (contenido)=>(
-    <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:8,flex:1,minWidth:180}}>{contenido}</div>
-  );
-
-  return (
-    <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:10}}>
-      <div>
-        <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔍 Buscar documento</div>
-        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa el N° de despacho o documento para ubicarlo en DispatchTrack o el PDF escaneado.</div>
-      </div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <input style={{...S.input,flex:1,minWidth:180}} placeholder="N° de despacho / documento..." value={q}
-          onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buscar();}}/>
-        <button style={S.btnPri} onClick={buscar}>Buscar</button>
-      </div>
-      {buscado&&(
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          {resultCard(<>
-            <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>🚚 DispatchTrack</div>
-            {dtConfigurado?(<>
-              <button style={{...S.exportBtn,textAlign:"center"}} onClick={async()=>{await copiarNumero();setShowDT(true);}}>
-                {copiado?"✓ Copiado — pégalo abajo":"Copiar N° y abrir DT"}
-              </button>
-              <div style={{fontSize:11,color:C.muted}}>Se abre el widget de seguimiento; pega el número en el campo "Ingrese su número de despacho".</div>
-            </>):(
-              <div style={{fontSize:12,color:C.warning}}>Falta configurar DT_WIDGET_URL con la URL del widget de tu cuenta DispatchTrack.</div>
-            )}
-          </>)}
-          {resultCard(<>
-            <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>📄 Documento escaneado</div>
-            {!driveConfigurado?(
-              <div style={{fontSize:12,color:C.warning}}>Falta configurar GOOGLE_DRIVE_FOLDER_ID / GOOGLE_DRIVE_API_KEY.</div>
-            ):drive?.loading?(
-              <div style={{fontSize:12,color:C.muted}}>Buscando en Drive...</div>
-            ):drive?.error==="api"?(
-              <div style={{fontSize:12,color:C.danger}}>Error de la API de Drive (revisa la clave o los permisos de la carpeta).</div>
-            ):drive?.error==="red"?(
-              <div style={{fontSize:12,color:C.danger}}>Error de conexión con Drive.</div>
-            ):drive?.archivos?.length===0?(
-              <div style={{fontSize:12,color:C.muted}}>No se encontró ningún PDF con ese número.</div>
-            ):drive?.archivos?.length>0?(
-              drive.archivos.map(f=>(
-                <a key={f.id} href={f.webViewLink} target="_blank" rel="noreferrer" style={{fontSize:12,color:C.cyan,textDecoration:"none",fontWeight:600}}>📄 {f.name} →</a>
-              ))
-            ):null}
-          </>)}
-        </div>
-      )}
-      {showDT&&(
-        <div style={{position:"fixed",inset:0,background:"#000000AA",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>setShowDT(false)}>
-          <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:14,padding:16,width:"100%",maxWidth:460,boxShadow:"0 12px 40px #000000AA"}} onClick={e=>e.stopPropagation()}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-              <div style={{fontWeight:800,color:C.cyan,fontSize:13}}>🚚 Seguimiento DispatchTrack</div>
-              <button style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}} onClick={()=>setShowDT(false)}>✕</button>
-            </div>
-            <div style={{fontSize:12,color:C.textSecondary,marginBottom:8}}>N° copiado al portapapeles: <b style={{color:C.textPrimary}}>{q.trim()}</b> — pégalo (Ctrl+V) en el campo de abajo.</div>
-            <iframe
-              name="beetrack-widget"
-              id="beetrack-widget"
-              frameBorder="0"
-              width="100%"
-              height="310px"
-              src={DT_WIDGET_URL}
-              title="Widget DispatchTrack"
-            />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
@@ -2032,7 +1918,6 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         <div style={S.pageTitle}>Dashboard</div>
         {solicitudes.length>0&&!esCliente&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
       </div>
-      <BuscadorDocumento/>
       <div style={{...S.periodoBanner,borderColor:yaCerrado?C.muted:C.cyan}}>
         <div style={{flex:1}}>
           <div style={{fontSize:11,fontWeight:700,color:yaCerrado?C.muted:C.cyan,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>{yaCerrado?"✓ Período cerrado":"Período activo"}</div>
@@ -2444,7 +2329,11 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           <div style={{color:C.textSecondary,fontSize:13}}>{tm.label} · {sol.fecha}{sol.hora&&` · ${sol.hora}`}</div>
         </div>
         <div style={{...S.badge,background:sm.color+"22",color:sm.color}}>{sm.label}</div>
-        {esAdmin||sesion?.perfil==="operador"?<button style={{...S.exportBtn,fontSize:12}} onClick={()=>setEditMode(true)}>✎ Editar</button>:null}
+        {esAdmin||sesion?.perfil==="operador"?(
+          sol._fotosCargadas
+            ?<button style={{...S.exportBtn,fontSize:12}} onClick={()=>setEditMode(true)}>✎ Editar</button>
+            :<button style={{...S.exportBtn,fontSize:12,opacity:.5,cursor:"not-allowed"}} disabled title="Esperando a que carguen foto y firma antes de habilitar edición">⏳ Cargando datos...</button>
+        ):null}
       </div>
       <div style={S.detailGrid}>
         {[["Dirección",sol.direccion],["Contacto",sol.contacto],["N° Guía",sol.guia],
