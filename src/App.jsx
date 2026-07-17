@@ -136,6 +136,11 @@ async function sbDeleteFaltantes(table, idsVigentes) {
 
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
+
+// ── Buscador de documentos (DispatchTrack + Drive) ──────────────────────────
+const DT_WIDGET_URL = "https://quantrex.dispatchtrack.com/widget/Ah-7HMAviKex7L2T6j3yHg";
+const GOOGLE_DRIVE_FOLDER_ID = "1a_AvHPtyAaNDdFDMJxvnigzgzt7TZHnp";
+const GOOGLE_DRIVE_API_KEY = "AIzaSyCVg7hdvGehvFXpnPV4aT_fKb2SFbjlrO0";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
 const PESO_BASE_KG = 50; // kg por solicitud (peso promedio por pedido)
 
@@ -342,9 +347,15 @@ async function calcularTramo(origen, destino) {
 
 // ── Generador OT automático ────────────────────────────────────────────────
 function generarOT(solicitudes) {
-  // Contador global correlativo basado en total de solicitudes
-  const correlativo = String(solicitudes.length + 1).padStart(3, "0");
-  return `QX-${correlativo}`;
+  // Basado en el máximo N° de OT ya existente (no en el largo de la lista):
+  // así no choca si hay huecos, solicitudes borradas, o la lista local está
+  // desactualizada respecto a la base.
+  let max = 0;
+  for (const s of (solicitudes||[])) {
+    const m = /^QX-(\d+)$/.exec((s.ot||"").trim());
+    if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; }
+  }
+  return `QX-${String(max + 1).padStart(3, "0")}`;
 }
 
 
@@ -753,9 +764,13 @@ async function saveSolicitud(s) {
         delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.devolucion_urgente;
         res = await doUpsert(fallback);
       }
-      if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2); }
+      if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2);
+        const otConflict = /duplicate key value violates unique constraint/i.test(e2) && /\bot\b/i.test(e2);
+        return { ok:false, error:e2, otConflict };
+      }
     }
-  } catch(e) { console.error(e); }
+    return { ok:true };
+  } catch(e) { console.error(e); return { ok:false, error:String(e) }; }
 }
 async function deleteSolicitud(id) {
   try {
@@ -1322,10 +1337,23 @@ export default function QuantrexAbbott() {
     if(!form.canalSolicitud){setFormError("Debes seleccionar un canal de solicitud.");return;}
     setFormError(""); setSaving(true);
     const autoTransito = form.ppuAsignada && form.usuarioDT ? "en_proceso" : "pendiente";
-    const otGenerada = generarOT(solicitudes);
-    const nueva={...form,id:Date.now().toString(),status:autoTransito,ot:form.ot||otGenerada,
+    let otGenerada = generarOT(solicitudes);
+    let nueva={...form,id:Date.now().toString(),status:autoTransito,ot:form.ot||otGenerada,
       createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-    const upd=[nueva,...solicitudes]; setSolicitudes(upd); await saveSolicitud(nueva);
+    let result = await saveSolicitud(nueva);
+    // Si el N° OT choca con uno ya existente en la base (constraint UNIQUE),
+    // se regenera con uno más alto y se reintenta una vez.
+    if(!result.ok && result.otConflict && !form.ot){
+      const siguiente = generarOT([...solicitudes, nueva]);
+      nueva = {...nueva, ot: siguiente};
+      result = await saveSolicitud(nueva);
+    }
+    if(!result.ok){
+      setSaving(false);
+      showToast("⚠ No se pudo guardar en el servidor. Revisa tu conexión e inténtalo de nuevo.","danger");
+      return;
+    }
+    const upd=[nueva,...solicitudes]; setSolicitudes(upd);
     setSaving(false); setForm({...EMPTY_FORM,
       fecha:new Date().toISOString().split("T")[0],
       hora:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false})});
@@ -1879,6 +1907,117 @@ function MetasEditor({periodo,metasMap,onSaveMeta,recordExtras,recordPeriodo,esR
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
+// ── Buscador de documentos (DT + Drive) ─────────────────────────────────────
+function BuscadorDocumento(){
+  const [q,setQ]=useState("");
+  const [buscado,setBuscado]=useState(false);
+  const [drive,setDrive]=useState(null); // {loading}|{archivos}|{error}
+  const [copiado,setCopiado]=useState(false);
+  const [showDT,setShowDT]=useState(false);
+
+  const dtConfigurado = DT_WIDGET_URL && !DT_WIDGET_URL.startsWith("TU_");
+  const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
+
+  const buscarDrive=async(numero)=>{
+    if(!driveConfigurado){ setDrive({error:"config"}); return; }
+    setDrive({loading:true});
+    try{
+      const term=numero.replace(/'/g,"\\'");
+      const query=`'${GOOGLE_DRIVE_FOLDER_ID}' in parents and name contains '${term}' and trashed = false`;
+      const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&key=${GOOGLE_DRIVE_API_KEY}`;
+      const res=await fetch(url);
+      const data=await res.json();
+      if(data.error){ setDrive({error:"api"}); return; }
+      setDrive({archivos:data.files||[]});
+    }catch{
+      setDrive({error:"red"});
+    }
+  };
+
+  const buscar=()=>{
+    const numero=q.trim();
+    if(!numero) return;
+    setBuscado(true);
+    setDrive(null);
+    buscarDrive(numero);
+  };
+
+  const copiarNumero=async()=>{
+    try{ await navigator.clipboard.writeText(q.trim()); setCopiado(true); setTimeout(()=>setCopiado(false),2500); }catch{}
+  };
+
+  const resultCard = (contenido)=>(
+    <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:8,flex:1,minWidth:180}}>{contenido}</div>
+  );
+
+  return (
+    <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:10}}>
+      <div>
+        <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔍 Buscar documento</div>
+        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa el N° de despacho o documento para ubicarlo en DispatchTrack o el PDF escaneado.</div>
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <input style={{...S.input,flex:1,minWidth:180}} placeholder="N° de despacho / documento..." value={q}
+          onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buscar();}}/>
+        <button style={S.btnPri} onClick={buscar}>Buscar</button>
+      </div>
+      {buscado&&(
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {resultCard(<>
+            <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>🚚 DispatchTrack</div>
+            {dtConfigurado?(<>
+              <button style={{...S.exportBtn,textAlign:"center"}} onClick={async()=>{await copiarNumero();setShowDT(true);}}>
+                {copiado?"✓ Copiado — pégalo abajo":"Copiar N° y abrir DT"}
+              </button>
+              <div style={{fontSize:11,color:C.muted}}>Se abre el widget de seguimiento; pega el número en el campo "Ingrese su número de despacho".</div>
+            </>):(
+              <div style={{fontSize:12,color:C.warning}}>Falta configurar DT_WIDGET_URL con la URL del widget de tu cuenta DispatchTrack.</div>
+            )}
+          </>)}
+          {resultCard(<>
+            <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>📄 Documento escaneado</div>
+            {!driveConfigurado?(
+              <div style={{fontSize:12,color:C.warning}}>Falta configurar GOOGLE_DRIVE_FOLDER_ID / GOOGLE_DRIVE_API_KEY.</div>
+            ):drive?.loading?(
+              <div style={{fontSize:12,color:C.muted}}>Buscando en Drive...</div>
+            ):drive?.error==="api"?(
+              <div style={{fontSize:12,color:C.danger}}>Error de la API de Drive (revisa la clave o los permisos de la carpeta).</div>
+            ):drive?.error==="red"?(
+              <div style={{fontSize:12,color:C.danger}}>Error de conexión con Drive.</div>
+            ):drive?.archivos?.length===0?(
+              <div style={{fontSize:12,color:C.muted}}>No se encontró ningún PDF con ese número.</div>
+            ):drive?.archivos?.length>0?(
+              drive.archivos.map(f=>(
+                <a key={f.id} href={f.webViewLink} target="_blank" rel="noreferrer" style={{fontSize:12,color:C.cyan,textDecoration:"none",fontWeight:600}}>📄 {f.name} →</a>
+              ))
+            ):null}
+          </>)}
+        </div>
+      )}
+      {showDT&&(
+        <div style={{position:"fixed",inset:0,background:"#000000AA",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>setShowDT(false)}>
+          <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:14,padding:16,width:"100%",maxWidth:460,boxShadow:"0 12px 40px #000000AA"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontWeight:800,color:C.cyan,fontSize:13}}>🚚 Seguimiento DispatchTrack</div>
+              <button style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}} onClick={()=>setShowDT(false)}>✕</button>
+            </div>
+            <div style={{fontSize:12,color:C.textSecondary,marginBottom:8}}>N° copiado al portapapeles: <b style={{color:C.textPrimary}}>{q.trim()}</b> — pégalo (Ctrl+V) en el campo de abajo.</div>
+            <iframe
+              name="beetrack-widget"
+              id="beetrack-widget"
+              frameBorder="0"
+              width="100%"
+              height="310px"
+              src={DT_WIDGET_URL}
+              title="Widget DispatchTrack"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
@@ -1918,6 +2057,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         <div style={S.pageTitle}>Dashboard</div>
         {solicitudes.length>0&&!esCliente&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
       </div>
+      <BuscadorDocumento/>
       <div style={{...S.periodoBanner,borderColor:yaCerrado?C.muted:C.cyan}}>
         <div style={{flex:1}}>
           <div style={{fontSize:11,fontWeight:700,color:yaCerrado?C.muted:C.cyan,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>{yaCerrado?"✓ Período cerrado":"Período activo"}</div>
