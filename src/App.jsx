@@ -658,7 +658,7 @@ const COLS_LISTA = [
   "no_presentacion","vehiculo_np","motivo_np","geo_entrega","hora_entrega",
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
-  "observacion_chofer","observacion_autor","observacion_fecha",
+  "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo",
   "updated_at","created_at"
 ].join(",");
 
@@ -681,6 +681,8 @@ async function loadSolicitudes() {
       canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
       devolucionUrgente:s.devolucion_urgente||false,
       observacionChofer:s.observacion_chofer||"",
+      observacionCobro:s.observacion_cobro||"",
+      facturarEnPeriodo:s.facturar_en_periodo||"",
       observacionAutor:s.observacion_autor||"",
       observacionFecha:s.observacion_fecha||"",
       updatedAt:s.updated_at, createdAt:s.created_at,
@@ -732,6 +734,8 @@ async function saveSolicitud(s) {
       observacion_chofer:s.observacionChofer||null,
       observacion_autor:s.observacionAutor||null,
       observacion_fecha:s.observacionFecha||null,
+      observacion_cobro:s.observacionCobro||null,
+      facturar_en_periodo:s.facturarEnPeriodo||null,
       updated_at:new Date().toISOString(),
     };
     // Campos pesados (foto/firma/manifiesto): SOLO se incluyen en el guardado si
@@ -764,11 +768,11 @@ async function saveSolicitud(s) {
     if(!res.ok) {
       const e = await res.text();
       // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
-      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|devolucion_urgente/i.test(e)) {
+      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|devolucion_urgente/i.test(e)) {
         console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
         const fallback = {...row};
         delete fallback.fotos_manifiesto; delete fallback.fotos_entrega; delete fallback.observacion_chofer;
-        delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.devolucion_urgente;
+        delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.observacion_cobro; delete fallback.facturar_en_periodo; delete fallback.devolucion_urgente;
         res = await doUpsert(fallback);
       }
       if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2);
@@ -1209,7 +1213,8 @@ async function exportToExcel(solicitudes, nombreArchivo) {
       s.choferAsignado||"", tiempoEnPunto,
       s.noPresentacion?(s.vehiculoNP||""):"", s.noPresentacion?(s.motivoNP||""):"",
       s.noPresentacion?DESCUENTO_DIA:"",
-      s.observacionChofer?(s.observacionChofer+(s.observacionAutor?" ("+s.observacionAutor+(s.observacionFecha?", "+new Date(s.observacionFecha).toLocaleString("es-CL"):"")+")":"")):""];
+      s.observacionChofer?(s.observacionChofer+(s.observacionAutor?" ("+s.observacionAutor+(s.observacionFecha?", "+new Date(s.observacionFecha).toLocaleString("es-CL"):"")+")":"")):"",
+      s.observacionCobro||""];
   });
 
   const totalSpot=cobros.spotCount;
@@ -1224,13 +1229,13 @@ async function exportToExcel(solicitudes, nombreArchivo) {
   const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
-    "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP","Observación"];
+    "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP","Observación","Observación Facturación / Pre-Cierre"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
   ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:30},{wch:28},{wch:13},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
-    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45}];
+    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45},{wch:45}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
 
   const periodoNombre=nombreArchivo.replace("Quantrex_Abbott_","").replace(".xlsx","").replace("_"," ");
@@ -1344,7 +1349,9 @@ export default function QuantrexAbbott() {
   const inicioPeriodo = new Date(periodoBase.inicio+"T12:00:00");
   const finPeriodo = new Date(periodoBase.fin+"T12:00:00");
   const nombrePeriodo = periodoBase.nombre;
-  const solicitudesPeriodo=solicitudes.filter(s=>fechaEnPeriodo(s.fecha,inicioPeriodo,finPeriodo));
+  // Usa facturarEnPeriodo (si está definido) para decidir en qué período cuenta
+  // esta solicitud para el cobro — sin alterar su fecha real de servicio.
+  const solicitudesPeriodo=solicitudes.filter(s=>fechaEnPeriodo(s.facturarEnPeriodo||s.fecha,inicioPeriodo,finPeriodo));
   const yaCerrado=cierres.some(c=>c.nombre===nombrePeriodo);
 
   async function handleCerrarMes(){
@@ -2775,6 +2782,20 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
             placeholder="Motivo o situación de la entrega. Si la editas aquí, se registrará tu nombre y la fecha."/>
           {editForm.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Última edición: {editForm.observacionAutor}{editForm.observacionFecha?" · "+new Date(editForm.observacionFecha).toLocaleString("es-CL"):""}</div>}
         </div>
+        {esAdmin&&(
+          <div style={{...S.fGroup,gridColumn:"1/-1"}}>
+            <label style={{...S.label,color:C.warning}}>🧾 Observación Facturación / Pre-Cierre</label>
+            <textarea style={{...S.input,minHeight:50,resize:"vertical"}} value={editForm.observacionCobro||""} onChange={fe("observacionCobro")}
+              placeholder="Ej: Rechazos pre-cierre mes anterior con respaldos válidos"/>
+            <div style={{marginTop:8}}>
+              <label style={{...S.label,fontSize:11}}>Facturar en el período que incluya esta fecha (opcional)</label>
+              <input style={{...S.input,maxWidth:200}} type="date" value={editForm.facturarEnPeriodo||""} onChange={fe("facturarEnPeriodo")}/>
+              <div style={{fontSize:11,color:C.muted,marginTop:4}}>
+                Si la dejas vacía, cuenta en el período de su fecha real ({sol.fecha}). Si pones una fecha de este mes, la solicitud se suma al cobro del período actual sin cambiar su fecha de servicio.
+              </div>
+            </div>
+          </div>
+        )}
         {editForm.tipo==="li_devol"&&<div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
             <input type="checkbox" checked={editForm.devolucionUrgente||false} onChange={e=>setEditForm(p=>({...p,devolucionUrgente:e.target.checked}))}/>
@@ -2842,6 +2863,9 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
       {sol.documentos&&<div style={S.detailBlock}><div style={S.fieldLabel}>N° Guías / Documentos Cliente</div><div style={S.fieldValue}>{sol.documentos}</div></div>}
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
+      {sol.observacionCobro&&<div style={{...S.detailBlock,border:`1px solid ${C.warning}`,background:C.warning+"11"}}><div style={{...S.fieldLabel,color:C.warning}}>🧾 Observación Facturación / Pre-Cierre</div><div style={S.fieldValue}>{sol.observacionCobro}</div>
+        {sol.facturarEnPeriodo&&<div style={{fontSize:11.5,color:C.warning,marginTop:6,fontWeight:600}}>↻ Facturada en el período de {sol.facturarEnPeriodo} · fecha real de servicio: {sol.fecha}</div>}
+      </div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
       {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div>{sol.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Por {sol.observacionAutor}{sol.observacionFecha?" · "+new Date(sol.observacionFecha).toLocaleString("es-CL"):""}</div>}</div>}
       {(sol.firmaReceptor||sol.rechazoFirma)&&(
