@@ -574,13 +574,20 @@ function metricasPeriodo(sols){
   const arr = sols || [];
   const c = calcularCobros(arr);
   const np = arr.filter(s=>s.noPresentacion).length * DESC_NP_DIA;
-  const extras = c.montoSpot + c.montoOH;                 // Overnight + Extra SPOT
+  // SPOT Regional — recargo por destinos fuera de la RM (misma tabla usada en el Excel/GraficoCobros)
+  let montoSpotRegional=0, nSpotRegional=0;
+  arr.forEach(s=>{
+    const reg=detectarRegion(s.direccion||s.destino||"");
+    const v=reg?(reg.valor||0):0;
+    if(v>0){ montoSpotRegional+=v; nSpotRegional++; }
+  });
+  const extras = c.montoSpot + c.montoOH + montoSpotRegional;   // Overnight + Extra SPOT + SPOT Regional
   const facturacion = COBRO_M1_FIJO + COBRO_M2_FIJO + extras - np;
   const completadas = arr.filter(s=>s.status==="completada"||s.status==="devolucion").length;
   const noEnt = arr.filter(s=>s.status==="no_entregado").length;
   const baseEnt = completadas + noEnt;
   const cumplimiento = baseEnt>0 ? (completadas/baseEnt*100) : null;
-  return { facturacion, extras, montoSpot:c.montoSpot, montoOH:c.montoOH, spotCount:c.spotCount, ohCount:c.ohCount,
+  return { facturacion, extras, montoSpot:c.montoSpot, montoOH:c.montoOH, montoSpotRegional, nSpotRegional, spotCount:c.spotCount, ohCount:c.ohCount,
     total:arr.length, completadas, noEnt, cumplimiento };
 }
 function costosEnRango(gastos, di, df){
@@ -2068,7 +2075,7 @@ function ModalCostosDesglose({gastos,di,df,onClose}){
   );
 }
 
-// ── Evolución de facturación del año (base + extras, por mes calendario) ──
+// ── Evolución de facturación del año (barras = base, línea = extras) ──────
 function EvolucionAnual({solicitudes=[]}){
   const anioActual=new Date().getFullYear();
   const mesActual=new Date().getMonth();
@@ -2081,67 +2088,132 @@ function EvolucionAnual({solicitudes=[]}){
     const mp=metricasPeriodo(solsMes);
     data.push({mes:MESES[m], base:Math.max(0,mp.facturacion-mp.extras), extras:mp.extras, total:mp.facturacion, n:solsMes.length});
   }
-  const max=Math.max(1,...data.map(d=>d.total));
+  const n=data.length;
+  const maxBase=Math.max(1,...data.map(d=>d.base));
+  const maxExtras=Math.max(1,...data.map(d=>d.extras));
   const totalAnio=data.reduce((s,d)=>s+d.total,0);
+  const HBAR=150;
+  const pts=data.map((d,i)=>({ x:((i+0.5)/n)*100, y:HBAR-8-((d.extras/maxExtras)*(HBAR-40)), v:d.extras }));
+  const poly=pts.map(p=>`${p.x},${p.y}`).join(" ");
   return(
-    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:8}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Evolución de facturación · {anioActual}</div>
         <div style={{fontSize:10,color:C.muted}}>Acumulado: {fmtCLP(totalAnio)}</div>
       </div>
-      <div style={{display:"flex",alignItems:"flex-end",gap:8,height:170}}>
-        {data.map((d,i)=>{
-          const hBase=(d.base/max)*140;
-          const hExtras=(d.extras/max)*140;
-          return(
-            <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,minWidth:0}}>
-              <div style={{fontSize:9,color:C.textSecondary,whiteSpace:"nowrap"}}>{d.total>0?`$${Math.round(d.total/1000000*10)/10}M`:""}</div>
-              <div style={{position:"relative",width:"100%",height:140,display:"flex",flexDirection:"column-reverse"}} title={`${d.mes}: base ${fmtCLP(d.base)} + extras ${fmtCLP(d.extras)} = ${fmtCLP(d.total)} · ${d.n} solicitudes`}>
-                {d.extras>0&&<div style={{width:"100%",height:Math.max(2,hExtras),background:C.cyan,borderRadius:"4px 4px 0 0"}}/>}
-                <div style={{width:"100%",height:Math.max(d.base>0?2:0,hBase),background:C.blue,borderRadius:d.extras>0?"0 0 0 0":"4px 4px 0 0"}}/>
+      <div style={{position:"relative",height:HBAR}}>
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"flex-end",gap:8}}>
+          {data.map((d,i)=>{
+            const h=(d.base/maxBase)*(HBAR-24);
+            return(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",gap:4,minWidth:0,height:"100%"}}>
+                <div style={{fontSize:9,color:C.textSecondary,whiteSpace:"nowrap"}}>{d.base>0?`$${Math.round(d.base/1000000*10)/10}M`:""}</div>
+                <div style={{width:"100%",height:Math.max(2,h),background:C.blue,borderRadius:"4px 4px 0 0"}} title={`${d.mes}: base ${fmtCLP(d.base)} + extras ${fmtCLP(d.extras)} = ${fmtCLP(d.total)} · ${d.n} solicitudes`}/>
               </div>
-              <div style={{fontSize:9.5,color:C.muted}}>{d.mes}</div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+        <svg viewBox={`0 0 100 ${HBAR}`} preserveAspectRatio="none" style={{position:"absolute",inset:0,width:"100%",height:"100%",overflow:"visible",pointerEvents:"none"}}>
+          <polyline points={poly} fill="none" stroke={C.cyan} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+          {pts.map((p,i)=>(
+            <circle key={i} cx={p.x} cy={p.y} r="2.6" fill={C.navySurface} stroke={C.cyan} strokeWidth="1.8" vectorEffect="non-scaling-stroke"/>
+          ))}
+        </svg>
+        <div style={{position:"absolute",inset:0,display:"flex",pointerEvents:"none"}}>
+          {data.map((d,i)=>{
+            const yPx=HBAR-8-((d.extras/maxExtras)*(HBAR-40));
+            return (
+              <div key={i} style={{flex:1,position:"relative"}}>
+                {d.extras>0&&<div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",top:Math.max(0,yPx-16),fontSize:9,fontWeight:700,color:C.cyan,whiteSpace:"nowrap"}}>{fmtCLP(d.extras)}</div>}
+              </div>
+            );
+          })}
+        </div>
       </div>
-      <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,color:C.textSecondary}}>
+      <div style={{display:"flex",gap:8}}>
+        {data.map((d,i)=><div key={i} style={{flex:1,textAlign:"center",fontSize:9.5,color:C.muted}}>{d.mes}</div>)}
+      </div>
+      <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,color:C.textSecondary,marginTop:4}}>
         <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.blue}}/>Facturación base</span>
-        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.cyan}}/>Extras (SPOT + Overnight)</span>
+        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:2,background:C.cyan,borderRadius:2}}/>Extras (SPOT + Overnight + Regional)</span>
       </div>
     </div>
   );
 }
 
 // ── Km recorridos del año (mensual + récord diario + CO2) ─────────────────
-// Fuente: rutas cerradas con kmTotal (Gestión de Rutas). Se usa este dato ya
-// agregado -en vez del trazado GPS punto a punto- para que el gráfico cargue
-// al instante incluso con meses de historial de tracking.
-function ResumenKmAnual({rutas=[]}){
+// Fuente: tracking_puntos (GPS real). Cálculo bajo demanda (botón) porque un
+// año de puntos GPS es demasiado dato para traer automáticamente en cada carga
+// del Dashboard. Se pagina la consulta y se limita a un máximo de puntos para
+// que la página no se cuelgue con historiales muy grandes.
+async function fetchTrackingAnio(anio){
+  const desde=`${anio}-01-01T00:00:00`;
+  const hasta=new Date().toISOString();
+  let all=[]; let offset=0; const PAGE=1000; const MAX_PAGES=40;
+  for(let page=0; page<MAX_PAGES; page++){
+    const url=`${SUPABASE_URL}/rest/v1/tracking_puntos?select=lat,lng,timestamp_captura,vehiculo_id&timestamp_captura=gte.${desde}&timestamp_captura=lte.${hasta}&order=vehiculo_id.asc,timestamp_captura.asc&limit=${PAGE}&offset=${offset}`;
+    let res;
+    try{
+      res=await fetch(url,{ headers:{ apikey:SUPABASE_KEY, Authorization:`Bearer ${SUPABASE_KEY}` } });
+    }catch{ break; }
+    if(!res.ok) break;
+    const data=await res.json();
+    all=all.concat(data);
+    if(!data.length || data.length<PAGE) break;
+    offset+=PAGE;
+  }
+  return {puntos:all, truncado: all.length>=PAGE*MAX_PAGES};
+}
+function ResumenKmAnual(){
   const anioActual=new Date().getFullYear();
-  const mesActual=new Date().getMonth();
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const FACTOR_CO2=0.25; // kg CO2/km, furgón diésel liviano (estimado)
+  const [data,setData]=useState(null); // {porMes, record, totalKm, truncado}
+  const [calculando,setCalculando]=useState(false);
 
-  const porDia={};
-  (rutas||[]).forEach(r=>{
-    if(!r.fecha||!r.kmTotal||!r.fecha.startsWith(String(anioActual)))return;
-    porDia[r.fecha]=(porDia[r.fecha]||0)+parseFloat(r.kmTotal);
-  });
-  const diasArr=Object.entries(porDia);
-  const porMes=Array(12).fill(0);
-  diasArr.forEach(([fecha,km])=>{ porMes[parseInt(fecha.slice(5,7),10)-1]+=km; });
-  const data=porMes.slice(0,mesActual+1).map((km,i)=>({mes:MESES[i],km}));
-  const max=Math.max(1,...data.map(d=>d.km));
-  let record=null;
-  diasArr.forEach(([fecha,km])=>{ if(!record||km>record.km) record={fecha,km}; });
-  const totalKmAnio=diasArr.reduce((s,[,km])=>s+km,0);
+  async function calcular(){
+    setCalculando(true);
+    const {puntos,truncado}=await fetchTrackingAnio(anioActual);
+    const porDia={};
+    let prev=null;
+    for(const p of puntos){
+      if(prev && prev.vehiculo_id===p.vehiculo_id && p.lat!=null && p.lng!=null && prev.lat!=null){
+        const dia=(p.timestamp_captura||"").slice(0,10);
+        const d=distanciaMetros(prev.lat,prev.lng,p.lat,p.lng)/1000;
+        if(d<50) porDia[dia]=(porDia[dia]||0)+d; // ignora saltos GPS absurdos entre puntos
+      }
+      prev=p;
+    }
+    const diasArr=Object.entries(porDia);
+    const porMes=Array(12).fill(0);
+    diasArr.forEach(([fecha,km])=>{ const mIdx=parseInt(fecha.slice(5,7),10)-1; if(mIdx>=0&&mIdx<12) porMes[mIdx]+=km; });
+    let record=null;
+    diasArr.forEach(([fecha,km])=>{ if(!record||km>record.km) record={fecha,km}; });
+    const totalKm=diasArr.reduce((s,[,km])=>s+km,0);
+    setData({porMes, record, totalKm, truncado, nPuntos:puntos.length});
+    setCalculando(false);
+  }
 
-  if(diasArr.length===0){
+  if(!data){
+    return(
+      <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Kilómetros recorridos · {anioActual}</div>
+        <div style={{fontSize:12,color:C.muted}}>Calcula el recorrido del año a partir del GPS de la flota (trazabilidad). Puede tardar unos segundos.</div>
+        <button style={{...S.exportBtn,alignSelf:"flex-start"}} disabled={calculando} onClick={calcular}>{calculando?"Calculando...":"📊 Calcular año"}</button>
+      </div>
+    );
+  }
+
+  const mesActual=new Date().getMonth();
+  const serie=data.porMes.slice(0,mesActual+1).map((km,i)=>({mes:MESES[i],km}));
+  const max=Math.max(1,...serie.map(d=>d.km));
+
+  if(data.totalKm===0){
     return(
       <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:8}}>
         <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Kilómetros recorridos · {anioActual}</div>
-        <div style={{fontSize:12,color:C.muted}}>Aún no hay rutas cerradas con km registrado este año.</div>
+        <div style={{fontSize:12,color:C.muted}}>No se encontraron puntos GPS con recorrido este año ({data.nPuntos} punto(s) revisado(s)). Verifica que la app esté capturando trazabilidad en los vehículos.</div>
+        <button style={{...S.linkBtn}} onClick={()=>setData(null)}>← Recalcular</button>
       </div>
     );
   }
@@ -2150,15 +2222,15 @@ function ResumenKmAnual({rutas=[]}){
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Kilómetros recorridos · {anioActual}</div>
-        <div style={{fontSize:10,color:C.muted}}>{Math.round(totalKmAnio)} km · {(totalKmAnio*FACTOR_CO2).toFixed(0)} kg CO₂ est.</div>
+        <div style={{fontSize:10,color:C.muted}}>{Math.round(data.totalKm)} km · {(data.totalKm*FACTOR_CO2).toFixed(0)} kg CO₂ est.</div>
       </div>
-      {record&&(
+      {data.record&&(
         <div style={{background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.cyan,fontWeight:700}}>
-          🏆 Récord del día: {record.km.toFixed(1)} km el {new Date(record.fecha+"T00:00:00").toLocaleDateString("es-CL",{day:"numeric",month:"long"})} · {(record.km*FACTOR_CO2).toFixed(1)} kg CO₂
+          🏆 Récord del día: {data.record.km.toFixed(1)} km el {new Date(data.record.fecha+"T00:00:00").toLocaleDateString("es-CL",{day:"numeric",month:"long"})} · {(data.record.km*FACTOR_CO2).toFixed(1)} kg CO₂
         </div>
       )}
       <div style={{display:"flex",alignItems:"flex-end",gap:8,height:120}}>
-        {data.map((d,i)=>{
+        {serie.map((d,i)=>{
           const h=(d.km/max)*95;
           return(
             <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,minWidth:0}}>
@@ -2169,7 +2241,10 @@ function ResumenKmAnual({rutas=[]}){
           );
         })}
       </div>
-      <div style={{fontSize:10.5,color:C.muted,fontStyle:"italic"}}>Basado en rutas cerradas con km registrado · CO₂ ≈ km × 0,25 kg/km (estimado)</div>
+      <div style={{fontSize:10.5,color:C.muted,fontStyle:"italic"}}>
+        Basado en {data.nPuntos.toLocaleString("es-CL")} puntos GPS reales{data.truncado?" (muestra parcial — historial muy extenso, se limitó la consulta)":""} · CO₂ ≈ km × 0,25 kg/km (estimado)
+      </div>
+      <button style={{...S.linkBtn,alignSelf:"flex-start"}} onClick={()=>setData(null)}>← Recalcular</button>
     </div>
   );
 }
@@ -2426,7 +2501,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           <ResumenKmDia solicitudes={solicitudes} rutas={rutas} compact/>
           <ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas} compact/>
         </div>
-        <ResumenKmAnual rutas={rutas}/>
+        <ResumenKmAnual/>
 
         <button style={{...S.linkBtn,alignSelf:"flex-start"}} onClick={()=>setShowMetasTendencia(v=>!v)}>
           {showMetasTendencia?"Ocultar metas y tendencia histórica ▲":"Ver metas y tendencia histórica ▼"}
@@ -5044,16 +5119,40 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
     };
     reader.readAsDataURL(file);
   }
-  function agregarFoto(){
+  function agregarArchivo(){
     const input=document.createElement("input");
-    input.type="file"; input.accept="image/*"; input.capture="environment";
+    input.type="file"; input.multiple=true;
+    input.accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     input.onchange=e=>{
-      const file=e.target.files[0];
-      if(!file)return;
+      const files=Array.from(e.target.files||[]);
+      if(!files.length)return;
       setSubiendo(true);
-      comprimirImagen(file, b64=>{ setForm(p=>({...p,fotos:[...(p.fotos||[]),b64].slice(0,6)})); setSubiendo(false); });
+      let pendientes=files.length;
+      const listo=()=>{ pendientes--; if(pendientes<=0) setSubiendo(false); };
+      files.forEach(file=>{
+        if(file.type.startsWith("image/")){
+          comprimirImagen(file, b64=>{ setForm(p=>({...p,fotos:[...(p.fotos||[]),{name:file.name,type:"image",data:b64}].slice(0,10)})); listo(); });
+        }else{
+          const reader=new FileReader();
+          reader.onload=ev=>{ setForm(p=>({...p,fotos:[...(p.fotos||[]),{name:file.name,type:file.type||"file",data:ev.target.result}].slice(0,10)})); listo(); };
+          reader.onerror=listo;
+          reader.readAsDataURL(file);
+        }
+      });
     };
     input.click();
+  }
+  // Un ítem de evidencia puede venir en formato antiguo (string base64 = foto)
+  // o nuevo ({name,type,data}) que admite cualquier tipo de archivo.
+  function esImagen(ev){ return typeof ev==="string" || (ev&&ev.type==="image"); }
+  function evData(ev){ return typeof ev==="string" ? ev : ev?.data; }
+  function evNombre(ev,i){ return typeof ev==="string" ? `Evidencia ${i+1}` : (ev?.name||`Archivo ${i+1}`); }
+  function evIcono(ev){
+    const n=(typeof ev==="object"&&ev?.name||"").toLowerCase();
+    if(n.endsWith(".pdf"))return "📕";
+    if(n.endsWith(".doc")||n.endsWith(".docx"))return "📘";
+    if(n.endsWith(".xls")||n.endsWith(".xlsx"))return "📗";
+    return "📎";
   }
 
   const lista=incidencias
@@ -5130,15 +5229,20 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
             )}
           </div>
           <div>
-            <label style={S.label}>Evidencia fotográfica</label>
+            <label style={S.label}>Evidencia (fotos, PDF, Word, Excel, capturas)</label>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
-              {(form.fotos||[]).map((b,i)=>(
+              {(form.fotos||[]).map((ev,i)=>(
                 <div key={i} style={{position:"relative"}}>
-                  <img src={b} alt={"Evidencia "+(i+1)} style={{width:80,height:80,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>
+                  {esImagen(ev)
+                    ?<img src={evData(ev)} alt={evNombre(ev,i)} style={{width:80,height:80,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>
+                    :<div style={{width:80,height:80,borderRadius:8,border:"1px solid "+C.border,background:C.navy,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,padding:4}}>
+                        <div style={{fontSize:22}}>{evIcono(ev)}</div>
+                        <div style={{fontSize:8,color:C.muted,textAlign:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:72}}>{evNombre(ev,i)}</div>
+                      </div>}
                   <button style={{position:"absolute",top:-6,right:-6,background:C.danger,border:"none",color:"#fff",borderRadius:"50%",width:20,height:20,fontSize:11,cursor:"pointer",lineHeight:1}} onClick={()=>setForm(p=>({...p,fotos:p.fotos.filter((_,j)=>j!==i)}))}>✕</button>
                 </div>
               ))}
-              {(form.fotos||[]).length<6&&<button style={{...S.exportBtn,width:80,height:80,fontSize:11}} disabled={subiendo} onClick={agregarFoto}>{subiendo?"...":"📷 Agregar"}</button>}
+              {(form.fotos||[]).length<10&&<button style={{...S.exportBtn,width:80,height:80,fontSize:11}} disabled={subiendo} onClick={agregarArchivo}>{subiendo?"...":"📎 Agregar"}</button>}
             </div>
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
@@ -5184,9 +5288,14 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
                 </div>
                 {(i.fotos||[]).length>0&&(
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                    {i.fotos.map((b,idx)=>(
-                      <a key={idx} href={b} download={i.folio+"_evidencia_"+(idx+1)+".jpg"} target="_blank" rel="noreferrer">
-                        <img src={b} alt={"Evidencia "+(idx+1)} style={{width:88,height:88,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>
+                    {i.fotos.map((ev,idx)=>(
+                      <a key={idx} href={esImagen(ev)?ev:ev?.data} download={evNombre(ev,idx)} target="_blank" rel="noreferrer" title={evNombre(ev,idx)}>
+                        {esImagen(ev)
+                          ?<img src={typeof ev==="string"?ev:ev.data} alt={evNombre(ev,idx)} style={{width:88,height:88,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>
+                          :<div style={{width:88,height:88,borderRadius:8,border:"1px solid "+C.border,background:C.navy,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,padding:4}}>
+                              <div style={{fontSize:24}}>{evIcono(ev)}</div>
+                              <div style={{fontSize:9,color:C.muted,textAlign:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:80}}>{evNombre(ev,idx)}</div>
+                            </div>}
                       </a>
                     ))}
                   </div>
@@ -5770,6 +5879,7 @@ const TIPO_INCIDENCIA = {
   humedad_hongos:     { label:"Humedad / hongos en instalación",icon:"💧", color:"#8B5CF6" },
   documentacion:      { label:"Documentación / manifiesto",    icon:"📄", color:"#38BDF8" },
   retraso_capacidad:  { label:"Retraso / capacidad excedida",  icon:"⏱", color:"#F97316" },
+  precierre_facturacion: { label:"Pre-Cierre / Facturación",   icon:"🧾", color:"#22C55E" },
   cumplimiento_flota: { label:"Cumplimiento de flota",         icon:"🔧", color:"#00AEEF" },
   otro:               { label:"Otro",                          icon:"•",  color:"#8BAFD4" },
 };
