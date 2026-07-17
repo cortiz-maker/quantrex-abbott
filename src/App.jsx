@@ -987,6 +987,51 @@ async function deleteRecordatorio(id) {
     return res.ok;
   } catch(e) { console.error("deleteRecordatorio:",e); return false; }
 }
+// ── Incidencias (no conformidades NT147 / cumplimiento de flota) ──────────
+async function loadIncidencias() {
+  try {
+    const data = await sbFetch("GET","incidencias","","?order=fecha.desc");
+    if(!data) return [];
+    return data.map(i=>({
+      id:i.id, folio:i.folio||"", fecha:i.fecha||"", tipo:i.tipo||"otro",
+      contraparte:i.contraparte||"", ubicacion:i.ubicacion||"", descripcion:i.descripcion||"",
+      fotos:i.fotos||[], notificado:!!i.notificado, fechaNotificacion:i.fecha_notificacion||"",
+      estado:i.estado||"abierta", autor:i.autor||"", origen:i.origen||"manual",
+      createdAt:i.created_at||"", updatedAt:i.updated_at||"",
+    }));
+  } catch(e) { return []; }
+}
+async function saveIncidencia(i) {
+  try {
+    const payload = {
+      id:i.id, folio:i.folio||null, fecha:i.fecha||null, tipo:i.tipo||"otro",
+      contraparte:i.contraparte||null, ubicacion:i.ubicacion||null, descripcion:i.descripcion||null,
+      fotos:i.fotos||[], notificado:!!i.notificado, fecha_notificacion:i.fechaNotificacion||null,
+      estado:i.estado||"abierta", autor:i.autor||null, origen:i.origen||"manual",
+      updated_at:new Date().toISOString(),
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/incidencias?on_conflict=id`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`,
+        "Prefer":"resolution=merge-duplicates,return=minimal",
+      },
+      body:JSON.stringify([payload]),
+    });
+    return res.ok;
+  } catch(e) { console.error("saveIncidencia:",e); return false; }
+}
+async function deleteIncidencia(id) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/incidencias?id=eq.${encodeURIComponent(id)}`, {
+      method:"DELETE",
+      headers:{ "apikey":SUPABASE_KEY, "Authorization":`Bearer ${SUPABASE_KEY}` },
+    });
+    return res.ok;
+  } catch(e) { console.error("deleteIncidencia:",e); return false; }
+}
 // ── Metas por período (facturación, tope de costos) ────────────────────────
 async function loadMetas() {
   try {
@@ -1261,6 +1306,8 @@ export default function QuantrexAbbott() {
   const [vehiculos,setVehiculos]=useState(VEHICULOS_DEFAULT);
   const [gastos,setGastos]=useState([]);
   const [recordatorios,setRecordatorios]=useState([]);
+  const [incidencias,setIncidencias]=useState([]);
+  const [alertasOpen,setAlertasOpen]=useState(false);
   const [metas,setMetas]=useState([]);
   const [sesion,setSesion]=useState(()=>{
     try{const s=localStorage.getItem("qx:sesion");if(s){const p=JSON.parse(s);if(p&&p.perfil)return p;}return null;}catch{return null;}
@@ -1274,7 +1321,7 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios(),loadMetas()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re,me])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);setRecordatorios(re||[]);setMetas(me||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios(),loadMetas(),loadIncidencias()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re,me,inc])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);setRecordatorios(re||[]);setMetas(me||[]);setIncidencias(inc||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -1498,6 +1545,46 @@ export default function QuantrexAbbott() {
     if(!ok){ setRecordatorios(prev); showToast("No se pudo eliminar el recordatorio.","danger"); return; }
     showToast("Recordatorio eliminado.","danger");
   }
+  async function handleSaveIncidencia(i){
+    const existe=incidencias.some(x=>x.id===i.id);
+    const upd=existe?incidencias.map(x=>x.id===i.id?i:x):[i,...incidencias];
+    setIncidencias(upd);
+    const ok=await saveIncidencia(i);
+    if(!ok){ setIncidencias(incidencias); showToast("No se pudo guardar la incidencia.","danger"); return false; }
+    showToast(existe?"Incidencia actualizada.":"Incidencia registrada.");
+    return true;
+  }
+  async function handleDeleteIncidencia(id){
+    const prev=incidencias;
+    setIncidencias(incidencias.filter(x=>x.id!==id));
+    const ok=await deleteIncidencia(id);
+    if(!ok){ setIncidencias(prev); showToast("No se pudo eliminar la incidencia.","danger"); return; }
+    showToast("Incidencia eliminada.","danger");
+  }
+  // Genera un ticket de cumplimiento a partir de una alerta (vencimiento automático
+  // o recordatorio manual) y hace que esa alerta desaparezca del listado.
+  async function handleGenerarTicket(alerta){
+    const folio=generarFolioIncidencia(incidencias);
+    const nueva={
+      id:"inc_"+Date.now().toString(), folio, fecha:new Date().toISOString().slice(0,10),
+      tipo:"cumplimiento_flota", contraparte:"Interno · Flota",
+      ubicacion:alerta.ppu||"", descripcion:`Ticket generado desde alerta: ${alerta.titulo}${alerta.ppu?" · "+alerta.ppu:""} (vencía ${alerta.fecha}).`,
+      fotos:[], notificado:false, fechaNotificacion:"", estado:"abierta",
+      autor:sesion?.nombre||sesion?.email||"Administrador", origen:"alerta",
+    };
+    const ok=await handleSaveIncidencia(nueva);
+    if(!ok) return;
+    // Descarta la alerta: si es manual, se marca "hecho"; si es automática
+    // (vencimiento de bitácora), se registra un recordatorio "sombra" con el
+    // mismo id para que deje de calcularse como pendiente.
+    await handleSaveRecordatorio({
+      id:alerta.kind==="venc"?alerta.id:alerta.raw.id,
+      titulo:alerta.titulo, fecha:alerta.fecha, tipo:alerta.tipo||"otro",
+      ppu:alerta.ppu||"", notas:`Ticket ${folio} generado el ${new Date().toLocaleDateString("es-CL")}.`,
+      hecho:true,
+    });
+    showToast(`Ticket ${folio} generado — la alerta se marcó como resuelta.`);
+  }
 
   async function handleSaveMeta(periodo,kpi,valor){
     const id=periodo+"|"+kpi;
@@ -1554,16 +1641,40 @@ export default function QuantrexAbbott() {
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
         </div>
         <nav style={S.nav}>
-          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"],["trazabilidad","Trazabilidad"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
+          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"],["trazabilidad","Trazabilidad"],["incidencias","Incidencias"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
               onClick={()=>setView(v)}>{l}</button>
           ))}
           <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {sesion?.perfil==="admin"&&(()=>{
+              const {total,vencidos}=calcularAlertas(gastos,recordatorios);
+              return (
+                <button title="Alertas y recordatorios" style={{position:"relative",background:"transparent",border:"none",color:vencidos>0?C.danger:C.cyan,fontSize:18,cursor:"pointer",padding:"4px 8px"}} onClick={()=>setAlertasOpen(true)}>
+                  🔔
+                  {total>0&&<span style={{position:"absolute",top:0,right:0,background:vencidos>0?C.danger:C.cyan,color:"#fff",fontSize:9,fontWeight:800,borderRadius:10,padding:"1px 5px",minWidth:14,textAlign:"center"}}>{total}</span>}
+                </button>
+              );
+            })()}
             <span style={{fontSize:11,color:C.muted}}>{sesion?.nombre}</span>
             <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{localStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
           </div>
         </nav>
       </header>}
+      {alertasOpen&&(
+        <div style={{position:"fixed",inset:0,background:"#0007",zIndex:299}} onClick={()=>setAlertasOpen(false)}/>
+      )}
+      {alertasOpen&&(
+        <div style={{position:"fixed",top:0,right:0,bottom:0,width:"min(440px,100vw)",background:C.navy,borderLeft:"1px solid "+C.border,zIndex:300,display:"flex",flexDirection:"column",boxShadow:"-4px 0 20px #0006"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 18px",borderBottom:"1px solid "+C.border}}>
+            <div style={{fontSize:14,fontWeight:800,color:C.cyan}}>🔔 Alertas y recordatorios</div>
+            <button style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}} onClick={()=>setAlertasOpen(false)}>✕</button>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:16}}>
+            <AlertasRecordatorios gastos={gastos} vehiculos={vehiculos} recordatorios={recordatorios}
+              onSave={handleSaveRecordatorio} onDelete={handleDeleteRecordatorio} onGenerarTicket={handleGenerarTicket} setView={(v)=>{setView(v);setAlertasOpen(false);}}/>
+          </div>
+        </div>
+      )}
       {sesion?.perfil==="admin"&&sidebarOpen&&(
         <div style={{position:"fixed",top:0,left:0,bottom:0,width:260,background:C.navySurface,borderRight:"1px solid "+C.border,zIndex:200,display:"flex",flexDirection:"column",boxShadow:"4px 0 20px #0006"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:"1px solid "+C.border}}>
@@ -1613,6 +1724,7 @@ export default function QuantrexAbbott() {
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion} vehiculos={vehiculos} choferes={choferes}/>)
         :view==="trazabilidad"?(<VistaTrazabilidad vehiculos={vehiculos} choferes={choferes}/>)
+        :view==="incidencias"?(<Incidencias incidencias={incidencias} onSave={handleSaveIncidencia} onDelete={handleDeleteIncidencia} sesion={sesion} vehiculos={vehiculos} clientes={clientes}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
             onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
         :view==="cierre_detalle"&&cierreDetalle?(<CierreDetalle cierre={cierreDetalle} setView={setView}
@@ -1787,10 +1899,13 @@ function sparkPoints(vals,w,h){
   const min=Math.min(...vals), max=Math.max(...vals); const rng=(max-min)||1;
   return vals.map((v,i)=>{ const x=(i/(vals.length-1))*w; const y=h-((v-min)/rng)*(h-3)-1.5; return `${x.toFixed(1)},${y.toFixed(1)}`; }).join(" ");
 }
-function KpiEjecutivo({label,valor,delta,deltaColor,sub,subColor,spark,color}){
+function KpiEjecutivo({label,valor,delta,deltaColor,sub,subColor,spark,color,onClick}){
   return(
-    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px",display:"flex",flexDirection:"column",gap:8}}>
-      <div style={{fontSize:12,color:C.textSecondary,fontWeight:600}}>{label}</div>
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px",display:"flex",flexDirection:"column",gap:8,cursor:onClick?"pointer":"default"}} onClick={onClick}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+        <div style={{fontSize:12,color:C.textSecondary,fontWeight:600}}>{label}</div>
+        {onClick&&<span style={{fontSize:10,color:C.muted}}>desglose →</span>}
+      </div>
       <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
         <span style={{fontSize:23,fontWeight:900,color:C.textPrimary,letterSpacing:-.5}}>{valor}</span>
         {delta!=null&&<span style={{fontSize:12,fontWeight:700,color:deltaColor||(delta>=0?C.success:C.danger)}}>{delta>=0?"▲":"▼"} {Math.abs(Math.round(delta))}%</span>}
@@ -1902,6 +2017,159 @@ function MetasEditor({periodo,metasMap,onSaveMeta,recordExtras,recordPeriodo,esR
           }}>Guardar metas</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Popup de desglose de costos de flota ───────────────────────────────────
+function ModalCostosDesglose({gastos,di,df,onClose}){
+  const enRango=(gastos||[]).filter(g=>{const f=g.fecha||"";return f>=di&&f<=df;});
+  const porCat={};
+  enRango.forEach(g=>{ const cat=g.categoria||"otro"; porCat[cat]=(porCat[cat]||0)+(Number(g.monto)||0); });
+  const total=Object.values(porCat).reduce((a,b)=>a+b,0);
+  const filas=Object.entries(porCat).sort((a,b)=>b[1]-a[1]);
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000000AA",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:18,width:"100%",maxWidth:420,boxShadow:"0 12px 40px #000000AA",maxHeight:"80vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div style={{fontWeight:800,color:C.warning,fontSize:14}}>🚚 Desglose de costos de flota</div>
+          <button style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}} onClick={onClose}>✕</button>
+        </div>
+        {filas.length===0?(
+          <div style={{fontSize:12,color:C.muted}}>Sin gastos registrados en este período.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {filas.map(([cat,monto])=>{
+              const m=metaCategoria(cat);
+              const pct=total>0?Math.round(monto/total*100):0;
+              return(
+                <div key={cat} style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{fontSize:16,width:22,textAlign:"center"}}>{m.icon}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12.5,color:C.textPrimary,fontWeight:600}}>{m.label}</div>
+                    <div style={{height:5,background:C.navy,borderRadius:3,marginTop:3,overflow:"hidden"}}>
+                      <div style={{width:pct+"%",height:"100%",background:m.color}}/>
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:12.5,fontWeight:800,color:C.textPrimary}}>{fmtCLP(monto)}</div>
+                    <div style={{fontSize:10,color:C.muted}}>{pct}%</div>
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{borderTop:"1px solid "+C.border,marginTop:6,paddingTop:8,display:"flex",justifyContent:"space-between",fontSize:13,fontWeight:800}}>
+              <span style={{color:C.textSecondary}}>Total</span><span style={{color:C.warning}}>{fmtCLP(total)}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Evolución de facturación del año (base + extras, por mes calendario) ──
+function EvolucionAnual({solicitudes=[]}){
+  const anioActual=new Date().getFullYear();
+  const mesActual=new Date().getMonth();
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const data=[];
+  for(let m=0;m<=mesActual;m++){
+    const desde=`${anioActual}-${String(m+1).padStart(2,"0")}-01`;
+    const hasta=new Date(anioActual,m+1,0).toISOString().slice(0,10);
+    const solsMes=solicitudes.filter(s=>s.fecha>=desde&&s.fecha<=hasta&&s.status!=="cancelada");
+    const mp=metricasPeriodo(solsMes);
+    data.push({mes:MESES[m], base:Math.max(0,mp.facturacion-mp.extras), extras:mp.extras, total:mp.facturacion, n:solsMes.length});
+  }
+  const max=Math.max(1,...data.map(d=>d.total));
+  const totalAnio=data.reduce((s,d)=>s+d.total,0);
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Evolución de facturación · {anioActual}</div>
+        <div style={{fontSize:10,color:C.muted}}>Acumulado: {fmtCLP(totalAnio)}</div>
+      </div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:8,height:170}}>
+        {data.map((d,i)=>{
+          const hBase=(d.base/max)*140;
+          const hExtras=(d.extras/max)*140;
+          return(
+            <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,minWidth:0}}>
+              <div style={{fontSize:9,color:C.textSecondary,whiteSpace:"nowrap"}}>{d.total>0?`$${Math.round(d.total/1000000*10)/10}M`:""}</div>
+              <div style={{position:"relative",width:"100%",height:140,display:"flex",flexDirection:"column-reverse"}} title={`${d.mes}: base ${fmtCLP(d.base)} + extras ${fmtCLP(d.extras)} = ${fmtCLP(d.total)} · ${d.n} solicitudes`}>
+                {d.extras>0&&<div style={{width:"100%",height:Math.max(2,hExtras),background:C.cyan,borderRadius:"4px 4px 0 0"}}/>}
+                <div style={{width:"100%",height:Math.max(d.base>0?2:0,hBase),background:C.blue,borderRadius:d.extras>0?"0 0 0 0":"4px 4px 0 0"}}/>
+              </div>
+              <div style={{fontSize:9.5,color:C.muted}}>{d.mes}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:11,color:C.textSecondary}}>
+        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.blue}}/>Facturación base</span>
+        <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:C.cyan}}/>Extras (SPOT + Overnight)</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Km recorridos del año (mensual + récord diario + CO2) ─────────────────
+// Fuente: rutas cerradas con kmTotal (Gestión de Rutas). Se usa este dato ya
+// agregado -en vez del trazado GPS punto a punto- para que el gráfico cargue
+// al instante incluso con meses de historial de tracking.
+function ResumenKmAnual({rutas=[]}){
+  const anioActual=new Date().getFullYear();
+  const mesActual=new Date().getMonth();
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const FACTOR_CO2=0.25; // kg CO2/km, furgón diésel liviano (estimado)
+
+  const porDia={};
+  (rutas||[]).forEach(r=>{
+    if(!r.fecha||!r.kmTotal||!r.fecha.startsWith(String(anioActual)))return;
+    porDia[r.fecha]=(porDia[r.fecha]||0)+parseFloat(r.kmTotal);
+  });
+  const diasArr=Object.entries(porDia);
+  const porMes=Array(12).fill(0);
+  diasArr.forEach(([fecha,km])=>{ porMes[parseInt(fecha.slice(5,7),10)-1]+=km; });
+  const data=porMes.slice(0,mesActual+1).map((km,i)=>({mes:MESES[i],km}));
+  const max=Math.max(1,...data.map(d=>d.km));
+  let record=null;
+  diasArr.forEach(([fecha,km])=>{ if(!record||km>record.km) record={fecha,km}; });
+  const totalKmAnio=diasArr.reduce((s,[,km])=>s+km,0);
+
+  if(diasArr.length===0){
+    return(
+      <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Kilómetros recorridos · {anioActual}</div>
+        <div style={{fontSize:12,color:C.muted}}>Aún no hay rutas cerradas con km registrado este año.</div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Kilómetros recorridos · {anioActual}</div>
+        <div style={{fontSize:10,color:C.muted}}>{Math.round(totalKmAnio)} km · {(totalKmAnio*FACTOR_CO2).toFixed(0)} kg CO₂ est.</div>
+      </div>
+      {record&&(
+        <div style={{background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.cyan,fontWeight:700}}>
+          🏆 Récord del día: {record.km.toFixed(1)} km el {new Date(record.fecha+"T00:00:00").toLocaleDateString("es-CL",{day:"numeric",month:"long"})} · {(record.km*FACTOR_CO2).toFixed(1)} kg CO₂
+        </div>
+      )}
+      <div style={{display:"flex",alignItems:"flex-end",gap:8,height:120}}>
+        {data.map((d,i)=>{
+          const h=(d.km/max)*95;
+          return(
+            <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,minWidth:0}}>
+              <div style={{fontSize:9,color:C.textSecondary}}>{d.km>0?Math.round(d.km):""}</div>
+              <div style={{width:"100%",height:Math.max(2,h),background:C.warning,borderRadius:"4px 4px 0 0"}} title={`${d.mes}: ${d.km.toFixed(1)} km · ${(d.km*FACTOR_CO2).toFixed(0)} kg CO₂`}/>
+              <div style={{fontSize:9.5,color:C.muted}}>{d.mes}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{fontSize:10.5,color:C.muted,fontStyle:"italic"}}>Basado en rutas cerradas con km registrado · CO₂ ≈ km × 0,25 kg/km (estimado)</div>
     </div>
   );
 }
@@ -2022,6 +2290,8 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
+  const [showCostosDesglose,setShowCostosDesglose]=useState(false);
+  const [showMetasTendencia,setShowMetasTendencia]=useState(false);
 
   // ── Cálculo ejecutivo: serie de períodos (cierres + período actual) ──
   const metasMap={};
@@ -2093,42 +2363,8 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           </div>
         </div>
       )}
-      {esAdmin&&<AlertasRecordatorios gastos={gastos} vehiculos={vehiculos} recordatorios={recordatorios} onSave={onSaveRecordatorio} onDelete={onDeleteRecordatorio} setView={setView}/>}
 
-      {esAdmin&&(<>
-        <div style={S.sectionTitle}>Resumen ejecutivo · {nombrePeriodo}</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
-          <KpiEjecutivo label="Facturación del período" valor={fmtCLP(mpActual.facturacion)}
-            delta={mom("facturacion")} spark={serieView.map(p=>p.facturacion)} color={C.cyan}
-            sub={metaFact>0?`${Math.round(mpActual.facturacion/metaFact*100)}% de la meta`:"sin meta definida"}
-            subColor={metaFact>0?(mpActual.facturacion>=metaFact?C.success:C.warning):C.muted}/>
-          <KpiEjecutivo label="Costos de flota" valor={fmtCLP(costosActual)}
-            delta={mom("costos")} deltaColor={mom("costos")==null?undefined:(mom("costos")>0?C.danger:C.success)}
-            spark={serieView.map(p=>p.costos)} color={C.warning}
-            sub={topeCostos>0?`${costosActual<=topeCostos?"bajo el tope":"sobre el tope"} (${Math.round(costosActual/topeCostos*100)}%)`:"sin tope definido"}
-            subColor={topeCostos>0?(costosActual<=topeCostos?C.success:C.danger):C.muted}/>
-          <KpiEjecutivo label="Extras · Overnight + SPOT" valor={fmtCLP(mpActual.extras)}
-            delta={mom("extras")} spark={serieView.map(p=>p.extras)} color={C.info}
-            sub={esRecordActual?"🏆 nuevo récord":`récord: ${fmtCLP(recordExtras)} · ${Math.round((recordExtras?mpActual.extras/recordExtras:1)*100)}%`}
-            subColor={esRecordActual?C.success:C.muted}/>
-        </div>
-
-        <MetasEditor periodo={nombrePeriodo} metasMap={metasMap} onSaveMeta={onSaveMeta}
-          recordExtras={recordExtras} recordPeriodo={recordPeriodo} esRecordActual={esRecordActual}/>
-
-        <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
-          <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Cumplimiento de metas</div>
-          {metaFact>0
-            ? <BulletMeta label="Facturación" actual={mpActual.facturacion} meta={metaFact}/>
-            : <div style={{fontSize:12,color:C.muted}}>Define la meta de facturación para ver su cumplimiento.</div>}
-          <BulletMeta label="Extras (O/N + SPOT)" actual={mpActual.extras} meta={recordExtras} record/>
-          {topeCostos>0
-            ? <BulletMeta label="Costos de flota" actual={costosActual} meta={topeCostos} lessIsBetter/>
-            : <div style={{fontSize:12,color:C.muted}}>Define el tope de costos para ver su cumplimiento.</div>}
-        </div>
-
-        <TendenciaPeriodos serie={serieView} metasMap={metasMap} recordExtras={recordExtras}/>
-      </>)}
+      {esAdmin&&showCostosDesglose&&<ModalCostosDesglose gastos={gastos} di={diAct} df={dfAct} onClose={()=>setShowCostosDesglose(false)}/>}
 
       <div style={S.sectionTitle}>Operación · {nombrePeriodo}</div>
       <div style={S.statsGrid}>
@@ -2159,22 +2395,61 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </div>
         );
       })()}
-      {esAdmin&&(
+
+      {esAdmin&&(<>
+        <div style={S.sectionTitle}>Resumen ejecutivo · {nombrePeriodo}</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
-          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Cobros del período</div>
-            <div style={{fontSize:22,fontWeight:900,color:C.cyan}}>{fmtCLP(mpActual.facturacion)}</div>
-            <div style={{fontSize:10,color:C.muted}}>SPOT ×{mpActual.spotCount} · O/N ×{mpActual.ohCount} · extras {fmtCLP(mpActual.extras)}</div>
-          </div>
-          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.warning,letterSpacing:1.2,textTransform:"uppercase"}}>Costos de flota</div>
+          <KpiEjecutivo label="Facturación del período" valor={fmtCLP(mpActual.facturacion)}
+            delta={mom("facturacion")} spark={serieView.map(p=>p.facturacion)} color={C.cyan}
+            sub={metaFact>0?`${Math.round(mpActual.facturacion/metaFact*100)}% de la meta`:"sin meta definida"}
+            subColor={metaFact>0?(mpActual.facturacion>=metaFact?C.success:C.warning):C.muted}/>
+          <KpiEjecutivo label="Costos de flota" valor={fmtCLP(costosActual)} onClick={()=>setShowCostosDesglose(true)}
+            delta={mom("costos")} deltaColor={mom("costos")==null?undefined:(mom("costos")>0?C.danger:C.success)}
+            spark={serieView.map(p=>p.costos)} color={C.warning}
+            sub={topeCostos>0?`${costosActual<=topeCostos?"bajo el tope":"sobre el tope"} (${Math.round(costosActual/topeCostos*100)}%)`:"sin tope definido"}
+            subColor={topeCostos>0?(costosActual<=topeCostos?C.success:C.danger):C.muted}/>
+          <KpiEjecutivo label="Extras · Overnight + SPOT" valor={fmtCLP(mpActual.extras)}
+            delta={mom("extras")} spark={serieView.map(p=>p.extras)} color={C.info}
+            sub={esRecordActual?"🏆 nuevo récord":`récord: ${fmtCLP(recordExtras)} · ${Math.round((recordExtras?mpActual.extras/recordExtras:1)*100)}%`}
+            subColor={esRecordActual?C.success:C.muted}/>
+        </div>
+
+        <EvolucionAnual solicitudes={solicitudes}/>
+
+        <div style={S.sectionTitle}>Costos y flota</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
+          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",display:"flex",flexDirection:"column",gap:6,cursor:"pointer"}} onClick={()=>setShowCostosDesglose(true)}>
+            <div style={{fontSize:11,fontWeight:700,color:C.warning,letterSpacing:1.2,textTransform:"uppercase"}}>Costos de flota <span style={{color:C.muted,fontWeight:600}}>· ver desglose</span></div>
             <div style={{fontSize:22,fontWeight:900,color:C.warning}}>{fmtCLP(costosActual)}</div>
-            <div style={{fontSize:10,color:C.muted}}>{nombrePeriodo} · ver bitácora en menú</div>
+            <div style={{fontSize:10,color:C.muted}}>{nombrePeriodo}</div>
           </div>
           <ResumenKmDia solicitudes={solicitudes} rutas={rutas} compact/>
           <ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas} compact/>
         </div>
-      )}
+        <ResumenKmAnual rutas={rutas}/>
+
+        <button style={{...S.linkBtn,alignSelf:"flex-start"}} onClick={()=>setShowMetasTendencia(v=>!v)}>
+          {showMetasTendencia?"Ocultar metas y tendencia histórica ▲":"Ver metas y tendencia histórica ▼"}
+        </button>
+        {showMetasTendencia&&(<>
+          <MetasEditor periodo={nombrePeriodo} metasMap={metasMap} onSaveMeta={onSaveMeta}
+            recordExtras={recordExtras} recordPeriodo={recordPeriodo} esRecordActual={esRecordActual}/>
+
+          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:14,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.4,textTransform:"uppercase"}}>Cumplimiento de metas</div>
+            {metaFact>0
+              ? <BulletMeta label="Facturación" actual={mpActual.facturacion} meta={metaFact}/>
+              : <div style={{fontSize:12,color:C.muted}}>Define la meta de facturación para ver su cumplimiento.</div>}
+            <BulletMeta label="Extras (O/N + SPOT)" actual={mpActual.extras} meta={recordExtras} record/>
+            {topeCostos>0
+              ? <BulletMeta label="Costos de flota" actual={costosActual} meta={topeCostos} lessIsBetter/>
+              : <div style={{fontSize:12,color:C.muted}}>Define el tope de costos para ver su cumplimiento.</div>}
+          </div>
+
+          <TendenciaPeriodos serie={serieView} metasMap={metasMap} recordExtras={recordExtras}/>
+        </>)}
+      </>)}
+
       {esCliente&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
       {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
@@ -2548,6 +2823,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           )}
         </div>
       )}
+      {esAdmin&&(<>
       <div style={S.fieldLabel}>Cambiar estado</div>
       <div style={S.statusBtns}>
         {Object.entries(STATUS_META).map(([k,v])=>
@@ -2572,6 +2848,8 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           </div>
         </div>
       )}
+      </>)}
+      {!esAdmin&&<div style={{...S.detailBlock,fontSize:12,color:C.muted}}>Estado actual: <b style={{color:sm.color}}>{sm.label}</b> · Solo un administrador puede cambiar el estado desde este panel.</div>}
       <LogEstados log={sol.statusLog||[]} solId={sol.id} onEditLog={onEditLog} esAdmin={esAdmin} usuarioActual={sesion?.nombre||sesion?.email||"Administrador"}/>
       {esAdmin&&<div style={{marginTop:16}}>
         {!confirmDel
@@ -4733,7 +5011,203 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
   );
 }
 
-// ── Bitácora de costos por vehículo (mantenedor) ───────────────────────────
+// ── Incidencias (no conformidades NT147, cumplimiento, etc.) ──────────────
+function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],clientes=[]}){
+  const puedeEditar = ["admin","operador"].includes(sesion?.perfil);
+  const puedeEliminar = sesion?.perfil==="admin";
+  const [nuevo,setNuevo]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const [expandId,setExpandId]=useState(null);
+  const [fEstado,setFEstado]=useState("todas");
+  const [fTipo,setFTipo]=useState("todos");
+  const EMPTY={fecha:new Date().toISOString().slice(0,10),tipo:"anden_incompatible",contraparte:"",ubicacion:"",descripcion:"",fotos:[],notificado:false,fechaNotificacion:"",estado:"abierta"};
+  const [form,setForm]=useState(EMPTY);
+  const [subiendo,setSubiendo]=useState(false);
+
+  const FOTO_MAX=1400, FOTO_CALIDAD=0.8;
+  function comprimirImagen(file, cb){
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const img=new Image();
+      img.onload=()=>{
+        const canvas=document.createElement("canvas");
+        let w=img.width,h=img.height;
+        if(w>FOTO_MAX){h=Math.round(h*FOTO_MAX/w);w=FOTO_MAX;}
+        if(h>FOTO_MAX){w=Math.round(w*FOTO_MAX/h);h=FOTO_MAX;}
+        canvas.width=w; canvas.height=h;
+        const ctx=canvas.getContext("2d");
+        ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+        ctx.drawImage(img,0,0,w,h);
+        cb(canvas.toDataURL("image/jpeg",FOTO_CALIDAD));
+      };
+      img.src=ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  function agregarFoto(){
+    const input=document.createElement("input");
+    input.type="file"; input.accept="image/*"; input.capture="environment";
+    input.onchange=e=>{
+      const file=e.target.files[0];
+      if(!file)return;
+      setSubiendo(true);
+      comprimirImagen(file, b64=>{ setForm(p=>({...p,fotos:[...(p.fotos||[]),b64].slice(0,6)})); setSubiendo(false); });
+    };
+    input.click();
+  }
+
+  const lista=incidencias
+    .filter(i=>fEstado==="todas"||i.estado===fEstado)
+    .filter(i=>fTipo==="todos"||i.tipo===fTipo)
+    .sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||"")||(b.createdAt||"").localeCompare(a.createdAt||""));
+
+  const abiertas=incidencias.filter(i=>i.estado==="abierta").length;
+
+  function iniciarNueva(){ setForm(EMPTY); setEditId(null); setNuevo(true); setExpandId(null); }
+  function iniciarEdicion(i){ setForm({fecha:i.fecha,tipo:i.tipo,contraparte:i.contraparte,ubicacion:i.ubicacion,descripcion:i.descripcion,fotos:i.fotos||[],notificado:i.notificado,fechaNotificacion:i.fechaNotificacion,estado:i.estado}); setEditId(i.id); setNuevo(true); setExpandId(null); }
+
+  async function guardar(){
+    if(!form.descripcion.trim()){window.alert("Describe brevemente la incidencia.");return;}
+    if(!form.fecha){window.alert("Indica la fecha.");return;}
+    const base=editId?incidencias.find(x=>x.id===editId):null;
+    const i={
+      id: editId || ("inc_"+Date.now().toString()),
+      folio: base?.folio || generarFolioIncidencia(incidencias),
+      fecha:form.fecha, tipo:form.tipo, contraparte:form.contraparte||"",
+      ubicacion:form.ubicacion||"", descripcion:form.descripcion.trim(),
+      fotos:form.fotos||[], notificado:!!form.notificado, fechaNotificacion:form.fechaNotificacion||"",
+      estado:form.estado||"abierta", autor: base?.autor || (sesion?.nombre||sesion?.email||"—"),
+      origen: base?.origen || "manual",
+    };
+    const ok=await onSave(i);
+    if(ok){ setNuevo(false); setEditId(null); setForm(EMPTY); }
+  }
+
+  return(
+    <div style={S.section}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={S.pageTitle}>Incidencias</div>
+          <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>No conformidades, cumplimiento NT147 y hallazgos operativos.</div>
+        </div>
+        {puedeEditar&&!nuevo&&<button style={S.btnPri} onClick={iniciarNueva}>+ Nueva incidencia</button>}
+      </div>
+
+      <div style={S.statsGrid}>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.danger}`}}><div style={{...S.statNum,color:C.danger}}>{abiertas}</div><div style={S.statLabel}>Abiertas</div></div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.warning}`}}><div style={{...S.statNum,color:C.warning}}>{incidencias.filter(i=>i.estado==="en_revision").length}</div><div style={S.statLabel}>En revisión</div></div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.success}`}}><div style={{...S.statNum,color:C.success}}>{incidencias.filter(i=>i.estado==="cerrada").length}</div><div style={S.statLabel}>Cerradas</div></div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.cyan}`}}><div style={{...S.statNum,color:C.cyan}}>{incidencias.length}</div><div style={S.statLabel}>Total</div></div>
+      </div>
+
+      {nuevo&&(
+        <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{fontSize:13,fontWeight:800,color:C.cyan}}>{editId?"Editar incidencia":"Nueva incidencia"}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}>
+            <div style={S.fGroup}><label style={S.label}>Fecha</label>
+              <input style={S.input} type="date" value={form.fecha} onChange={e=>setForm(p=>({...p,fecha:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Tipo</label>
+              <select style={S.input} value={form.tipo} onChange={e=>setForm(p=>({...p,tipo:e.target.value}))}>
+                {Object.entries(TIPO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.icon} {m.label}</option>)}
+              </select></div>
+            <div style={S.fGroup}><label style={S.label}>Contraparte (Abbott/DHL/otro)</label>
+              <input style={S.input} placeholder="Ej: DHL" value={form.contraparte} onChange={e=>setForm(p=>({...p,contraparte:e.target.value}))}/></div>
+            <div style={S.fGroup}><label style={S.label}>Ubicación / andén</label>
+              <input style={S.input} placeholder="Ej: Andén 32" value={form.ubicacion} onChange={e=>setForm(p=>({...p,ubicacion:e.target.value}))}/></div>
+          </div>
+          <div style={S.fGroup}><label style={S.label}>Descripción</label>
+            <textarea style={{...S.input,minHeight:80,fontFamily:"inherit",resize:"vertical"}} placeholder="Describe el hallazgo, condición o desviación detectada..." value={form.descripcion} onChange={e=>setForm(p=>({...p,descripcion:e.target.value}))}/></div>
+          <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap"}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.textSecondary,cursor:"pointer"}}>
+              <input type="checkbox" checked={form.notificado} onChange={e=>setForm(p=>({...p,notificado:e.target.checked}))}/>
+              Se notificó a la contraparte
+            </label>
+            {form.notificado&&<input style={{...S.input,maxWidth:180}} type="date" value={form.fechaNotificacion} onChange={e=>setForm(p=>({...p,fechaNotificacion:e.target.value}))}/>}
+            {editId&&(
+              <select style={{...S.input,maxWidth:180}} value={form.estado} onChange={e=>setForm(p=>({...p,estado:e.target.value}))}>
+                {Object.entries(ESTADO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.label}</option>)}
+              </select>
+            )}
+          </div>
+          <div>
+            <label style={S.label}>Evidencia fotográfica</label>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
+              {(form.fotos||[]).map((b,i)=>(
+                <div key={i} style={{position:"relative"}}>
+                  <img src={b} alt={"Evidencia "+(i+1)} style={{width:80,height:80,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>
+                  <button style={{position:"absolute",top:-6,right:-6,background:C.danger,border:"none",color:"#fff",borderRadius:"50%",width:20,height:20,fontSize:11,cursor:"pointer",lineHeight:1}} onClick={()=>setForm(p=>({...p,fotos:p.fotos.filter((_,j)=>j!==i)}))}>✕</button>
+                </div>
+              ))}
+              {(form.fotos||[]).length<6&&<button style={{...S.exportBtn,width:80,height:80,fontSize:11}} disabled={subiendo} onClick={agregarFoto}>{subiendo?"...":"📷 Agregar"}</button>}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button style={S.btnSec} onClick={()=>{setNuevo(false);setEditId(null);setForm(EMPTY);}}>Cancelar</button>
+            <button style={S.btnPri} onClick={guardar}>Guardar</button>
+          </div>
+        </div>
+      )}
+
+      <div style={S.filters}>
+        <select style={S.select} value={fEstado} onChange={e=>setFEstado(e.target.value)}>
+          <option value="todas">Todos los estados</option>
+          {Object.entries(ESTADO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.label}</option>)}
+        </select>
+        <select style={S.select} value={fTipo} onChange={e=>setFTipo(e.target.value)}>
+          <option value="todos">Todos los tipos</option>
+          {Object.entries(TIPO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.icon} {m.label}</option>)}
+        </select>
+      </div>
+
+      {lista.length===0?(
+        <EmptyState msg="Sin incidencias registradas para este filtro."/>
+      ):lista.map(i=>{
+        const tm=metaTipoIncidencia(i.tipo);
+        const em=ESTADO_INCIDENCIA[i.estado]||ESTADO_INCIDENCIA.abierta;
+        const expandido=expandId===i.id;
+        return (
+          <div key={i.id} style={{...S.row,flexDirection:"column",alignItems:"stretch",cursor:"pointer"}} onClick={()=>setExpandId(expandido?null:i.id)}>
+            <div style={{display:"flex",alignItems:"center",gap:14}}>
+              <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color}}>{tm.icon}</div>
+              <div style={S.rowBody}>
+                <div style={S.rowTitle}>{i.folio} · {tm.label}{i.contraparte?` · ${i.contraparte}`:""}</div>
+                <div style={{...S.rowMeta,color:C.textSecondary}}>{i.fecha}{i.ubicacion?` · ${i.ubicacion}`:""}</div>
+              </div>
+              <span style={{...S.badge,background:em.color+"22",color:em.color,flexShrink:0}}>{em.label}</span>
+            </div>
+            {expandido&&(
+              <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border,display:"flex",flexDirection:"column",gap:10}} onClick={e=>e.stopPropagation()}>
+                <div style={{fontSize:13,color:C.textPrimary}}>{i.descripcion}</div>
+                <div style={{fontSize:11.5,color:C.muted}}>
+                  Registrado por {i.autor||"—"}{i.origen==="alerta"?" · generado desde alerta de flota":""}
+                  {i.notificado?` · Notificado a la contraparte${i.fechaNotificacion?" el "+i.fechaNotificacion:""}`:" · Sin notificar a la contraparte"}
+                </div>
+                {(i.fotos||[]).length>0&&(
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                    {i.fotos.map((b,idx)=>(
+                      <a key={idx} href={b} download={i.folio+"_evidencia_"+(idx+1)+".jpg"} target="_blank" rel="noreferrer">
+                        <img src={b} alt={"Evidencia "+(idx+1)} style={{width:88,height:88,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>
+                      </a>
+                    ))}
+                  </div>
+                )}
+                {puedeEditar&&(
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {Object.entries(ESTADO_INCIDENCIA).filter(([k])=>k!==i.estado).map(([k,m])=>(
+                      <button key={k} style={{...S.statusBtn,border:"1px solid "+m.color,color:m.color}} onClick={()=>onSave({...i,estado:k})}>Marcar {m.label}</button>
+                    ))}
+                    <button style={{...S.exportBtn,fontSize:12}} onClick={()=>iniciarEdicion(i)}>✎ Editar</button>
+                    {puedeEliminar&&<button style={{...S.exportBtn,fontSize:12,borderColor:C.danger,color:C.danger}} onClick={()=>{if(window.confirm("¿Eliminar esta incidencia?"))onDelete(i.id);}}>Eliminar</button>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 function estadoVencimiento(fecha){
   if(!fecha) return null;
   const hoy=new Date(); hoy.setHours(0,0,0,0);
@@ -4743,6 +5217,23 @@ function estadoVencimiento(fecha){
   if(dias<0) return {dias, label:`Vencido hace ${Math.abs(dias)} d`, color:C.danger};
   if(dias<=30) return {dias, label:`Vence en ${dias} d`, color:C.warning};
   return {dias, label:"Vigente", color:C.success};
+}
+// Cuenta rápida de alertas pendientes (para el badge de la campana en el header).
+function calcularAlertas(gastos, recordatorios, limiteDias=60){
+  const dismissedIds=new Set((recordatorios||[]).map(r=>r.id));
+  const map={};
+  (gastos||[]).forEach(g=>{
+    if(!g.vencimiento||!metaCategoria(g.categoria).vencimiento)return;
+    const k=g.ppu+"|"+g.categoria;
+    if(!map[k]||g.vencimiento>map[k].vencimiento)map[k]=g;
+  });
+  const auto=Object.values(map).map(g=>({id:"venc_"+g.ppu+"_"+g.categoria, fecha:g.vencimiento, est:estadoVencimiento(g.vencimiento)}))
+    .filter(it=>!dismissedIds.has(it.id));
+  const manual=(recordatorios||[]).filter(r=>!(r.notas||"").startsWith("Ticket ")&&!r.hecho)
+    .map(r=>({id:r.id, fecha:r.fecha, est:estadoVencimiento(r.fecha)}));
+  const items=[...auto,...manual].filter(it=>it.est&&it.est.dias<=limiteDias);
+  const nVencidos=items.filter(it=>it.est.dias<0).length;
+  return {total:items.length, vencidos:nVencidos};
 }
 
 function GastosVehiculos({gastos=[],vehiculos=[],choferes=[],onSaveGasto,onDeleteGasto,setView,sesion}){
@@ -5272,7 +5763,32 @@ const TIPO_RECORDATORIO = {
 };
 function metaTipoRec(t){ return TIPO_RECORDATORIO[t] || TIPO_RECORDATORIO.otro; }
 
-function AlertasRecordatorios({gastos=[],vehiculos=[],recordatorios=[],onSave,onDelete,setView}){
+// ── Incidencias (no conformidades NT147, cumplimiento de flota, etc.) ──────
+const TIPO_INCIDENCIA = {
+  anden_incompatible: { label:"Andén / vehículo incompatible", icon:"🚛", color:"#F59E0B" },
+  temperatura:        { label:"Cadena de frío / temperatura",  icon:"🌡", color:"#EF4444" },
+  humedad_hongos:     { label:"Humedad / hongos en instalación",icon:"💧", color:"#8B5CF6" },
+  documentacion:      { label:"Documentación / manifiesto",    icon:"📄", color:"#38BDF8" },
+  retraso_capacidad:  { label:"Retraso / capacidad excedida",  icon:"⏱", color:"#F97316" },
+  cumplimiento_flota: { label:"Cumplimiento de flota",         icon:"🔧", color:"#00AEEF" },
+  otro:               { label:"Otro",                          icon:"•",  color:"#8BAFD4" },
+};
+function metaTipoIncidencia(t){ return TIPO_INCIDENCIA[t] || TIPO_INCIDENCIA.otro; }
+const ESTADO_INCIDENCIA = {
+  abierta:     { label:"Abierta",      color:"#EF4444" },
+  en_revision: { label:"En revisión",  color:"#F59E0B" },
+  cerrada:     { label:"Cerrada",      color:"#22C55E" },
+};
+function generarFolioIncidencia(incidencias){
+  let max=0;
+  for(const i of (incidencias||[])){
+    const m=/^INC-(\d+)$/.exec((i.folio||"").trim());
+    if(m){ const n=parseInt(m[1],10); if(n>max) max=n; }
+  }
+  return `INC-${String(max+1).padStart(3,"0")}`;
+}
+
+function AlertasRecordatorios({gastos=[],vehiculos=[],recordatorios=[],onSave,onDelete,onGenerarTicket,setView}){
   const [ventana,setVentana]=useState("mes"); // mes | 60
   const [verHechos,setVerHechos]=useState(false);
   const [nuevo,setNuevo]=useState(false);
@@ -5287,6 +5803,9 @@ function AlertasRecordatorios({gastos=[],vehiculos=[],recordatorios=[],onSave,on
 
   const ppusDisponibles=Array.from(new Set([...(vehiculos||[]).map(v=>v&&v.ppu),...gastos.map(g=>g.ppu)].filter(Boolean)));
 
+  // ids ya "resueltos" vía ticket (recordatorio-sombra creado al generar el ticket)
+  const dismissedIds=new Set((recordatorios||[]).map(r=>r.id));
+
   // a) Vencimientos automáticos desde la bitácora (gastos fijos con vencimiento)
   const auto=(()=>{
     const map={};
@@ -5299,11 +5818,11 @@ function AlertasRecordatorios({gastos=[],vehiculos=[],recordatorios=[],onSave,on
       const m=metaCategoria(g.categoria);
       return {kind:"venc", id:"venc_"+g.ppu+"_"+g.categoria, fecha:g.vencimiento,
         titulo:m.label, ppu:g.ppu, icon:m.icon, color:m.color, est:estadoVencimiento(g.vencimiento)};
-    });
+    }).filter(it=>!dismissedIds.has(it.id));
   })();
 
-  // b) Recordatorios manuales
-  const manual=recordatorios.map(r=>{
+  // b) Recordatorios manuales (excluye los "sombra" generados al emitir un ticket)
+  const manual=recordatorios.filter(r=>!(r.notas||"").startsWith("Ticket ")).map(r=>{
     const m=metaTipoRec(r.tipo);
     return {kind:"rec", id:r.id, fecha:r.fecha, titulo:r.titulo, ppu:r.ppu, tipo:r.tipo,
       notas:r.notas, hecho:r.hecho, icon:m.icon, color:m.color, est:estadoVencimiento(r.fecha), raw:r};
@@ -5389,6 +5908,7 @@ function AlertasRecordatorios({gastos=[],vehiculos=[],recordatorios=[],onSave,on
               </div>
               <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
                 <span style={{...S.badge,background:it.est.color+"22",color:it.est.color,fontSize:10}}>{it.est.label}</span>
+                {onGenerarTicket&&<button title="Generar ticket de cumplimiento (la alerta desaparece)" style={{...S.exportBtn,fontSize:11,padding:"4px 8px",borderColor:C.warning,color:C.warning}} onClick={()=>{if(window.confirm(`¿Generar ticket de cumplimiento para "${it.titulo}"? La alerta se marcará como resuelta.`))onGenerarTicket(it);}}>🎫 Ticket</button>}
                 {it.kind==="venc"
                   ?<button style={{...S.exportBtn,fontSize:11,padding:"4px 8px"}} onClick={()=>setView("gastos")}>Ver →</button>
                   :<>
