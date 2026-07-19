@@ -2264,7 +2264,9 @@ function ResumenKmAnual(){
 // ── Buscador de documentos (DT + Drive) ─────────────────────────────────────
 // Descubre recursivamente todas las subcarpetas dentro de una carpeta de Drive
 // (BFS). Se limita a un máximo de carpetas para no disparar demasiadas
-// llamadas si la estructura es muy profunda o muy ancha.
+// llamadas si la estructura es muy profunda o muy ancha. Si una carpeta puntual
+// da error (ej. permisos rotos), se salta y se sigue con el resto — no aborta
+// todo el descubrimiento.
 async function obtenerSubcarpetasDrive(folderIdRaiz, apiKey, maxCarpetas=60){
   const todas=[folderIdRaiz];
   const porRevisar=[folderIdRaiz];
@@ -2275,17 +2277,40 @@ async function obtenerSubcarpetasDrive(folderIdRaiz, apiKey, maxCarpetas=60){
     try{
       const res=await fetch(url);
       const data=await res.json();
-      if(data.error) break;
+      if(data.error) continue; // esta carpeta no se pudo listar (permisos) — se salta, no se aborta todo
       for(const f of (data.files||[])){
-        if(!todas.includes(f.id)){
+        if(f?.id && !todas.includes(f.id)){
           todas.push(f.id);
           porRevisar.push(f.id);
           if(todas.length>=maxCarpetas) break;
         }
       }
-    }catch{ break; }
+    }catch{ /* red: se salta esta carpeta y se sigue con las demás */ }
   }
   return todas;
+}
+
+// Busca el término en cada carpeta POR SEPARADO (en paralelo) en vez de una
+// sola consulta combinada — así, si alguna carpeta tiene permisos rotos, esa
+// consulta individual falla pero el resto de las carpetas igual entregan
+// resultado, en vez de tirar abajo toda la búsqueda.
+async function buscarEnCarpetasDrive(carpetas, apiKey, term){
+  const vistos=new Set();
+  const resultados=[];
+  let carpetasConError=0;
+  await Promise.all(carpetas.map(async folderId=>{
+    const query=`'${folderId}' in parents and name contains '${term}' and trashed = false`;
+    const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=25&key=${apiKey}`;
+    try{
+      const res=await fetch(url);
+      const data=await res.json();
+      if(data.error){ carpetasConError++; return; }
+      for(const f of (data.files||[])){
+        if(!vistos.has(f.id)){ vistos.add(f.id); resultados.push(f); }
+      }
+    }catch{ carpetasConError++; }
+  }));
+  return {resultados, carpetasConError};
 }
 
 function BuscadorDocumento(){
@@ -2308,13 +2333,8 @@ function BuscadorDocumento(){
         carpetasCache.current = await obtenerSubcarpetasDrive(GOOGLE_DRIVE_FOLDER_ID, GOOGLE_DRIVE_API_KEY);
       }
       const carpetas=carpetasCache.current;
-      const parentsQuery=carpetas.map(id=>`'${id}' in parents`).join(" or ");
-      const query=`(${parentsQuery}) and name contains '${term}' and trashed = false`;
-      const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=25&key=${GOOGLE_DRIVE_API_KEY}`;
-      const res=await fetch(url);
-      const data=await res.json();
-      if(data.error){ setDrive({error:"api", detalle:data.error?.message||JSON.stringify(data.error)}); return; }
-      setDrive({archivos:data.files||[], nCarpetas:carpetas.length});
+      const {resultados,carpetasConError} = await buscarEnCarpetasDrive(carpetas, GOOGLE_DRIVE_API_KEY, term);
+      setDrive({archivos:resultados, nCarpetas:carpetas.length, carpetasConError});
     }catch{
       setDrive({error:"red"});
     }
@@ -2371,12 +2391,15 @@ function BuscadorDocumento(){
             ):drive?.error==="red"?(
               <div style={{fontSize:12,color:C.danger}}>Error de conexión con Drive.</div>
             ):drive?.archivos?.length===0?(
-              <div style={{fontSize:12,color:C.muted}}>No se encontró ningún archivo con ese número{drive?.nCarpetas?` (se revisó la carpeta y ${drive.nCarpetas-1} subcarpeta(s))`:""}.</div>
+              <div style={{fontSize:12,color:C.muted}}>
+                No se encontró ningún archivo con ese número{drive?.nCarpetas?` (se revisó la carpeta y ${drive.nCarpetas-1} subcarpeta(s))`:""}.
+                {drive?.carpetasConError>0&&<div style={{color:C.warning,marginTop:4}}>⚠ {drive.carpetasConError} carpeta(s) no se pudieron revisar por permisos — puede que el archivo esté en una de ellas. Revisa que estén compartidas como "Cualquiera con el enlace".</div>}
+              </div>
             ):drive?.archivos?.length>0?(<>
               {drive.archivos.map(f=>(
                 <a key={f.id} href={f.webViewLink} target="_blank" rel="noreferrer" style={{fontSize:12,color:C.cyan,textDecoration:"none",fontWeight:600}}>📄 {f.name} →</a>
               ))}
-              {drive?.nCarpetas>1&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>Buscado en {drive.nCarpetas} carpeta(s) (incluye subcarpetas)</div>}
+              {drive?.nCarpetas>1&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>Buscado en {drive.nCarpetas} carpeta(s) (incluye subcarpetas){drive?.carpetasConError>0?` · ${drive.carpetasConError} sin acceso`:""}</div>}
             </>):null}
           </>)}
         </div>
