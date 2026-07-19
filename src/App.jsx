@@ -2313,7 +2313,7 @@ function BuscadorDocumento(){
       const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=25&key=${GOOGLE_DRIVE_API_KEY}`;
       const res=await fetch(url);
       const data=await res.json();
-      if(data.error){ setDrive({error:"api"}); return; }
+      if(data.error){ setDrive({error:"api", detalle:data.error?.message||JSON.stringify(data.error)}); return; }
       setDrive({archivos:data.files||[], nCarpetas:carpetas.length});
     }catch{
       setDrive({error:"red"});
@@ -2367,7 +2367,7 @@ function BuscadorDocumento(){
             ):drive?.loading?(
               <div style={{fontSize:12,color:C.muted}}>Buscando en Drive...</div>
             ):drive?.error==="api"?(
-              <div style={{fontSize:12,color:C.danger}}>Error de la API de Drive (revisa la clave o los permisos de la carpeta).</div>
+              <div style={{fontSize:12,color:C.danger}}>Error de la API de Drive{drive?.detalle?`: ${drive.detalle}`:" (revisa la clave o los permisos de la carpeta)."}</div>
             ):drive?.error==="red"?(
               <div style={{fontSize:12,color:C.danger}}>Error de conexión con Drive.</div>
             ):drive?.archivos?.length===0?(
