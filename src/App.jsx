@@ -499,7 +499,7 @@ function _ordenCierre(s){
   return u;
 }
 function calcularCobros(solicitudes){
-  const sols = solicitudes || [];
+  const sols = (solicitudes || []).filter(s=>!s.sinCobro); // exentas de cobro: fuera de todo cálculo
   const perId = {};
   for(const s of sols){
     const esCargaOL = s.tipo==="carga_ol";
@@ -577,6 +577,7 @@ function metricasPeriodo(sols){
   // SPOT Regional — recargo por destinos fuera de la RM (misma tabla usada en el Excel/GraficoCobros)
   let montoSpotRegional=0, nSpotRegional=0;
   arr.forEach(s=>{
+    if(s.sinCobro) return;
     const reg=detectarRegion(s.direccion||s.destino||"");
     const v=reg?(reg.valor||0):0;
     if(v>0){ montoSpotRegional+=v; nSpotRegional++; }
@@ -658,7 +659,7 @@ const COLS_LISTA = [
   "no_presentacion","vehiculo_np","motivo_np","geo_entrega","hora_entrega",
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
-  "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo",
+  "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro",
   "updated_at","created_at"
 ].join(",");
 
@@ -683,6 +684,7 @@ async function loadSolicitudes() {
       observacionChofer:s.observacion_chofer||"",
       observacionCobro:s.observacion_cobro||"",
       facturarEnPeriodo:s.facturar_en_periodo||"",
+      sinCobro:!!s.sin_cobro,
       observacionAutor:s.observacion_autor||"",
       observacionFecha:s.observacion_fecha||"",
       updatedAt:s.updated_at, createdAt:s.created_at,
@@ -736,6 +738,7 @@ async function saveSolicitud(s) {
       observacion_fecha:s.observacionFecha||null,
       observacion_cobro:s.observacionCobro||null,
       facturar_en_periodo:s.facturarEnPeriodo||null,
+      sin_cobro:!!s.sinCobro,
       updated_at:new Date().toISOString(),
     };
     // Campos pesados (foto/firma/manifiesto): SOLO se incluyen en el guardado si
@@ -768,11 +771,11 @@ async function saveSolicitud(s) {
     if(!res.ok) {
       const e = await res.text();
       // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
-      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|devolucion_urgente/i.test(e)) {
+      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|sin_cobro|devolucion_urgente/i.test(e)) {
         console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
         const fallback = {...row};
         delete fallback.fotos_manifiesto; delete fallback.fotos_entrega; delete fallback.observacion_chofer;
-        delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.observacion_cobro; delete fallback.facturar_en_periodo; delete fallback.devolucion_urgente;
+        delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.observacion_cobro; delete fallback.facturar_en_periodo; delete fallback.sin_cobro; delete fallback.devolucion_urgente;
         res = await doUpsert(fallback);
       }
       if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2);
@@ -1198,7 +1201,7 @@ async function exportToExcel(solicitudes, nombreArchivo) {
     const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
     const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
     // SPOT Regional — recargo por destino fuera de la RM (según dirección)
-    const regionSol = detectarRegion(s.direccion || s.destino || "");
+    const regionSol = s.sinCobro ? null : detectarRegion(s.direccion || s.destino || "");
     const cSpotRegional = regionSol ? (regionSol.valor || 0) : 0;
     const esSpotRegional = cSpotRegional > 0;
     return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
@@ -1214,7 +1217,7 @@ async function exportToExcel(solicitudes, nombreArchivo) {
       s.noPresentacion?(s.vehiculoNP||""):"", s.noPresentacion?(s.motivoNP||""):"",
       s.noPresentacion?DESCUENTO_DIA:"",
       s.observacionChofer?(s.observacionChofer+(s.observacionAutor?" ("+s.observacionAutor+(s.observacionFecha?", "+new Date(s.observacionFecha).toLocaleString("es-CL"):"")+")":"")):"",
-      s.observacionCobro||""];
+      (s.sinCobro?"[EXENTA DE COBRO] ":"")+(s.observacionCobro||"")];
   });
 
   const totalSpot=cobros.spotCount;
@@ -1764,6 +1767,7 @@ function GraficoCobros({ solicitudes }) {
   // SPOT Regional — recargo por destinos fuera de la RM (misma tabla del Excel)
   let mSpotReg=0, nSpotReg=0;
   solicitudes.forEach(s=>{
+    if(s.sinCobro) return;
     const reg=detectarRegion(s.direccion||s.destino||"");
     const v=reg?(reg.valor||0):0;
     if(v>0){mSpotReg+=v;nSpotReg++;}
@@ -2407,7 +2411,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Dashboard</div>
-        {solicitudes.length>0&&!esCliente&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
+        {solicitudes.length>0&&!esCliente&&<button title="Exporta solo las solicitudes del período activo" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte del período</span></button>}
       </div>
       <BuscadorDocumento/>
       <div style={{...S.periodoBanner,borderColor:yaCerrado?C.muted:C.cyan}}>
@@ -2597,7 +2601,7 @@ function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatu
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Solicitudes Abbott</div>
-        {total>0&&sesion?.perfil!=="cliente"&&<button style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte</span></button>}
+        {total>0&&sesion?.perfil!=="cliente"&&<button title="Exporta TODAS las solicitudes de la historia, no solo el período actual" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Exportar historial completo ({total})</span></button>}
       </div>
       <div style={S.filters}>
         <input style={S.searchInput} placeholder="Buscar por cliente o guía..." value={filterQ} onChange={e=>setFilterQ(e.target.value)}/>
@@ -2789,11 +2793,15 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
               placeholder="Ej: Rechazos pre-cierre mes anterior con respaldos válidos"/>
             <div style={{marginTop:8}}>
               <label style={{...S.label,fontSize:11}}>Facturar en el período que incluya esta fecha (opcional)</label>
-              <input style={{...S.input,maxWidth:200}} type="date" value={editForm.facturarEnPeriodo||""} onChange={fe("facturarEnPeriodo")}/>
+              <input style={{...S.input,maxWidth:200}} type="date" value={editForm.facturarEnPeriodo||""} onChange={fe("facturarEnPeriodo")} disabled={editForm.sinCobro}/>
               <div style={{fontSize:11,color:C.muted,marginTop:4}}>
                 Si la dejas vacía, cuenta en el período de su fecha real ({sol.fecha}). Si pones una fecha de este mes, la solicitud se suma al cobro del período actual sin cambiar su fecha de servicio.
               </div>
             </div>
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.danger,cursor:"pointer",marginTop:10}}>
+              <input type="checkbox" checked={!!editForm.sinCobro} onChange={e=>setEditForm(p=>({...p,sinCobro:e.target.checked,facturarEnPeriodo:e.target.checked?"":p.facturarEnPeriodo}))}/>
+              Exenta de cobro permanente (no genera cargo en ningún período — queda solo como registro operativo)
+            </label>
           </div>
         )}
         {editForm.tipo==="li_devol"&&<div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
@@ -2864,7 +2872,8 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.observacionCobro&&<div style={{...S.detailBlock,border:`1px solid ${C.warning}`,background:C.warning+"11"}}><div style={{...S.fieldLabel,color:C.warning}}>🧾 Observación Facturación / Pre-Cierre</div><div style={S.fieldValue}>{sol.observacionCobro}</div>
-        {sol.facturarEnPeriodo&&<div style={{fontSize:11.5,color:C.warning,marginTop:6,fontWeight:600}}>↻ Facturada en el período de {sol.facturarEnPeriodo} · fecha real de servicio: {sol.fecha}</div>}
+        {sol.sinCobro&&<div style={{fontSize:11.5,color:C.danger,marginTop:6,fontWeight:700}}>🚫 EXENTA DE COBRO — no genera cargo en ningún período</div>}
+        {!sol.sinCobro&&sol.facturarEnPeriodo&&<div style={{fontSize:11.5,color:C.warning,marginTop:6,fontWeight:600}}>↻ Facturada en el período de {sol.facturarEnPeriodo} · fecha real de servicio: {sol.fecha}</div>}
       </div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
       {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div>{sol.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Por {sol.observacionAutor}{sol.observacionFecha?" · "+new Date(sol.observacionFecha).toLocaleString("es-CL"):""}</div>}</div>}
