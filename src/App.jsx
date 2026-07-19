@@ -2262,12 +2262,39 @@ function ResumenKmAnual(){
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
 // ── Buscador de documentos (DT + Drive) ─────────────────────────────────────
+// Descubre recursivamente todas las subcarpetas dentro de una carpeta de Drive
+// (BFS). Se limita a un máximo de carpetas para no disparar demasiadas
+// llamadas si la estructura es muy profunda o muy ancha.
+async function obtenerSubcarpetasDrive(folderIdRaiz, apiKey, maxCarpetas=60){
+  const todas=[folderIdRaiz];
+  const porRevisar=[folderIdRaiz];
+  while(porRevisar.length>0 && todas.length<maxCarpetas){
+    const actual=porRevisar.shift();
+    const query=`'${actual}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name)")}&pageSize=100&key=${apiKey}`;
+    try{
+      const res=await fetch(url);
+      const data=await res.json();
+      if(data.error) break;
+      for(const f of (data.files||[])){
+        if(!todas.includes(f.id)){
+          todas.push(f.id);
+          porRevisar.push(f.id);
+          if(todas.length>=maxCarpetas) break;
+        }
+      }
+    }catch{ break; }
+  }
+  return todas;
+}
+
 function BuscadorDocumento(){
   const [q,setQ]=useState("");
   const [buscado,setBuscado]=useState(false);
   const [drive,setDrive]=useState(null); // {loading}|{archivos}|{error}
   const [copiado,setCopiado]=useState(false);
   const [showDT,setShowDT]=useState(false);
+  const carpetasCache=useRef(null); // cache de IDs de subcarpetas ya descubiertas en esta sesión
 
   const dtConfigurado = DT_WIDGET_URL && !DT_WIDGET_URL.startsWith("TU_");
   const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
@@ -2277,12 +2304,17 @@ function BuscadorDocumento(){
     setDrive({loading:true});
     try{
       const term=numero.replace(/'/g,"\\'");
-      const query=`'${GOOGLE_DRIVE_FOLDER_ID}' in parents and name contains '${term}' and trashed = false`;
-      const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&key=${GOOGLE_DRIVE_API_KEY}`;
+      if(!carpetasCache.current){
+        carpetasCache.current = await obtenerSubcarpetasDrive(GOOGLE_DRIVE_FOLDER_ID, GOOGLE_DRIVE_API_KEY);
+      }
+      const carpetas=carpetasCache.current;
+      const parentsQuery=carpetas.map(id=>`'${id}' in parents`).join(" or ");
+      const query=`(${parentsQuery}) and name contains '${term}' and trashed = false`;
+      const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=25&key=${GOOGLE_DRIVE_API_KEY}`;
       const res=await fetch(url);
       const data=await res.json();
       if(data.error){ setDrive({error:"api"}); return; }
-      setDrive({archivos:data.files||[]});
+      setDrive({archivos:data.files||[], nCarpetas:carpetas.length});
     }catch{
       setDrive({error:"red"});
     }
@@ -2339,12 +2371,13 @@ function BuscadorDocumento(){
             ):drive?.error==="red"?(
               <div style={{fontSize:12,color:C.danger}}>Error de conexión con Drive.</div>
             ):drive?.archivos?.length===0?(
-              <div style={{fontSize:12,color:C.muted}}>No se encontró ningún PDF con ese número.</div>
-            ):drive?.archivos?.length>0?(
-              drive.archivos.map(f=>(
+              <div style={{fontSize:12,color:C.muted}}>No se encontró ningún archivo con ese número{drive?.nCarpetas?` (se revisó la carpeta y ${drive.nCarpetas-1} subcarpeta(s))`:""}.</div>
+            ):drive?.archivos?.length>0?(<>
+              {drive.archivos.map(f=>(
                 <a key={f.id} href={f.webViewLink} target="_blank" rel="noreferrer" style={{fontSize:12,color:C.cyan,textDecoration:"none",fontWeight:600}}>📄 {f.name} →</a>
-              ))
-            ):null}
+              ))}
+              {drive?.nCarpetas>1&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>Buscado en {drive.nCarpetas} carpeta(s) (incluye subcarpetas)</div>}
+            </>):null}
           </>)}
         </div>
       )}
