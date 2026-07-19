@@ -2294,13 +2294,14 @@ async function obtenerSubcarpetasDrive(folderIdRaiz, apiKey, maxCarpetas=60){
 // sola consulta combinada — así, si alguna carpeta tiene permisos rotos, esa
 // consulta individual falla pero el resto de las carpetas igual entregan
 // resultado, en vez de tirar abajo toda la búsqueda.
-async function buscarEnCarpetasDrive(carpetas, apiKey, term){
+async function buscarEnCarpetasDrive(carpetas, apiKey, terms){
   const vistos=new Set();
   const resultados=[];
   let carpetasConError=0;
+  const nameClause = terms.map(t=>`name contains '${t}'`).join(" or ");
   await Promise.all(carpetas.map(async folderId=>{
-    const query=`'${folderId}' in parents and name contains '${term}' and trashed = false`;
-    const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=25&key=${apiKey}`;
+    const query=`'${folderId}' in parents and (${nameClause}) and trashed = false`;
+    const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=50&key=${apiKey}`;
     try{
       const res=await fetch(url);
       const data=await res.json();
@@ -2314,42 +2315,47 @@ async function buscarEnCarpetasDrive(carpetas, apiKey, term){
 }
 
 function BuscadorDocumento(){
+  const MAX_DOCS=5;
   const [q,setQ]=useState("");
   const [buscado,setBuscado]=useState(false);
   const [drive,setDrive]=useState(null); // {loading}|{archivos}|{error}
-  const [copiado,setCopiado]=useState(false);
+  const [numerosBuscados,setNumerosBuscados]=useState([]);
+  const [limiteExcedido,setLimiteExcedido]=useState(false);
+  const [ultimoCopiado,setUltimoCopiado]=useState("");
   const [showDT,setShowDT]=useState(false);
   const carpetasCache=useRef(null); // cache de IDs de subcarpetas ya descubiertas en esta sesión
 
   const dtConfigurado = DT_WIDGET_URL && !DT_WIDGET_URL.startsWith("TU_");
   const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
 
-  const buscarDrive=async(numero)=>{
+  const buscarDrive=async(terminos)=>{
     if(!driveConfigurado){ setDrive({error:"config"}); return; }
     setDrive({loading:true});
     try{
-      const term=numero.replace(/'/g,"\\'");
       if(!carpetasCache.current){
         carpetasCache.current = await obtenerSubcarpetasDrive(GOOGLE_DRIVE_FOLDER_ID, GOOGLE_DRIVE_API_KEY);
       }
       const carpetas=carpetasCache.current;
-      const {resultados,carpetasConError} = await buscarEnCarpetasDrive(carpetas, GOOGLE_DRIVE_API_KEY, term);
-      setDrive({archivos:resultados, nCarpetas:carpetas.length, carpetasConError});
+      const {resultados,carpetasConError} = await buscarEnCarpetasDrive(carpetas, GOOGLE_DRIVE_API_KEY, terminos);
+      setDrive({archivos:resultados, carpetasConError});
     }catch{
       setDrive({error:"red"});
     }
   };
 
   const buscar=()=>{
-    const numero=q.trim();
-    if(!numero) return;
+    const numeros=Array.from(new Set(q.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean)));
+    if(numeros.length===0) return;
+    if(numeros.length>MAX_DOCS){ setLimiteExcedido(true); return; }
+    setLimiteExcedido(false);
+    setNumerosBuscados(numeros);
     setBuscado(true);
     setDrive(null);
-    buscarDrive(numero);
+    buscarDrive(numeros.map(n=>n.replace(/'/g,"\\'")));
   };
 
-  const copiarNumero=async()=>{
-    try{ await navigator.clipboard.writeText(q.trim()); setCopiado(true); setTimeout(()=>setCopiado(false),2500); }catch{}
+  const copiarNumero=async(n)=>{
+    try{ await navigator.clipboard.writeText(n); setUltimoCopiado(n); setTimeout(()=>setUltimoCopiado(""),2500); }catch{}
   };
 
   const resultCard = (contenido)=>(
@@ -2360,22 +2366,28 @@ function BuscadorDocumento(){
     <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:10}}>
       <div>
         <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔍 Buscar documento</div>
-        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa el N° de despacho o documento para ubicarlo en DispatchTrack o el PDF escaneado.</div>
+        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho o documento para ubicarlo en DispatchTrack o el PDF escaneado. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <input style={{...S.input,flex:1,minWidth:180}} placeholder="N° de despacho / documento..." value={q}
+        <input style={{...S.input,flex:1,minWidth:180}} placeholder="Ej: 432263, 424948, 1037054..." value={q}
           onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buscar();}}/>
         <button style={S.btnPri} onClick={buscar}>Buscar</button>
       </div>
+      {limiteExcedido&&<div style={{fontSize:12,color:C.warning}}>⚠ Máximo {MAX_DOCS} documentos por búsqueda — quita algunos e inténtalo de nuevo.</div>}
       {buscado&&(
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
           {resultCard(<>
             <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>🚚 DispatchTrack</div>
             {dtConfigurado?(<>
-              <button style={{...S.exportBtn,textAlign:"center"}} onClick={async()=>{await copiarNumero();setShowDT(true);}}>
-                {copiado?"✓ Copiado — pégalo abajo":"Copiar N° y abrir DT"}
-              </button>
-              <div style={{fontSize:11,color:C.muted}}>Se abre el widget de seguimiento; pega el número en el campo "Ingrese su número de despacho".</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {numerosBuscados.map(n=>(
+                  <button key={n} style={{...S.exportBtn,textAlign:"left",display:"flex",justifyContent:"space-between",gap:8}}
+                    onClick={async()=>{await copiarNumero(n);setShowDT(true);}}>
+                    <span>{n}</span><span>{ultimoCopiado===n?"✓ copiado":"Copiar →"}</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:11,color:C.muted}}>Copia cada número y pégalo (Ctrl+V) en el campo "Ingrese su número de despacho" del widget.</div>
             </>):(
               <div style={{fontSize:12,color:C.warning}}>Falta configurar DT_WIDGET_URL con la URL del widget de tu cuenta DispatchTrack.</div>
             )}
@@ -2390,16 +2402,23 @@ function BuscadorDocumento(){
               <div style={{fontSize:12,color:C.danger}}>Error de la API de Drive{drive?.detalle?`: ${drive.detalle}`:" (revisa la clave o los permisos de la carpeta)."}</div>
             ):drive?.error==="red"?(
               <div style={{fontSize:12,color:C.danger}}>Error de conexión con Drive.</div>
-            ):drive?.archivos?.length===0?(
-              <div style={{fontSize:12,color:C.muted}}>
-                No se encontró ningún archivo con ese número{drive?.nCarpetas?` (se revisó la carpeta y ${drive.nCarpetas-1} subcarpeta(s))`:""}.
-                {drive?.carpetasConError>0&&<div style={{color:C.warning,marginTop:4}}>⚠ {drive.carpetasConError} carpeta(s) no se pudieron revisar por permisos — puede que el archivo esté en una de ellas. Revisa que estén compartidas como "Cualquiera con el enlace".</div>}
+            ):drive?.archivos?(<>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {numerosBuscados.map(n=>{
+                  const matches=drive.archivos.filter(f=>f.name.includes(n));
+                  return (
+                    <div key={n}>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{n}</div>
+                      {matches.length===0
+                        ?<div style={{fontSize:12,color:C.muted,paddingLeft:6}}>— no encontrado</div>
+                        :matches.map(f=>(
+                          <a key={f.id} href={f.webViewLink} target="_blank" rel="noreferrer" style={{display:"block",fontSize:12,color:C.cyan,textDecoration:"none",fontWeight:600,paddingLeft:6}}>📄 {f.name} →</a>
+                        ))}
+                    </div>
+                  );
+                })}
               </div>
-            ):drive?.archivos?.length>0?(<>
-              {drive.archivos.map(f=>(
-                <a key={f.id} href={f.webViewLink} target="_blank" rel="noreferrer" style={{fontSize:12,color:C.cyan,textDecoration:"none",fontWeight:600}}>📄 {f.name} →</a>
-              ))}
-              {drive?.nCarpetas>1&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>Buscado en {drive.nCarpetas} carpeta(s) (incluye subcarpetas){drive?.carpetasConError>0?` · ${drive.carpetasConError} sin acceso`:""}</div>}
+              {drive.carpetasConError>0&&<div style={{fontSize:11,color:C.warning,marginTop:2}}>⚠ {drive.carpetasConError} carpeta(s) no se pudieron revisar por permisos — si algún documento no aparece, puede estar ahí. Revisa que estén compartidas como "Cualquiera con el enlace".</div>}
             </>):null}
           </>)}
         </div>
@@ -2411,7 +2430,7 @@ function BuscadorDocumento(){
               <div style={{fontWeight:800,color:C.cyan,fontSize:13}}>🚚 Seguimiento DispatchTrack</div>
               <button style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}} onClick={()=>setShowDT(false)}>✕</button>
             </div>
-            <div style={{fontSize:12,color:C.textSecondary,marginBottom:8}}>N° copiado al portapapeles: <b style={{color:C.textPrimary}}>{q.trim()}</b> — pégalo (Ctrl+V) en el campo de abajo.</div>
+            <div style={{fontSize:12,color:C.textSecondary,marginBottom:8}}>{ultimoCopiado?<>N° copiado al portapapeles: <b style={{color:C.textPrimary}}>{ultimoCopiado}</b> — pégalo (Ctrl+V) en el campo de abajo.</>:"Copia un número de la lista y pégalo en el campo de abajo."}</div>
             <iframe
               name="beetrack-widget"
               id="beetrack-widget"
