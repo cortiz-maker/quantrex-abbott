@@ -2101,9 +2101,15 @@ function EvolucionAnual({solicitudes=[]}){
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const data=[];
   for(let m=0;m<=mesActual;m++){
-    const desde=`${anioActual}-${String(m+1).padStart(2,"0")}-01`;
-    const hasta=new Date(anioActual,m+1,0).toISOString().slice(0,10);
-    const solsMes=solicitudes.filter(s=>s.fecha>=desde&&s.fecha<=hasta&&s.status!=="cancelada");
+    // Mismo criterio de período de facturación que el resto del dashboard
+    // (26 del mes anterior al 25 del mes en curso — ver getPeriodoActual /
+    // inicioPeriodo/finPeriodo) y respeta facturarEnPeriodo como override,
+    // igual que solicitudesPeriodo. Antes este gráfico usaba mes calendario
+    // puro (1→fin de mes) e ignoraba facturarEnPeriodo, lo que producía
+    // montos distintos a los de la tarjeta "Extras · Overnight + SPOT".
+    const inicioP=new Date(anioActual,m-1,26,12,0,0);
+    const finP=new Date(anioActual,m,25,12,0,0);
+    const solsMes=solicitudes.filter(s=>fechaEnPeriodo(s.facturarEnPeriodo||s.fecha,inicioP,finP)&&s.status!=="cancelada");
     const mp=metricasPeriodo(solsMes);
     data.push({mes:MESES[m], base:Math.max(0,mp.facturacion-mp.extras), extras:mp.extras, total:mp.facturacion, n:solsMes.length});
   }
