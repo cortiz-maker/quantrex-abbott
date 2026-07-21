@@ -862,13 +862,15 @@ async function loadUsuarios() {
   try {
     const data = await sbFetch("GET","usuarios","","?order=updated_at.asc");
     if(!data||!data.length) return null;
-    return data.map(u=>({email:u.email,password:u.password,perfil:u.perfil,nombre:u.nombre}));
+    return data.map(u=>({email:u.email,password:u.password,perfil:u.perfil,nombre:u.nombre,
+      ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado}));
   } catch(e) { return null; }
 }
 async function saveUsuarios(data) {
   try {
     const rows=(data||[]).filter(Boolean).map(u=>({
       id:u.email, email:u.email, password:u.password, perfil:u.perfil, nombre:u.nombre,
+      ultimo_acceso:u.ultimoAcceso||null, bloqueado:!!u.bloqueado,
       updated_at:new Date().toISOString(),
     }));
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
@@ -1090,6 +1092,16 @@ function getUltimoAcceso(email) {
 function diasSinAcceso(email) {
   const ua = getUltimoAcceso(email);
   if (!ua) return null;
+  return Math.floor((new Date() - ua) / (1000 * 60 * 60 * 24));
+}
+// Igual que diasSinAcceso, pero a partir del campo ultimoAcceso persistido en
+// Supabase (usuario.ultimoAcceso), no de localStorage. Así el admin ve el dato
+// real sin importar desde qué dispositivo/navegador consulta el panel.
+const DIAS_INACTIVIDAD_BLOQUEO = 10;
+function diasInactividadUsuario(u) {
+  if (!u || !u.ultimoAcceso) return null;
+  const ua = new Date(u.ultimoAcceso);
+  if (isNaN(ua.getTime())) return null;
   return Math.floor((new Date() - ua) / (1000 * 60 * 60 * 24));
 }
 function debeCambiarPassword(usuario) {
@@ -1570,6 +1582,18 @@ export default function QuantrexAbbott() {
     if(!ok){ setRecordatorios(prev); showToast("No se pudo eliminar el recordatorio.","danger"); return; }
     showToast("Recordatorio eliminado.","danger");
   }
+  // Registra el acceso del usuario en Supabase (no en localStorage) para que el
+  // conteo de días de inactividad sea real y visible desde cualquier dispositivo.
+  async function handleLoginExitoso(u){
+    setSesion(u);
+    try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}
+    if(u.perfil==="chofer") setPerfilChofer(u);
+    if(u.perfil==="cliente"){
+      const actualizados=usuarios.map(x=>x&&x.email===u.email?{...x,ultimoAcceso:new Date().toISOString(),bloqueado:false}:x);
+      setUsuarios(actualizados);
+      await saveUsuarios(actualizados);
+    }
+  }
   async function handleSaveIncidencia(i){
     const existe=incidencias.some(x=>x.id===i.id);
     const upd=existe?incidencias.map(x=>x.id===i.id?i:x):[i,...incidencias];
@@ -1610,6 +1634,48 @@ export default function QuantrexAbbott() {
     });
     showToast(`Ticket ${folio} generado — la alerta se marcó como resuelta.`);
   }
+
+  // Revisa usuarios cliente sin acceso hace DIAS_INACTIVIDAD_BLOQUEO días o más:
+  // los marca bloqueado y levanta una incidencia (una sola vez por bloqueo).
+  // Se ejecuta solo en sesión admin, al cargar el panel.
+  async function revisarInactividadClientes(){
+    const clientes=(usuarios||[]).filter(u=>u&&u.perfil==="cliente");
+    if(!clientes.length) return;
+    let huboCambios=false;
+    const usuariosActualizados=usuarios.map(u=>({...u}));
+    for(const u of clientes){
+      if(u.bloqueado) continue; // ya bloqueado, no se re-evalúa hasta que un admin lo reactive
+      const dias=diasInactividadUsuario(u);
+      if(dias===null || dias<DIAS_INACTIVIDAD_BLOQUEO) continue;
+      const idx=usuariosActualizados.findIndex(x=>x&&x.email===u.email);
+      if(idx>=0) usuariosActualizados[idx]={...usuariosActualizados[idx],bloqueado:true};
+      huboCambios=true;
+      const folio=generarFolioIncidencia(incidencias);
+      await handleSaveIncidencia({
+        id:"inc_"+Date.now().toString()+"_"+idx, folio, fecha:new Date().toISOString().slice(0,10),
+        tipo:"inactividad_usuario", contraparte:u.nombre||u.email,
+        ubicacion:u.email, descripcion:`Usuario ${u.nombre||u.email} sin acceder al sistema por ${dias} días consecutivos. Acceso bloqueado automáticamente.`,
+        fotos:[], notificado:false, fechaNotificacion:"", estado:"abierta",
+        autor:"Sistema", origen:"sistema",
+      });
+    }
+    if(huboCambios){
+      setUsuarios(usuariosActualizados);
+      await saveUsuarios(usuariosActualizados);
+    }
+  }
+  // Reactiva a un usuario bloqueado y reinicia su contador de inactividad.
+  async function handleDesbloquearUsuario(email){
+    const actualizados=usuarios.map(x=>x&&x.email===email?{...x,bloqueado:false,ultimoAcceso:new Date().toISOString()}:x);
+    setUsuarios(actualizados);
+    const ok=await saveUsuarios(actualizados);
+    if(!ok){ setUsuarios(usuarios); showToast("No se pudo desbloquear al usuario.","danger"); return; }
+    showToast("Usuario desbloqueado. Ya puede ingresar nuevamente.");
+  }
+  useEffect(()=>{
+    if(sesion?.perfil!=="admin" || loading) return;
+    revisarInactividadClientes();
+  },[sesion,loading]); // eslint-disable-line
 
   async function handleSaveMeta(periodo,kpi,valor){
     const id=periodo+"|"+kpi;
@@ -1727,7 +1793,7 @@ export default function QuantrexAbbott() {
       {sesion?.perfil==="admin"&&sidebarOpen&&<div style={{position:"fixed",inset:0,background:"#0006",zIndex:199}} onClick={()=>setSidebarOpen(false)}/>}
       <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
-        :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={(u)=>{setSesion(u);try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}registrarAcceso(u.email);if(u.perfil==="chofer")setPerfilChofer(u);}}/>)
+        :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={handleLoginExitoso}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
@@ -1743,7 +1809,7 @@ export default function QuantrexAbbott() {
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
-        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} setView={setView}/>)
+        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}/>)
         :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
         :view==="certificado_aseo"?(<CertificadoAseo gastos={gastos} vehiculos={vehiculos} choferes={choferes} setView={setView} sesion={sesion}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
@@ -2542,6 +2608,31 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&showCostosDesglose&&<ModalCostosDesglose gastos={gastos} di={diAct} df={dfAct} onClose={()=>setShowCostosDesglose(false)}/>}
 
       <div style={S.sectionTitle}>Operación · {nombrePeriodo}</div>
+      {esCliente?(()=>{
+        // Cumplimiento del día: % de solicitudes ingresadas hoy que ya fueron
+        // gestionadas (cualquier estado distinto de "pendiente") o completadas.
+        const hoyStr=new Date().toISOString().slice(0,10);
+        const solHoy=(solicitudes||[]).filter(s=>s.fecha===hoyStr);
+        const totalHoy=solHoy.length;
+        const gestionadasHoy=solHoy.filter(s=>s.status!=="pendiente").length;
+        const completadasHoy=solHoy.filter(s=>s.status==="completada"||s.status==="devolucion").length;
+        const pct=totalHoy>0?Math.round(gestionadasHoy/totalHoy*100):null;
+        const col=pct===null?C.muted:pct>=80?C.success:pct>=50?C.warning:C.danger;
+        return(
+          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Cumplimiento del día</div>
+            {pct===null?(
+              <div style={{fontSize:12,color:C.muted}}>Aún no se registran solicitudes ingresadas hoy.</div>
+            ):(<>
+              <div style={{fontSize:32,fontWeight:900,color:col}}>{pct}%</div>
+              <div style={{fontSize:12,color:C.textSecondary}}>{gestionadasHoy} de {totalHoy} solicitudes ingresadas hoy ya fueron gestionadas ({completadasHoy} completadas)</div>
+              <div style={{width:"100%",height:6,background:C.navy,borderRadius:4,overflow:"hidden"}}>
+                <div style={{width:`${pct}%`,height:"100%",background:col,borderRadius:4}}/>
+              </div>
+            </>)}
+          </div>
+        );
+      })():(
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
           ...(stats.no_entregado>0?[["No Entregado",stats.no_entregado,"#F97316"]]:[]),
@@ -2552,6 +2643,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           </div>
         ))}
       </div>
+      )}
       {(()=>{
         const sinObs=solicitudesPeriodo.filter(s=>s.status==="no_entregado"&&!(s.observacionChofer||"").trim()).length;
         if(sinObs<1) return null;
@@ -2971,7 +3063,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
           <div style={S.fieldLabel}>{sol.rechazoFirma?"Rechazo de firma":(sol.tipo==="carga_ol"?"Firma del despachador":"Firma del receptor")}</div>
           {sol.nombreReceptor&&<div style={{fontSize:13,color:C.textPrimary,marginBottom:6}}>👤 {sol.nombreReceptor}</div>}
           {sol.rechazoFirma
-            ?<div style={{background:C.danger+"22",border:"1px solid "+C.danger+"44",borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>✗ El receptor se negó a firmar digitalmente</div>
+            ?<div style={{background:C.info+"18",border:"1px solid "+C.info+"44",borderRadius:8,padding:"8px 12px",fontSize:13,color:C.info,fontWeight:600}}>🖊 Firma y timbre en papel · firma digital no fue necesaria</div>
             :<img src={sol.firmaReceptor} alt="Firma receptor" style={{maxWidth:280,borderRadius:8,border:"1px solid "+C.border,background:"#f9f9f9"}}/>
           }
         </div>
@@ -3046,7 +3138,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         </div>
       )}
       </>)}
-      {!esAdmin&&<div style={{...S.detailBlock,fontSize:12,color:C.muted}}>Estado actual: <b style={{color:sm.color}}>{sm.label}</b> · Solo un administrador puede cambiar el estado desde este panel.</div>}
+      {!esAdmin&&<div style={{...S.detailBlock,fontSize:12,color:C.muted}}>Estado actual: <b style={{color:sm.color}}>{sm.label}</b></div>}
       <LogEstados log={sol.statusLog||[]} solId={sol.id} onEditLog={onEditLog} esAdmin={esAdmin} usuarioActual={sesion?.nombre||sesion?.email||"Administrador"}/>
       {esAdmin&&<div style={{marginTop:16}}>
         {!confirmDel
@@ -3341,6 +3433,10 @@ function PantallaLogin({onLogin,usuarios=USUARIOS,choferes=CHOFERES}){
   function handleLogin(){
     const u=usuarios.find(u=>u.email===email&&u.password===password);
     if(u){
+      if(u.bloqueado){
+        setError(`Cuenta bloqueada por inactividad (${DIAS_INACTIVIDAD_BLOQUEO}+ días sin acceder). Contacta a Quantrex para reactivarla.`);
+        return;
+      }
       if(debeCambiarPassword(u)){
         setCambioRequerido(u);
       } else {
@@ -3780,7 +3876,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
 
 
 // ── Admin Usuarios ─────────────────────────────────────────────────────────
-function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,setView}){
+function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuario,setView}){
   const [listaU,setListaU]=useState(usuarios.filter(u=>u.perfil!=="admin"));
   const [listaC,setListaC]=useState(choferes);
   const [tab,setTab]=useState("operadores");
@@ -3891,16 +3987,17 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,setView}){
             </div>
           )}
           {usuarios.filter(u=>u.perfil==="cliente").map((u,i)=>{
-            const dias=diasSinAcceso(u.email);
+            const dias=diasInactividadUsuario(u);
             const cambio=debeCambiarPassword(u);
             return(
-              <div key={i} style={{background:C.navySurface,border:"1px solid "+(cambio?C.warning:C.border),borderRadius:10,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+              <div key={i} style={{background:C.navySurface,border:"1px solid "+(u.bloqueado?C.danger:cambio?C.warning:C.border),borderRadius:10,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   <div style={{flex:1}}>
                     <div style={{fontWeight:700,fontSize:13}}>{u.nombre}</div>
                     <div style={{fontSize:12,color:C.muted}}>{u.email}</div>
                   </div>
                   <div style={{display:"flex",gap:6}}>
+                    {u.bloqueado&&<button style={{...S.exportBtn,fontSize:11,borderColor:C.success,color:C.success}} onClick={()=>onDesbloquearUsuario?.(u.email)}>🔓 Desbloquear</button>}
                     <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{
                       const idx=listaU.findIndex(lu=>lu.email===u.email);
                       if(idx>=0){setEditU(idx);setNuevoU(false);setFormU({...u});}
@@ -3910,6 +4007,9 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,setView}){
                   </div>
                 </div>
                 <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  {u.bloqueado&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.danger,fontWeight:700}}>
+                    🔒 Bloqueado por inactividad ({DIAS_INACTIVIDAD_BLOQUEO}+ días sin acceder)
+                  </div>}
                   <div style={{background:dias===null?"#333":dias>7?C.danger+"22":C.success+"22",border:"1px solid "+(dias===null?"#555":dias>7?C.danger:C.success),borderRadius:6,padding:"4px 10px",fontSize:11,color:dias===null?C.muted:dias>7?C.danger:C.success,fontWeight:700}}>
                     {dias===null?"Sin accesos registrados":dias===0?"Accedió hoy":dias===1?"Hace 1 día":dias+" días sin acceder"}
                   </div>
@@ -4938,28 +5038,13 @@ function ResumenCO2({ solicitudes, rutas=[], compact=false }) {
             <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
               <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KM</div>
               <div style={{fontSize:20,fontWeight:900,color:C.cyan}}>{co2Data.totalKm} km</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>desde Pudahuel</div>
-            </div>
-            <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.border}}>
-              <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>TOTAL KG TRANSPORTADOS</div>
-              <div style={{fontSize:20,fontWeight:900,color:C.warning}}>{co2Data.totalKg.toLocaleString("es-CL")} kg</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{co2Data.nSols} entregas × 50 kg</div>
-            </div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.cyan+"44"}}>
-              <div style={{fontSize:10,color:C.cyan,fontWeight:700,marginBottom:4}}>ÍNDICE TKM (Abbott)</div>
-              <div style={{fontSize:20,fontWeight:900,color:C.cyan}}>{parseInt(co2Data.co2).toLocaleString("es-CL")}</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>km × kg transportados</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>desde Pudahuel · período actual</div>
             </div>
             <div style={{background:C.navy,borderRadius:10,padding:"12px",border:"1px solid "+C.success+"44"}}>
               <div style={{fontSize:10,color:C.success,fontWeight:700,marginBottom:4}}>CO₂ ESTIMADO</div>
               <div style={{fontSize:20,fontWeight:900,color:C.success}}>{(parseInt(co2Data.co2)/1000*0.15).toFixed(1)} kg</div>
               <div style={{fontSize:10,color:C.muted,marginTop:2}}>tkm × 0,15 kg CO₂/tkm</div>
             </div>
-          </div>
-          <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>
-            Índice tkm = Σ km (Pudahuel → destino) × Σ kg (base 50 kg/entrega) · CO₂ según estándar GLEC/ISO 14083
           </div>
         </>
       ):(
@@ -5426,7 +5511,7 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
               <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border,display:"flex",flexDirection:"column",gap:10}} onClick={e=>e.stopPropagation()}>
                 <div style={{fontSize:13,color:C.textPrimary}}>{i.descripcion}</div>
                 <div style={{fontSize:11.5,color:C.muted}}>
-                  Registrado por {i.autor||"—"}{i.origen==="alerta"?" · generado desde alerta de flota":""}
+                  Registrado por {i.autor||"—"}{i.origen==="alerta"?" · generado desde alerta de flota":i.origen==="sistema"?" · generado automáticamente por el sistema":""}
                   {i.notificado?` · Notificado a la contraparte${i.fechaNotificacion?" el "+i.fechaNotificacion:""}`:" · Sin notificar a la contraparte"}
                 </div>
                 {(i.fotos||[]).length>0&&(
@@ -6024,6 +6109,7 @@ const TIPO_INCIDENCIA = {
   retraso_capacidad:  { label:"Retraso / capacidad excedida",  icon:"⏱", color:"#F97316" },
   precierre_facturacion: { label:"Pre-Cierre / Facturación",   icon:"🧾", color:"#22C55E" },
   cumplimiento_flota: { label:"Cumplimiento de flota",         icon:"🔧", color:"#00AEEF" },
+  inactividad_usuario:{ label:"Inactividad de usuario",        icon:"🔒", color:"#EF4444" },
   otro:               { label:"Otro",                          icon:"•",  color:"#8BAFD4" },
 };
 function metaTipoIncidencia(t){ return TIPO_INCIDENCIA[t] || TIPO_INCIDENCIA.otro; }
