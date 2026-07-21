@@ -303,20 +303,28 @@ function calcularParadas(puntos, MIN_MIN=3, RADIO_M=60){
 // Genera la URL de Static Maps con el recorrido completo + marcadores de
 // inicio, fin y paradas detectadas. Reduce puntos si son muchos, para no
 // exceder el límite de largo de URL de la API.
-function getMapaTrazabilidadUrl(puntos, paradas){
+function getMapaTrazabilidadUrl(puntos, paradas, gruposPorVehiculo){
   if(!puntos||puntos.length===0) return null;
   const MAX_PUNTOS=300;
-  const paso=Math.max(1,Math.ceil(puntos.length/MAX_PUNTOS));
-  const muestreados=puntos.filter((_,i)=>i%paso===0);
-  const encoded=encodePolyline(muestreados.map(p=>[p.lat,p.lng]));
+  // Si no vienen grupos (llamadas antiguas), cae al comportamiento previo
+  // tratando todo como un solo grupo.
+  const grupos=gruposPorVehiculo&&gruposPorVehiculo.length?gruposPorVehiculo:[puntos];
   const params=new URLSearchParams({
     size:"640x400", maptype:"roadmap", language:"es", region:"CL",
     key:GOOGLE_MAPS_API_KEY,
   });
-  params.append("path", `weight:4|color:0x00AEEFff|enc:${encoded}`);
-  const inicio=puntos[0], fin=puntos[puntos.length-1];
-  params.append("markers", `color:green|label:A|${inicio.lat},${inicio.lng}`);
-  params.append("markers", `color:red|label:B|${fin.lat},${fin.lng}`);
+  const paleta=["0x00AEEFff","0xFF7A00ff","0x22C55Eff","0xE11D48ff","0xA855F7ff"];
+  const totalPuntos=grupos.reduce((a,g)=>a+g.length,0);
+  const paso=Math.max(1,Math.ceil(totalPuntos/MAX_PUNTOS));
+  grupos.forEach((grupo,gi)=>{
+    if(grupo.length<2) return;
+    const muestreados=grupo.filter((_,i)=>i%paso===0);
+    const encoded=encodePolyline(muestreados.map(p=>[p.lat,p.lng]));
+    params.append("path", `weight:4|color:${paleta[gi%paleta.length]}|enc:${encoded}`);
+    const inicio=grupo[0], fin=grupo[grupo.length-1];
+    params.append("markers", `color:green|label:A|${inicio.lat},${inicio.lng}`);
+    params.append("markers", `color:red|label:B|${fin.lat},${fin.lng}`);
+  });
   // Máximo ~8 paradas como marcadores para no saturar el mapa
   (paradas||[]).slice(0,8).forEach((pa,i)=>{
     params.append("markers", `color:orange|label:${i+1}|${pa.lat},${pa.lng}`);
@@ -5079,18 +5087,39 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
     setLoading(false);
   }
 
-  const paradas=calcularParadas(puntos);
-  const mapaUrl=getMapaTrazabilidadUrl(puntos,paradas);
+  // Agrupar por vehículo (y dentro de cada vehículo ya viene ordenado por
+  // timestamp_captura desde la query). Esto evita sumar el salto entre el
+  // último punto de un vehículo y el primer punto de otro cuando el filtro
+  // es "Todos los vehículos" — ese salto no es un desplazamiento real.
+  const gruposPorVehiculo=(()=>{
+    const map=new Map();
+    for(const p of puntos){
+      const key=p.vehiculo_id||"_sin_vehiculo";
+      if(!map.has(key)) map.set(key,[]);
+      map.get(key).push(p);
+    }
+    return [...map.values()];
+  })();
+
+  const paradas=gruposPorVehiculo.flatMap(g=>calcularParadas(g));
+  const mapaUrl=getMapaTrazabilidadUrl(puntos,paradas,gruposPorVehiculo);
 
   const distanciaTotalKm=(()=>{
     let d=0;
-    for(let i=1;i<puntos.length;i++){
-      d+=distanciaMetros(puntos[i-1].lat,puntos[i-1].lng,puntos[i].lat,puntos[i].lng);
+    for(const grupo of gruposPorVehiculo){
+      for(let i=1;i<grupo.length;i++){
+        d+=distanciaMetros(grupo[i-1].lat,grupo[i-1].lng,grupo[i].lat,grupo[i].lng);
+      }
     }
     return (d/1000).toFixed(1);
   })();
-  const tiempoTotalMin=puntos.length>=2?
-    Math.round((new Date(puntos[puntos.length-1].timestamp_captura)-new Date(puntos[0].timestamp_captura))/60000):0;
+  // Tiempo en movimiento/detenido también se suma por vehículo, no de punta
+  // a punta del conjunto global (dos móviles en paralelo no deben duplicar
+  // ni mezclar sus ventanas de tiempo).
+  const tiempoTotalMin=gruposPorVehiculo.reduce((acc,g)=>{
+    if(g.length<2) return acc;
+    return acc+Math.round((new Date(g[g.length-1].timestamp_captura)-new Date(g[0].timestamp_captura))/60000);
+  },0);
   const tiempoDetenidoMin=paradas.reduce((a,p)=>a+p.duracionMin,0);
   const tiempoMovimientoMin=Math.max(0,tiempoTotalMin-tiempoDetenidoMin);
   const velocidadPromKmh=tiempoMovimientoMin>0?(parseFloat(distanciaTotalKm)/(tiempoMovimientoMin/60)).toFixed(1):"0.0";
