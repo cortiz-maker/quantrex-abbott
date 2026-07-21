@@ -2232,8 +2232,60 @@ function EvolucionAnual({solicitudes=[]}){
   );
 }
 
-// ── Km recorridos del año (mensual + récord diario + CO2) ─────────────────
-// Fuente: tracking_puntos (GPS real). Cálculo bajo demanda (botón) porque un
+// ── Mapa de trazabilidad del día (GPS real, hoy) ──────────────────────────
+// Se muestra bajo "Cumplimiento del día" en el perfil cliente. Reutiliza el
+// mismo motor de mapa estático que VistaTrazabilidad (admin/operador), pero
+// acotado siempre a la fecha de hoy y sin filtros.
+function MapaTrazabilidadHoy(){
+  const [estado,setEstado]=useState("cargando"); // cargando | ok | vacio | error
+  const [mapaUrl,setMapaUrl]=useState(null);
+  const [kmHoy,setKmHoy]=useState("0.0");
+  const [nVehiculos,setNVehiculos]=useState(0);
+
+  useEffect(()=>{
+    let cancelado=false;
+    (async()=>{
+      setEstado("cargando");
+      try{
+        const hoy=new Date().toISOString().slice(0,10);
+        const q=`?order=vehiculo_id.asc,timestamp_captura.asc&timestamp_captura=gte.${hoy}T00:00:00&timestamp_captura=lte.${hoy}T23:59:59`;
+        const data=await sbFetch("GET","tracking_puntos","",q);
+        if(cancelado) return;
+        const puntos=data||[];
+        if(!puntos.length){ setEstado("vacio"); return; }
+        const map=new Map();
+        for(const p of puntos){
+          const key=p.vehiculo_id||"_sin_vehiculo";
+          if(!map.has(key)) map.set(key,[]);
+          map.get(key).push(p);
+        }
+        const grupos=[...map.values()];
+        const paradas=grupos.flatMap(g=>calcularParadas(g));
+        const url=getMapaTrazabilidadUrl(puntos,paradas,grupos);
+        let d=0;
+        for(const g of grupos){ for(let i=1;i<g.length;i++){ d+=distanciaMetros(g[i-1].lat,g[i-1].lng,g[i].lat,g[i].lng); } }
+        setKmHoy((d/1000).toFixed(1));
+        setNVehiculos(grupos.length);
+        setMapaUrl(url);
+        setEstado("ok");
+      }catch(e){ if(!cancelado) setEstado("error"); }
+    })();
+    return ()=>{ cancelado=true; };
+  },[]);
+
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Trazabilidad de hoy</div>
+        {estado==="ok"&&<div style={{fontSize:10,color:C.muted}}>{kmHoy} km · {nVehiculos} vehículo{nVehiculos===1?"":"s"}</div>}
+      </div>
+      {estado==="cargando"&&<div style={{fontSize:12,color:C.muted}}>Cargando recorrido del día...</div>}
+      {estado==="vacio"&&<div style={{fontSize:12,color:C.muted}}>Aún no hay puntos GPS registrados hoy.</div>}
+      {estado==="error"&&<div style={{fontSize:12,color:C.danger}}>No se pudo cargar la trazabilidad de hoy.</div>}
+      {estado==="ok"&&mapaUrl&&<img src={mapaUrl} alt="Mapa de trazabilidad del día" style={{width:"100%",borderRadius:10,border:"1px solid "+C.border,display:"block"}}/>}
+    </div>
+  );
+}
 // año de puntos GPS es demasiado dato para traer automáticamente en cada carga
 // del Dashboard. Se pagina la consulta y se limita a un máximo de puntos para
 // que la página no se cuelgue con historiales muy grandes.
@@ -2644,6 +2696,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         ))}
       </div>
       )}
+      {esCliente&&<MapaTrazabilidadHoy/>}
       {(()=>{
         const sinObs=solicitudesPeriodo.filter(s=>s.status==="no_entregado"&&!(s.observacionChofer||"").trim()).length;
         if(sinObs<1) return null;
