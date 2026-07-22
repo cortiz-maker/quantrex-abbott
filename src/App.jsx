@@ -2744,30 +2744,44 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
 
   return(
     <div style={S.section}>
+      <div style={{border:"1px solid "+(yaCerrado?C.muted:"#DC2626"),borderRadius:12,overflow:"hidden",background:C.navySurface}}>
+        {!yaCerrado&&<div style={{height:6,background:"repeating-linear-gradient(45deg,#DC2626 0,#DC2626 12px,#FBBF24 12px,#FBBF24 24px)"}}/>}
+        <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:11,fontWeight:800,color:yaCerrado?C.muted:"#FBBF24",letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>{yaCerrado?"✓ Período cerrado":"⚠ Período activo"}</div>
+            <div style={{fontWeight:800,fontSize:16,color:C.textPrimary}}>{nombrePeriodo}</div>
+            <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>{fmt(inicio)} → {fmt(fin)} · {solicitudesPeriodo.length} solicitudes</div>
+          </div>
+          {esAdmin&&(yaCerrado
+            ?<div style={{...S.badge,background:C.success+"22",color:C.success}}>Cerrado</div>
+            :!confirmCierre
+              ?<button style={S.btnCierre} onClick={()=>setConfirmCierre(true)}>Cerrar Mes</button>
+              :<div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
+                <div style={{fontSize:12,color:C.warning,fontWeight:600}}>¿Exportar y cerrar {nombrePeriodo}?</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted,fontSize:12}} onClick={()=>setConfirmCierre(false)}>Cancelar</button>
+                  <button style={{...S.statusBtn,background:C.cyan,color:"#fff",border:"none",fontSize:12}} onClick={onCerrarMes}>Confirmar</button>
+                </div>
+              </div>
+          )}
+        </div>
+      </div>
+
+      {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
+        <div style={{width:1,height:18,background:C.border}}/>
+        {Object.entries(STATUS_META).map(([k,meta])=>{
+          const n=solicitudesPeriodo.filter(s=>s.status===k).length;
+          if(n===0)return null;
+          return <div key={k} style={{fontSize:12,color:C.textSecondary}}><strong style={{color:meta.color}}>{n}</strong> {meta.label}</div>;
+        })}
+      </div>}
+
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Dashboard</div>
         {solicitudes.length>0&&!esCliente&&<button title="Exporta solo las solicitudes del período activo" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte del período</span></button>}
       </div>
       <BuscadorDocumento/>
-      <div style={{...S.periodoBanner,borderColor:yaCerrado?C.muted:C.cyan}}>
-        <div style={{flex:1}}>
-          <div style={{fontSize:11,fontWeight:700,color:yaCerrado?C.muted:C.cyan,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>{yaCerrado?"✓ Período cerrado":"Período activo"}</div>
-          <div style={{fontWeight:800,fontSize:16,color:C.textPrimary}}>{nombrePeriodo}</div>
-          <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>{fmt(inicio)} → {fmt(fin)} · {solicitudesPeriodo.length} solicitudes</div>
-        </div>
-        {esAdmin&&(yaCerrado
-          ?<div style={{...S.badge,background:C.success+"22",color:C.success}}>Cerrado</div>
-          :!confirmCierre
-            ?<button style={S.btnCierre} onClick={()=>setConfirmCierre(true)}>Cerrar Mes</button>
-            :<div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
-              <div style={{fontSize:12,color:C.warning,fontWeight:600}}>¿Exportar y cerrar {nombrePeriodo}?</div>
-              <div style={{display:"flex",gap:8}}>
-                <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted,fontSize:12}} onClick={()=>setConfirmCierre(false)}>Cancelar</button>
-                <button style={{...S.statusBtn,background:C.cyan,color:"#fff",border:"none",fontSize:12}} onClick={onCerrarMes}>Confirmar</button>
-              </div>
-            </div>
-        )}
-      </div>
       {abrirPeriodo && (
         <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
           <div style={{fontSize:13,fontWeight:800,color:C.cyan}}>Abrir nuevo período de facturación</div>
@@ -2893,15 +2907,6 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       </>)}
 
       {esCliente&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
-      {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
-        <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
-        <div style={{width:1,height:18,background:C.border}}/>
-        {Object.entries(STATUS_META).map(([k,meta])=>{
-          const n=solicitudesPeriodo.filter(s=>s.status===k).length;
-          if(n===0)return null;
-          return <div key={k} style={{fontSize:12,color:C.textSecondary}}><strong style={{color:meta.color}}>{n}</strong> {meta.label}</div>;
-        })}
-      </div>}
       {!esCliente&&<>
       <div style={S.sectionTitle}>Solicitudes recientes</div>
       {solicitudes.length===0?<EmptyState msg="Sin solicitudes aún." action={()=>setView("nueva")}/>
