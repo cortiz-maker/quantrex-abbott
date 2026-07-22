@@ -2817,12 +2817,10 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&showCostosDesglose&&<ModalCostosDesglose gastos={gastos} di={diAct} df={dfAct} onClose={()=>setShowCostosDesglose(false)}/>}
 
       <div style={S.sectionTitle}>Operación · {nombrePeriodo}</div>
-      {esCliente?(()=>{
+      {(()=>{
         // Cumplimiento del día: promedio ponderado del avance por etapa de
         // cada solicitud ingresada hoy (pendiente=25%, en tránsito=50%,
-        // cualquier estado final=100%). Reemplaza el conteo binario anterior
-        // (pendiente/gestionada), que mostraba 100% aunque todo siguiera en
-        // tránsito.
+        // cualquier estado final=100%). Se muestra para todos los perfiles.
         const hoyStr=new Date().toISOString().slice(0,10);
         const solHoy=(solicitudes||[]).filter(s=>s.fecha===hoyStr);
         const totalHoy=solHoy.length;
@@ -2838,7 +2836,8 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           {k:"cancelada",label:"Canceladas",color:C.danger},
         ].map(x=>({...x,n:solHoy.filter(s=>s.status===x.k).length})).filter(x=>x.n>0);
         return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose} hoyStr={hoyStr} setView={setView} setFilterStatus={setFilterStatus} setFilterFecha={setFilterFecha}/>;
-      })():(
+      })()}
+      {!esCliente&&(
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
           ...(stats.no_entregado>0?[["No Entregado",stats.no_entregado,"#F97316"]]:[]),
