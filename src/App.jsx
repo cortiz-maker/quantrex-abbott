@@ -2744,26 +2744,32 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
 
   return(
     <div style={S.section}>
-      <div style={{border:"1px solid "+(yaCerrado?C.muted:"#DC2626"),borderRadius:12,overflow:"hidden",background:C.navySurface}}>
-        {!yaCerrado&&<div style={{height:6,background:"repeating-linear-gradient(45deg,#DC2626 0,#DC2626 12px,#FBBF24 12px,#FBBF24 24px)"}}/>}
-        <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
-          <div style={{flex:1}}>
-            <div style={{fontSize:11,fontWeight:800,color:yaCerrado?C.muted:"#FBBF24",letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>{yaCerrado?"✓ Período cerrado":"⚠ Período activo"}</div>
-            <div style={{fontWeight:800,fontSize:16,color:C.textPrimary}}>{nombrePeriodo}</div>
-            <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>{fmt(inicio)} → {fmt(fin)} · {solicitudesPeriodo.length} solicitudes</div>
-          </div>
-          {esAdmin&&(yaCerrado
-            ?<div style={{...S.badge,background:C.success+"22",color:C.success}}>Cerrado</div>
-            :!confirmCierre
-              ?<button style={S.btnCierre} onClick={()=>setConfirmCierre(true)}>Cerrar Mes</button>
-              :<div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
-                <div style={{fontSize:12,color:C.warning,fontWeight:600}}>¿Exportar y cerrar {nombrePeriodo}?</div>
-                <div style={{display:"flex",gap:8}}>
-                  <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted,fontSize:12}} onClick={()=>setConfirmCierre(false)}>Cancelar</button>
-                  <button style={{...S.statusBtn,background:C.cyan,color:"#fff",border:"none",fontSize:12}} onClick={onCerrarMes}>Confirmar</button>
-                </div>
-              </div>
+      <div style={{position:"relative",border:"1.5px solid "+(yaCerrado?C.border:"#C9A227"),borderRadius:14,overflow:"hidden",background:"linear-gradient(135deg,#14163A 0%,#1B1E4A 55%,#22265A 100%)",boxShadow:yaCerrado?"none":"0 0 18px -6px #C9A22755"}}>
+        <div style={{display:"flex",alignItems:"stretch"}}>
+          {!yaCerrado&&(
+            <div style={{position:"relative",width:76,flexShrink:0,background:"linear-gradient(160deg,#F1D488 0%,#D9B44A 45%,#A97F1E 100%)",clipPath:"polygon(0 0,100% 0,68% 100%,0 100%)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <span style={{fontSize:24,color:"#1B1E4A",transform:"translateX(-6px)"}}>⚠</span>
+            </div>
           )}
+          <div style={{flex:1,padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,fontWeight:800,color:yaCerrado?C.muted:"#D9B44A",letterSpacing:1.8,textTransform:"uppercase",marginBottom:4}}>{yaCerrado?"✓ Período cerrado":"Período activo"}</div>
+              <div style={{fontWeight:800,fontSize:17,color:"#fff"}}>{nombrePeriodo}</div>
+              <div style={{fontSize:12,color:"#AEB3D6",marginTop:2}}>{fmt(inicio)} → {fmt(fin)} · {solicitudesPeriodo.length} solicitudes</div>
+            </div>
+            {esAdmin&&(yaCerrado
+              ?<div style={{...S.badge,background:C.success+"22",color:C.success}}>Cerrado</div>
+              :!confirmCierre
+                ?<button style={S.btnCierre} onClick={()=>setConfirmCierre(true)}>Cerrar Mes</button>
+                :<div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
+                  <div style={{fontSize:12,color:C.warning,fontWeight:600}}>¿Exportar y cerrar {nombrePeriodo}?</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted,fontSize:12}} onClick={()=>setConfirmCierre(false)}>Cancelar</button>
+                    <button style={{...S.statusBtn,background:C.cyan,color:"#fff",border:"none",fontSize:12}} onClick={onCerrarMes}>Confirmar</button>
+                  </div>
+                </div>
+            )}
+          </div>
         </div>
       </div>
 
