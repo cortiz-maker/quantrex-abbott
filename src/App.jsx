@@ -2234,6 +2234,72 @@ function EvolucionAnual({solicitudes=[]}){
   );
 }
 
+// ── Cumplimiento del día (gauge circular animado + desglose interactivo) ──
+function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[]}){
+  const [open,setOpen]=useState(false);
+  const [animPct,setAnimPct]=useState(0);
+  const R=52, STROKE=12, CIRC=2*Math.PI*R;
+
+  useEffect(()=>{
+    if(pct===null) return;
+    setAnimPct(0);
+    const t=setTimeout(()=>setAnimPct(pct),80); // deja pintar el círculo en 0 antes de animar
+    return ()=>clearTimeout(t);
+  },[pct]);
+
+  const offset=CIRC-(animPct/100)*CIRC;
+
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Cumplimiento del día</div>
+        {pct!==null&&desglose.length>0&&(
+          <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>
+            Detalle <span style={{display:"inline-block",transition:"transform .2s",transform:open?"rotate(180deg)":"rotate(0deg)"}}>▾</span>
+          </button>
+        )}
+      </div>
+
+      {pct===null?(
+        <div style={{fontSize:12,color:C.muted}}>Aún no se registran solicitudes ingresadas hoy.</div>
+      ):(
+        <div style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
+          <div
+            style={{position:"relative",width:120,height:120,cursor:desglose.length>0?"pointer":"default"}}
+            onClick={()=>desglose.length>0&&setOpen(o=>!o)}
+            title={`${gestionadasHoy} de ${totalHoy} solicitudes gestionadas hoy`}
+          >
+            <svg width={120} height={120} viewBox="0 0 120 120" style={{transform:"rotate(-90deg)"}}>
+              <circle cx={60} cy={60} r={R} fill="none" stroke={C.navy} strokeWidth={STROKE}/>
+              <circle cx={60} cy={60} r={R} fill="none" stroke={col} strokeWidth={STROKE} strokeLinecap="round"
+                strokeDasharray={CIRC} strokeDashoffset={offset}
+                style={{transition:"stroke-dashoffset 1s cubic-bezier(.4,0,.2,1), stroke .3s"}}/>
+            </svg>
+            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+              <div style={{fontSize:26,fontWeight:900,color:col,lineHeight:1}}>{pct}%</div>
+              <div style={{fontSize:9,color:C.muted,marginTop:2}}>gestionado</div>
+            </div>
+          </div>
+          <div style={{flex:1,minWidth:140,display:"flex",flexDirection:"column",gap:4}}>
+            <div style={{fontSize:12,color:C.textSecondary}}>{gestionadasHoy} de {totalHoy} solicitudes ingresadas hoy ya fueron gestionadas.</div>
+            <div style={{fontSize:11,color:C.muted}}>Toca el círculo o "Detalle" para ver el desglose por estado.</div>
+          </div>
+        </div>
+      )}
+
+      <div style={{maxHeight:open?200:0,opacity:open?1:0,overflow:"hidden",transition:"max-height .25s ease, opacity .2s ease",display:"flex",flexDirection:"column",gap:6,marginTop:open?4:0}}>
+        {desglose.map(d=>(
+          <div key={d.k} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+            <span style={{width:9,height:9,borderRadius:"50%",background:d.color,flexShrink:0}}/>
+            <span style={{flex:1,color:C.textSecondary}}>{d.label}</span>
+            <span style={{fontWeight:700,color:d.color}}>{d.n}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Mapa de trazabilidad del día (GPS real, hoy) ──────────────────────────
 // Se muestra bajo "Cumplimiento del día" en el perfil cliente. Mapa
 // interactivo (Leaflet + OpenStreetMap): permite zoom, pan y ver detalle de
@@ -2711,23 +2777,17 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         const solHoy=(solicitudes||[]).filter(s=>s.fecha===hoyStr);
         const totalHoy=solHoy.length;
         const gestionadasHoy=solHoy.filter(s=>s.status!=="pendiente").length;
-        const completadasHoy=solHoy.filter(s=>s.status==="completada"||s.status==="devolucion").length;
         const pct=totalHoy>0?Math.round(gestionadasHoy/totalHoy*100):null;
         const col=pct===null?C.muted:pct>=80?C.success:pct>=50?C.warning:C.danger;
-        return(
-          <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:8}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Cumplimiento del día</div>
-            {pct===null?(
-              <div style={{fontSize:12,color:C.muted}}>Aún no se registran solicitudes ingresadas hoy.</div>
-            ):(<>
-              <div style={{fontSize:32,fontWeight:900,color:col}}>{pct}%</div>
-              <div style={{fontSize:12,color:C.textSecondary}}>{gestionadasHoy} de {totalHoy} solicitudes ingresadas hoy ya fueron gestionadas ({completadasHoy} completadas)</div>
-              <div style={{width:"100%",height:6,background:C.navy,borderRadius:4,overflow:"hidden"}}>
-                <div style={{width:`${pct}%`,height:"100%",background:col,borderRadius:4}}/>
-              </div>
-            </>)}
-          </div>
-        );
+        const desglose=[
+          {k:"pendiente",label:"Pendientes",color:C.warning},
+          {k:"en_proceso",label:"En tránsito",color:C.info},
+          {k:"completada",label:"Completadas",color:C.success},
+          {k:"devolucion",label:"Devoluciones",color:C.success},
+          {k:"no_entregado",label:"No entregado",color:"#F97316"},
+          {k:"cancelada",label:"Canceladas",color:C.danger},
+        ].map(x=>({...x,n:solHoy.filter(s=>s.status===x.k).length})).filter(x=>x.n>0);
+        return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose}/>;
       })():(
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
