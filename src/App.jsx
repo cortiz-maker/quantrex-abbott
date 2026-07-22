@@ -5259,10 +5259,11 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
   const [loading,setLoading]=useState(false);
   const [buscado,setBuscado]=useState(false);
   const [error,setError]=useState(null);
-  const [mapaError,setMapaError]=useState(false);
+  const mapDivRef=useRef(null);
+  const mapInstanceRef=useRef(null);
 
   async function buscar(){
-    setLoading(true); setError(null); setBuscado(true); setMapaError(false);
+    setLoading(true); setError(null); setBuscado(true);
     try{
       let q=`?order=timestamp_captura.asc&timestamp_captura=gte.${fechaDesde}T00:00:00&timestamp_captura=lte.${fechaHasta}T23:59:59`;
       if(filtroVehiculo) q+=`&vehiculo_id=eq.${encodeURIComponent(filtroVehiculo)}`;
@@ -5290,7 +5291,46 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
   })();
 
   const paradas=gruposPorVehiculo.flatMap(g=>calcularParadas(g));
-  const mapaUrl=getMapaTrazabilidadUrl(puntos,paradas,gruposPorVehiculo);
+
+  function fmtHora(iso){
+    if(!iso) return "";
+    return new Date(iso).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
+  }
+
+  // Inicializa/actualiza el mapa interactivo (Leaflet + OpenStreetMap) cada
+  // vez que cambian los puntos buscados. Reemplaza el mapa estático anterior.
+  useEffect(()=>{
+    if(!buscado||puntos.length===0||!mapDivRef.current) return;
+    if(mapInstanceRef.current){ mapInstanceRef.current.remove(); mapInstanceRef.current=null; }
+    const map=L.map(mapDivRef.current,{zoomControl:true,attributionControl:true,scrollWheelZoom:true});
+    mapInstanceRef.current=map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
+
+    const paleta=["#00AEEF","#FF7A00","#22C55E","#E11D48","#A855F7"];
+    const bounds=[];
+    gruposPorVehiculo.forEach((grupo,gi)=>{
+      if(grupo.length<2) return;
+      const latlngs=grupo.map(p=>[p.lat,p.lng]);
+      bounds.push(...latlngs);
+      L.polyline(latlngs,{color:paleta[gi%paleta.length],weight:4,opacity:0.85}).addTo(map);
+      const inicio=grupo[0], fin=grupo[grupo.length-1];
+      L.circleMarker([inicio.lat,inicio.lng],{radius:7,color:"#fff",weight:2,fillColor:"#22C55E",fillOpacity:1})
+        .bindPopup(`<b>Inicio</b><br/>${inicio.vehiculo_id||"Vehículo"}${inicio.chofer_id?" · "+inicio.chofer_id:""}<br/>${fmtHora(inicio.timestamp_captura)}`)
+        .addTo(map);
+      L.circleMarker([fin.lat,fin.lng],{radius:7,color:"#fff",weight:2,fillColor:"#E11D48",fillOpacity:1})
+        .bindPopup(`<b>Última posición</b><br/>${fin.vehiculo_id||"Vehículo"}${fin.chofer_id?" · "+fin.chofer_id:""}<br/>${fmtHora(fin.timestamp_captura)}`)
+        .addTo(map);
+    });
+    paradas.forEach((pa,i)=>{
+      L.circleMarker([pa.lat,pa.lng],{radius:6,color:"#fff",weight:2,fillColor:"#F59E0B",fillOpacity:1})
+        .bindPopup(`<b>Parada ${i+1}</b><br/>${pa.duracionMin} min detenido<br/>${fmtHora(pa.inicio)} – ${fmtHora(pa.fin)}`)
+        .addTo(map);
+      bounds.push([pa.lat,pa.lng]);
+    });
+    if(bounds.length) map.fitBounds(bounds,{padding:[24,24]});
+
+    return ()=>{ if(mapInstanceRef.current){ mapInstanceRef.current.remove(); mapInstanceRef.current=null; } };
+  },[puntos]); // eslint-disable-line
 
   const distanciaTotalKm=(()=>{
     let d=0;
@@ -5311,11 +5351,6 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
   const tiempoDetenidoMin=paradas.reduce((a,p)=>a+p.duracionMin,0);
   const tiempoMovimientoMin=Math.max(0,tiempoTotalMin-tiempoDetenidoMin);
   const velocidadPromKmh=tiempoMovimientoMin>0?(parseFloat(distanciaTotalKm)/(tiempoMovimientoMin/60)).toFixed(1):"0.0";
-
-  function fmtHora(iso){
-    if(!iso) return "";
-    return new Date(iso).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
-  }
 
   function exportarExcel(){
     const wb=XLSX.utils.book_new();
@@ -5376,20 +5411,8 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
             <div style={S.statCard}><div style={S.statNum}>{paradas.length}</div><div style={S.statLabel}>Paradas detectadas</div></div>
           </div>
 
-          {mapaUrl&&!mapaError&&(
-            <div style={{borderRadius:12,overflow:"hidden",border:"1px solid "+C.border}}>
-              <img src={mapaUrl} alt="Recorrido" style={{width:"100%",display:"block"}} onError={()=>setMapaError(true)}/>
-            </div>
-          )}
-          {mapaUrl&&mapaError&&(
-            <div style={{borderRadius:12,border:"1px solid "+C.warning,padding:16,display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{color:C.warning,fontWeight:700,fontSize:13}}>⚠ El mapa no cargó</div>
-              <div style={{fontSize:12,color:C.textSecondary}}>
-                Abre este link en una pestaña nueva: si Google muestra un mensaje de error (key inválida, API no habilitada, cuota excedida, etc.), ese es el motivo real. Si carga bien ahí pero no aquí, avísame.
-              </div>
-              <a href={mapaUrl} target="_blank" rel="noreferrer" style={{...S.linkBtn,fontSize:12,wordBreak:"break-all"}}>Abrir URL del mapa →</a>
-            </div>
-          )}
+          <div ref={mapDivRef} style={{width:"100%",height:460,borderRadius:12,overflow:"hidden",border:"1px solid "+C.border}}/>
+          <div style={{fontSize:11,color:C.muted}}>Toca cualquier punto del mapa (inicio, última posición o parada) para ver el detalle.</div>
 
           <div style={S.sectionTitle}>Paradas detectadas ({paradas.length})</div>
           {paradas.length===0?(
