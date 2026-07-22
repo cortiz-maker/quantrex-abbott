@@ -4749,12 +4749,6 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
     s.fecha === hoy &&
     ["en_proceso","pendiente"].includes(s.status)
   );
-  // Solicitudes de hoy ya cerradas por este chofer, para poder revisar la info de cierre
-  const misSolsCerradas = solicitudes.filter(s =>
-    (s.ppuAsignada === chofer.ppu || s.choferAsignado === chofer.nombre) &&
-    s.fecha === hoy &&
-    ["completada","no_entregado","devolucion","cancelada"].includes(s.status)
-  ).sort((a,b)=>(b.updatedAt||"").localeCompare(a.updatedAt||""));
   const [cargando,setCargando]=useState(null);
   const [fotos,setFotos]=useState({});
   const [fotosManifiesto,setFotosManifiesto]=useState({}); // {solId: [b64,...]} para Carga OL
@@ -4764,7 +4758,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   const [modalFirma,setModalFirma]=useState(null); // solId activo
   const [llegadas,setLlegadas]=useState({}); // {solId: {hora, timestamp, geo}}
   const [tiempos,setTiempos]=useState({}); // {solId: segundosTranscurridos}
-  const [verCierre,setVerCierre]=useState(null); // solId de la solicitud cerrada seleccionada para ver su info de cierre
+  const [seleccionada,setSeleccionada]=useState(null); // solId de la solicitud vigente seleccionada para desplegar su formulario de cierre
   const timerRef=useRef({});
 
   useEffect(()=>{
@@ -4959,16 +4953,31 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
         </div>
       ):misSols.map(s=>{
         const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:"#6B8CAE"};
+        const abierta=seleccionada===s.id;
+        const llegadaOk=!!llegadas[s.id];
+        const fotosOk=(s.tipo==="carga_ol"?(fotosManifiesto[s.id]||[]):(fotos[s.id]||[])).length>=1;
+        const firmaOk=!!firmas[s.id];
         return(
-          <div key={s.id} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px",display:"flex",flexDirection:"column",gap:12}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div key={s.id} style={{background:C.navySurface,border:"1px solid "+(abierta?C.cyan:C.border),borderRadius:12,overflow:"hidden"}}>
+            {/* Fila de lista: cliente + N° de solicitud. Al seleccionar se despliega el formulario de cierre */}
+            <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",cursor:"pointer"}}
+              onClick={()=>setSeleccionada(abierta?null:s.id)}>
               <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color,flexShrink:0}}>{tm.icon}</div>
-              <div style={{flex:1}}>
+              <div style={{flex:1,minWidth:0}}>
                 <div style={{fontWeight:700,fontSize:14}}>{s.titulo}</div>
                 <div style={{fontSize:12,color:C.cyan,fontWeight:700,marginTop:2}}>N° Solicitud: {s.ot||s.id}</div>
-                <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>{tm.label}</div>
+                {s.direccion&&<div style={{fontSize:12,color:C.textSecondary,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📍 {s.direccion}</div>}
               </div>
+              <div style={{display:"flex",gap:6,flexShrink:0,fontSize:14}}>
+                {llegadaOk&&<span title="Llegada registrada">📍</span>}
+                {fotosOk&&<span title="Fotos registradas">📷</span>}
+                {firmaOk&&<span title="Firma registrada">✍️</span>}
+              </div>
+              <div style={{color:C.muted,fontSize:16,flexShrink:0}}>{abierta?"▲":"▼"}</div>
             </div>
+
+            {abierta&&(
+            <div style={{padding:"0 16px 16px",display:"flex",flexDirection:"column",gap:12,borderTop:"1px solid "+C.border,paddingTop:14}}>
             {s.direccion&&<div style={{background:C.navy,borderRadius:8,padding:"10px 12px",fontSize:13,color:C.textSecondary}}>
               📍 {s.direccion}
               {s.notas&&<div style={{color:C.muted,fontSize:12,marginTop:4}}>💬 {s.notas}</div>}
@@ -5060,69 +5069,11 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
                 {cargando===s.id+"no_entregado"?"Registrando...":"✗ No Entregado"}
               </button>
             </div>
+            </div>
+            )}
           </div>
         );
       })}
-
-      {misSolsCerradas.length>0&&<>
-        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginTop:8}}>
-          Entregas cerradas hoy
-        </div>
-        {misSolsCerradas.map(s=>{
-          const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:"#6B8CAE"};
-          const sm=STATUS_META[s.status]||{label:s.status,color:"#6B8CAE"};
-          const abierto=verCierre===s.id;
-          const docs=(s.fotosEntrega&&s.fotosEntrega.length>0)?s.fotosEntrega:(s.fotoEntrega?[s.fotoEntrega]:[]);
-          return(
-            <div key={s.id} style={{background:C.navySurface,border:"1px solid "+(abierto?C.cyan:C.border),borderRadius:12,overflow:"hidden"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",cursor:"pointer"}} onClick={()=>setVerCierre(abierto?null:s.id)}>
-                <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color,flexShrink:0}}>{tm.icon}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:14}}>{s.titulo}</div>
-                  <div style={{fontSize:12,color:C.cyan,fontWeight:700,marginTop:2}}>N° Solicitud: {s.ot||s.id}</div>
-                </div>
-                <div style={{...S.badge,background:sm.color+"22",color:sm.color,flexShrink:0}}>{sm.label}</div>
-                <div style={{color:C.muted,fontSize:16,marginLeft:4}}>{abierto?"▲":"▼"}</div>
-              </div>
-              {abierto&&(
-                <div style={{padding:"0 16px 16px",display:"flex",flexDirection:"column",gap:10,borderTop:"1px solid "+C.border}}>
-                  {(s.horaLlegada||s.horaEntrega)&&<div style={{marginTop:12,background:C.navy,borderRadius:8,padding:"10px 12px"}}>
-                    {s.horaLlegada&&<div style={{fontSize:12,color:C.muted,marginBottom:4}}>📍 Llegada al punto: {s.horaLlegada}</div>}
-                    {s.horaEntrega&&<div style={{fontSize:13,color:C.textPrimary,fontWeight:600}}>🕐 Entrega registrada: {s.horaEntrega}</div>}
-                    {s.tiempoEnPunto&&<div style={{marginTop:6,fontSize:12,color:C.cyan,fontWeight:700}}>⏱ Tiempo en punto: {s.tiempoEnPunto}</div>}
-                  </div>}
-                  {(s.firmaReceptor||s.rechazoFirma)&&<div>
-                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>
-                      {s.rechazoFirma?"Firma digital no necesaria":(s.tipo==="carga_ol"?"Firma del despachador":"Firma del receptor")}
-                    </div>
-                    {s.nombreReceptor&&<div style={{fontSize:13,color:C.textPrimary,marginBottom:6}}>👤 {s.nombreReceptor}</div>}
-                    {s.rechazoFirma
-                      ?<div style={{background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:8,padding:"8px 12px",fontSize:13,color:C.cyan,fontWeight:600}}>🖊 Firma y timbre en papel · firma digital no fue necesaria</div>
-                      :<img src={s.firmaReceptor} alt="Firma receptor" style={{maxWidth:220,borderRadius:8,border:"1px solid "+C.border,background:"#f9f9f9"}}/>
-                    }
-                  </div>}
-                  {docs.length>0&&<div>
-                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Foto del documento ({docs.length})</div>
-                    <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                      {docs.map((b,i)=><img key={i} src={b} alt={"Documento "+(i+1)} style={{width:72,height:72,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>)}
-                    </div>
-                  </div>}
-                  {(s.fotosManifiesto||[]).length>0&&<div>
-                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Registro Fotográfico Manifiesto DHL ({s.fotosManifiesto.length})</div>
-                    <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                      {s.fotosManifiesto.map((b,i)=><img key={i} src={b} alt={"Manifiesto "+(i+1)} style={{width:72,height:72,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>)}
-                    </div>
-                  </div>}
-                  {s.observacionChofer&&<div style={{background:C.navy,borderRadius:8,padding:"10px 12px"}}>
-                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:4}}>Observación</div>
-                    <div style={{fontSize:13,color:C.textPrimary}}>📝 {s.observacionChofer}</div>
-                  </div>}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </>}
     </div>
     {modalFirma&&<ModalFirma solId={modalFirma} rol={misSols.find(x=>x.id===modalFirma)?.tipo==="carga_ol"?"despachador":"receptor"}
       onGuardar={f=>{setFirmas(p=>({...p,[modalFirma]:f}));setModalFirma(null);}}
