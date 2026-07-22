@@ -363,6 +363,40 @@ async function calcularTramo(origen, destino) {
   } catch { return null; }
 }
 
+// ── Snap-to-Roads: ajusta una secuencia de puntos GPS crudos a la calle real ──
+// Usa la Google Roads API (mismo proyecto/API key que Distance Matrix y Static
+// Maps). La API acepta máx. 100 puntos por llamada, así que se fracciona en
+// bloques y se concatena el resultado. interpolate=true rellena la ruta entre
+// puntos para que siga la geometría real de la calle (curvas, esquinas), no
+// solo los puntos capturados.
+// Si la llamada falla (cuota, sin red, tramo fuera de cobertura de calles,
+// etc.) retorna null y el llamador debe usar los puntos crudos como respaldo,
+// para que la trazabilidad nunca quede sin datos por un corte de esta API.
+async function snapToRoads(puntos){
+  if(!puntos||puntos.length<2) return null;
+  const CHUNK=100;
+  const snapped=[];
+  try{
+    for(let i=0;i<puntos.length;i+=CHUNK){
+      // Un punto de solape con el bloque anterior para no perder continuidad
+      // en el punto de corte entre llamadas.
+      const bloque = i===0 ? puntos.slice(i,i+CHUNK) : puntos.slice(i-1,i+CHUNK);
+      const path = bloque.map(p=>`${p.lat},${p.lng}`).join("|");
+      const apiUrl = `https://roads.googleapis.com/v1/snapToRoads?path=${encodeURIComponent(path)}&interpolate=true&key=${GOOGLE_MAPS_API_KEY}`;
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+      const res = await fetch(proxyUrl);
+      if(!res.ok) return null;
+      const raw = await res.json();
+      const data = raw.contents ? JSON.parse(raw.contents) : raw;
+      if(!data.snappedPoints||!data.snappedPoints.length) return null;
+      for(const sp of data.snappedPoints){
+        snapped.push([sp.location.latitude, sp.location.longitude]);
+      }
+    }
+    return snapped;
+  }catch{ return null; }
+}
+
 
 // ── Generador OT automático ────────────────────────────────────────────────
 function generarOT(solicitudes) {
@@ -2382,13 +2416,19 @@ function MapaTrazabilidadHoy(){
     mapInstanceRef.current=map;
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
 
+    let cancelado=false;
     const paleta=["#00AEEF","#FF7A00","#22C55E","#E11D48","#A855F7"];
     const bounds=[];
     datosMapa.grupos.forEach((grupo,gi)=>{
       if(grupo.length<2) return;
-      const latlngs=grupo.map(p=>[p.lat,p.lng]);
-      bounds.push(...latlngs);
-      L.polyline(latlngs,{color:paleta[gi%paleta.length],weight:4,opacity:0.85}).addTo(map);
+      const latlngsCrudos=grupo.map(p=>[p.lat,p.lng]);
+      bounds.push(...latlngsCrudos);
+      const color=paleta[gi%paleta.length];
+      let linea=L.polyline(latlngsCrudos,{color,weight:4,opacity:0.85}).addTo(map);
+      snapToRoads(grupo).then(snapped=>{
+        if(cancelado) return;
+        if(snapped&&snapped.length>=2) linea.setLatLngs(snapped);
+      });
       const inicio=grupo[0], fin=grupo[grupo.length-1];
       L.circleMarker([inicio.lat,inicio.lng],{radius:7,color:"#fff",weight:2,fillColor:"#22C55E",fillOpacity:1})
         .bindPopup(`<b>Inicio</b><br/>${inicio.vehiculo_id||"Vehículo"}<br/>${fmtHora(inicio.timestamp_captura)}`)
@@ -2406,7 +2446,7 @@ function MapaTrazabilidadHoy(){
     if(bounds.length) map.fitBounds(bounds,{padding:[24,24]});
     else map.setView([-33.45,-70.67],11);
 
-    return ()=>{ if(mapInstanceRef.current){ mapInstanceRef.current.remove(); mapInstanceRef.current=null; } };
+    return ()=>{ cancelado=true; if(mapInstanceRef.current){ mapInstanceRef.current.remove(); mapInstanceRef.current=null; } };
   },[estado,datosMapa]);
 
   return(
@@ -4773,7 +4813,9 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   const trackUltimo=useRef({lat:null,lng:null,ts:0});
   useEffect(()=>{
     if(!("geolocation" in navigator)) return; // dispositivo sin soporte, no bloquea el resto de la vista
-    const INTERVALO_MIN_MS=15000, DIST_MIN_M=30;
+    // Densidad aumentada (antes 15s/30m) para que el snap-to-roads tenga
+    // suficientes puntos y el trazado siga mejor curvas y esquinas.
+    const INTERVALO_MIN_MS=8000, DIST_MIN_M=15;
     const distM=(lat1,lng1,lat2,lng2)=>{
       const R=6371000, rad=x=>x*Math.PI/180;
       const dLat=rad(lat2-lat1), dLng=rad(lng2-lng1);
@@ -5426,6 +5468,10 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
 
   // Inicializa/actualiza el mapa interactivo (Leaflet + OpenStreetMap) cada
   // vez que cambian los puntos buscados. Reemplaza el mapa estático anterior.
+  // El trazado se ajusta a la calle real (snap-to-roads) en vez de solo unir
+  // los puntos GPS crudos con líneas rectas; si el snap falla (sin red, cuota
+  // de la API, tramo sin cobertura de calles) cae a los puntos crudos para
+  // que la trazabilidad nunca quede sin dibujar.
   useEffect(()=>{
     if(!buscado||puntos.length===0||!mapDivRef.current) return;
     if(mapInstanceRef.current){ mapInstanceRef.current.remove(); mapInstanceRef.current=null; }
@@ -5433,13 +5479,24 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
     mapInstanceRef.current=map;
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
 
+    let cancelado=false;
     const paleta=["#00AEEF","#FF7A00","#22C55E","#E11D48","#A855F7"];
     const bounds=[];
+
     gruposPorVehiculo.forEach((grupo,gi)=>{
       if(grupo.length<2) return;
-      const latlngs=grupo.map(p=>[p.lat,p.lng]);
-      bounds.push(...latlngs);
-      L.polyline(latlngs,{color:paleta[gi%paleta.length],weight:4,opacity:0.85}).addTo(map);
+      const latlngsCrudos=grupo.map(p=>[p.lat,p.lng]);
+      bounds.push(...latlngsCrudos);
+      const color=paleta[gi%paleta.length];
+      // Dibuja de inmediato con los puntos crudos (feedback rápido), y la
+      // reemplaza por la versión ajustada a calle apenas responda la API.
+      let linea=L.polyline(latlngsCrudos,{color,weight:4,opacity:0.85}).addTo(map);
+      snapToRoads(grupo).then(snapped=>{
+        if(cancelado) return;
+        if(snapped&&snapped.length>=2){
+          linea.setLatLngs(snapped);
+        }
+      });
       const inicio=grupo[0], fin=grupo[grupo.length-1];
       L.circleMarker([inicio.lat,inicio.lng],{radius:7,color:"#fff",weight:2,fillColor:"#22C55E",fillOpacity:1})
         .bindPopup(`<b>Inicio</b><br/>${inicio.vehiculo_id||"Vehículo"}${inicio.chofer_id?" · "+inicio.chofer_id:""}<br/>${fmtHora(inicio.timestamp_captura)}`)
@@ -5456,7 +5513,7 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
     });
     if(bounds.length) map.fitBounds(bounds,{padding:[24,24]});
 
-    return ()=>{ if(mapInstanceRef.current){ mapInstanceRef.current.remove(); mapInstanceRef.current=null; } };
+    return ()=>{ cancelado=true; if(mapInstanceRef.current){ mapInstanceRef.current.remove(); mapInstanceRef.current=null; } };
   },[puntos]); // eslint-disable-line
 
   const distanciaTotalKm=(()=>{
