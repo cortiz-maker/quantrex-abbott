@@ -2302,8 +2302,7 @@ function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],hoyStr,
             </div>
           </div>
           <div style={{flex:1,minWidth:140,display:"flex",flexDirection:"column",gap:4}}>
-            <div style={{fontSize:12,color:C.textSecondary}}>{gestionadasHoy} de {totalHoy} solicitudes ingresadas hoy ya fueron gestionadas.</div>
-            <div style={{fontSize:11,color:C.muted}}>Toca el círculo o "Detalle" para ver las solicitudes de hoy en gestión.</div>
+            <div style={{fontSize:12,color:C.textSecondary}}>{totalHoy} solicitud{totalHoy===1?"":"es"} ingresada{totalHoy===1?"":"s"} hoy</div>
           </div>
         </div>
       )}
