@@ -29,6 +29,15 @@ const STATUS_META = {
   cancelada:       { label:"Cancelada",      color:"#EF4444" },
 };
 
+// Avance por etapa (Cumplimiento del día): una solicitud recién ingresada
+// (pendiente) representa un 25% de avance; una vez que el operador logístico
+// la carga/despacha (en tránsito) sube a 50%; y cualquier estado final
+// (completada, devolución, no entregado o cancelada) se considera 100%,
+// porque ya salió de la cola de gestión activa.
+const AVANCE_STATUS = {
+  pendiente:0.25, en_proceso:0.5, completada:1, devolucion:1, no_entregado:1, cancelada:1,
+};
+
 const PRIORIDAD_DEFAULT = {
   entrega:   "urgente",
   carga_ol:  "urgente",
@@ -2809,14 +2818,17 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
 
       <div style={S.sectionTitle}>Operación · {nombrePeriodo}</div>
       {esCliente?(()=>{
-        // Cumplimiento del día: % de solicitudes ingresadas hoy que ya fueron
-        // gestionadas (cualquier estado distinto de "pendiente") o completadas.
+        // Cumplimiento del día: promedio ponderado del avance por etapa de
+        // cada solicitud ingresada hoy (pendiente=25%, en tránsito=50%,
+        // cualquier estado final=100%). Reemplaza el conteo binario anterior
+        // (pendiente/gestionada), que mostraba 100% aunque todo siguiera en
+        // tránsito.
         const hoyStr=new Date().toISOString().slice(0,10);
         const solHoy=(solicitudes||[]).filter(s=>s.fecha===hoyStr);
         const totalHoy=solHoy.length;
         const gestionadasHoy=solHoy.filter(s=>s.status!=="pendiente").length;
-        const pct=totalHoy>0?Math.round(gestionadasHoy/totalHoy*100):null;
-        const col=pct===null?C.muted:pct>=80?C.success:pct>=50?C.warning:C.danger;
+        const pct=totalHoy>0?Math.round(solHoy.reduce((a,s)=>a+(AVANCE_STATUS[s.status]??0),0)/totalHoy*100):null;
+        const col=pct===null?C.muted:pct>=100?C.success:pct>=50?C.warning:C.danger;
         const desglose=[
           {k:"pendiente",label:"Pendientes",color:C.warning},
           {k:"en_proceso",label:"En tránsito",color:C.info},
