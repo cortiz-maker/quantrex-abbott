@@ -1331,6 +1331,7 @@ export default function QuantrexAbbott() {
   const [cierreDetalle,setCierreDetalle]=useState(null);
   const [filterTipo,setFilterTipo]=useState("todos");
   const [filterStatus,setFilterStatus]=useState("todos");
+  const [filterFecha,setFilterFecha]=useState(""); // "" = sin filtro de fecha; usado por Cumplimiento del día
   const [filterQ,setFilterQ]=useState("");
   const [form,setForm]=useState(EMPTY_FORM);
   const [formError,setFormError]=useState("");
@@ -1690,9 +1691,11 @@ export default function QuantrexAbbott() {
     return true;
   }
 
-  const filtered=solicitudes.filter(s=>{
+  const filtered=solicitudesPeriodo.filter(s=>{
     if(filterTipo!=="todos"&&s.tipo!==filterTipo)return false;
-    if(filterStatus!=="todos"&&s.status!==filterStatus)return false;
+    if(filterStatus==="en_gestion"){ if(s.status==="pendiente")return false; }
+    else if(filterStatus!=="todos"&&s.status!==filterStatus)return false;
+    if(filterFecha&&s.fecha!==filterFecha)return false;
     if(filterQ&&!s.titulo.toLowerCase().includes(filterQ.toLowerCase())&&!s.guia?.toLowerCase().includes(filterQ.toLowerCase()))return false;
     return true;
   });
@@ -1736,7 +1739,7 @@ export default function QuantrexAbbott() {
         <nav style={S.nav}>
           {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"],["trazabilidad","Trazabilidad"],["incidencias","Incidencias"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
-              onClick={()=>setView(v)}>{l}</button>
+              onClick={()=>{if(v==="lista"){setFilterFecha("");setFilterStatus("todos");}setView(v);}}>{l}</button>
           ))}
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             {sesion?.perfil==="admin"&&(()=>{
@@ -1806,7 +1809,7 @@ export default function QuantrexAbbott() {
             confirmCierre={confirmCierre} setConfirmCierre={setConfirmCierre} onCerrarMes={handleCerrarMes}
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
-            onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion} setFilterStatus={setFilterStatus}
+            onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion} setFilterStatus={setFilterStatus} setFilterFecha={setFilterFecha}
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
@@ -1824,8 +1827,9 @@ export default function QuantrexAbbott() {
             onExport={()=>exportToExcel(cierreDetalle.solicitudes,`Quantrex_Abbott_${cierreDetalle.nombre.replace(" ","_")}.xlsx`)}/>)
         :(<Lista solicitudes={filtered} filterTipo={filterTipo} setFilterTipo={setFilterTipo}
             filterStatus={filterStatus} setFilterStatus={setFilterStatus}
+            filterFecha={filterFecha} setFilterFecha={setFilterFecha}
             filterQ={filterQ} setFilterQ={setFilterQ}
-            onSelect={id=>{setSelectedId(id);setView("detalle");}}
+            onSelect={id=>{setSelectedId(id);setView("detalle");}} sesion={sesion}
             onExport={()=>exportToExcel(solicitudes,excelNombre)} total={solicitudes.length}/>)
         }
       </main>
@@ -2235,8 +2239,7 @@ function EvolucionAnual({solicitudes=[]}){
 }
 
 // ── Cumplimiento del día (gauge circular animado + desglose interactivo) ──
-function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],setView,setFilterStatus}){
-  const [open,setOpen]=useState(false);
+function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],hoyStr,setView,setFilterStatus,setFilterFecha}){
   const [animPct,setAnimPct]=useState(0);
   const R=52, STROKE=12, CIRC=2*Math.PI*R;
 
@@ -2249,13 +2252,22 @@ function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],setView
 
   const offset=CIRC-(animPct/100)*CIRC;
 
+  // Navega a "Solicitudes" mostrando las filas reales de hoy (opcionalmente
+  // acotado a un estado puntual). "en_gestion" = cualquier estado distinto
+  // de "pendiente" (mismo criterio que el % de cumplimiento).
+  function verSolicitudesHoy(status){
+    setFilterFecha?.(hoyStr);
+    setFilterStatus?.(status||"en_gestion");
+    setView?.("lista");
+  }
+
   return(
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:10}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Cumplimiento del día</div>
-        {pct!==null&&desglose.length>0&&(
-          <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>
-            Detalle <span style={{display:"inline-block",transition:"transform .2s",transform:open?"rotate(180deg)":"rotate(0deg)"}}>▾</span>
+        {pct!==null&&totalHoy>0&&(
+          <button onClick={()=>verSolicitudesHoy()} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>
+            Detalle <span style={{display:"inline-block"}}>→</span>
           </button>
         )}
       </div>
@@ -2265,9 +2277,9 @@ function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],setView
       ):(
         <div style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
           <div
-            style={{position:"relative",width:120,height:120,cursor:desglose.length>0?"pointer":"default"}}
-            onClick={()=>desglose.length>0&&setOpen(o=>!o)}
-            title={`${gestionadasHoy} de ${totalHoy} solicitudes gestionadas hoy`}
+            style={{position:"relative",width:120,height:120,cursor:totalHoy>0?"pointer":"default"}}
+            onClick={()=>totalHoy>0&&verSolicitudesHoy()}
+            title={`${gestionadasHoy} de ${totalHoy} solicitudes gestionadas hoy — toca para verlas`}
           >
             <svg width={120} height={120} viewBox="0 0 120 120" style={{transform:"rotate(-90deg)"}}>
               <circle cx={60} cy={60} r={R} fill="none" stroke={C.navy} strokeWidth={STROKE}/>
@@ -2282,24 +2294,26 @@ function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],setView
           </div>
           <div style={{flex:1,minWidth:140,display:"flex",flexDirection:"column",gap:4}}>
             <div style={{fontSize:12,color:C.textSecondary}}>{gestionadasHoy} de {totalHoy} solicitudes ingresadas hoy ya fueron gestionadas.</div>
-            <div style={{fontSize:11,color:C.muted}}>Toca el círculo o "Detalle" para ver el desglose por estado.</div>
+            <div style={{fontSize:11,color:C.muted}}>Toca el círculo o "Detalle" para ver las solicitudes de hoy en gestión.</div>
           </div>
         </div>
       )}
 
-      <div style={{maxHeight:open?260:0,opacity:open?1:0,overflow:"hidden",transition:"max-height .25s ease, opacity .2s ease",display:"flex",flexDirection:"column",gap:4,marginTop:open?4:0}}>
-        {desglose.map(d=>(
-          <div key={d.k} onClick={()=>{setFilterStatus?.(d.k);setView?.("lista");}}
-            style={{display:"flex",alignItems:"center",gap:8,fontSize:12,cursor:"pointer",padding:"6px 8px",borderRadius:8,background:"transparent",transition:"background .15s"}}
-            onMouseEnter={e=>e.currentTarget.style.background=C.navy}
-            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-            <span style={{width:9,height:9,borderRadius:"50%",background:d.color,flexShrink:0}}/>
-            <span style={{flex:1,color:C.textSecondary}}>{d.label}</span>
-            <span style={{fontWeight:700,color:d.color}}>{d.n}</span>
-            <span style={{color:C.muted,fontSize:11}}>→</span>
-          </div>
-        ))}
-      </div>
+      {desglose.length>0&&(
+        <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:4,borderTop:"1px solid "+C.border,paddingTop:8}}>
+          {desglose.map(d=>(
+            <div key={d.k} onClick={()=>verSolicitudesHoy(d.k)}
+              style={{display:"flex",alignItems:"center",gap:8,fontSize:12,cursor:"pointer",padding:"6px 8px",borderRadius:8,background:"transparent",transition:"background .15s"}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.navy}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <span style={{width:9,height:9,borderRadius:"50%",background:d.color,flexShrink:0}}/>
+              <span style={{flex:1,color:C.textSecondary}}>{d.label}</span>
+              <span style={{fontWeight:700,color:d.color}}>{d.n}</span>
+              <span style={{color:C.muted,fontSize:11}}>→</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2693,7 +2707,7 @@ function BuscadorDocumento(){
   );
 }
 
-function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,setFilterStatus,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
+function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,setFilterStatus,setFilterFecha,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
@@ -2791,7 +2805,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           {k:"no_entregado",label:"No entregado",color:"#F97316"},
           {k:"cancelada",label:"Canceladas",color:C.danger},
         ].map(x=>({...x,n:solHoy.filter(s=>s.status===x.k).length})).filter(x=>x.n>0);
-        return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose} setView={setView} setFilterStatus={setFilterStatus}/>;
+        return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose} hoyStr={hoyStr} setView={setView} setFilterStatus={setFilterStatus} setFilterFecha={setFilterFecha}/>;
       })():(
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
@@ -2939,7 +2953,7 @@ function CierreDetalle({cierre,setView,onExport}){
 }
 
 // ── Lista ──────────────────────────────────────────────────────────────────
-function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatus,filterQ,setFilterQ,onSelect,onExport,total,sesion}){
+function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatus,filterFecha,setFilterFecha,filterQ,setFilterQ,onSelect,onExport,total,sesion}){
   const esCliente=sesion?.perfil==="cliente";
   return(
     <div style={S.section}>
@@ -2947,6 +2961,12 @@ function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatu
         <div style={S.pageTitle}>Solicitudes Abbott</div>
         {total>0&&sesion?.perfil!=="cliente"&&<button title="Exporta TODAS las solicitudes de la historia, no solo el período actual" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Exportar historial completo ({total})</span></button>}
       </div>
+      {filterFecha&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:8,padding:"6px 12px",fontSize:12,color:C.cyan,width:"fit-content"}}>
+          <span>Filtrando por {new Date(filterFecha+"T12:00:00").toLocaleDateString("es-CL")}{filterStatus==="en_gestion"?" · en gestión":filterStatus!=="todos"?" · "+(STATUS_META[filterStatus]?.label||filterStatus):""}</span>
+          <button onClick={()=>{setFilterFecha("");setFilterStatus("todos");}} style={{background:"none",border:"none",color:C.cyan,cursor:"pointer",fontWeight:700,padding:0}}>✕</button>
+        </div>
+      )}
       <div style={S.filters}>
         <input style={S.searchInput} placeholder="Buscar por cliente o guía..." value={filterQ} onChange={e=>setFilterQ(e.target.value)}/>
         <select style={S.select} value={filterTipo} onChange={e=>setFilterTipo(e.target.value)}>
@@ -2955,6 +2975,7 @@ function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatu
         </select>
         <select style={S.select} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
           <option value="todos">Todos los estados</option>
+          {filterStatus==="en_gestion"&&<option value="en_gestion">En gestión (no pendientes)</option>}
           {Object.entries(STATUS_META).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
         </select>
       </div>
