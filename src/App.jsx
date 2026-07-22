@@ -1806,7 +1806,7 @@ export default function QuantrexAbbott() {
             confirmCierre={confirmCierre} setConfirmCierre={setConfirmCierre} onCerrarMes={handleCerrarMes}
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
-            onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion}
+            onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion} setFilterStatus={setFilterStatus}
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
@@ -2235,7 +2235,7 @@ function EvolucionAnual({solicitudes=[]}){
 }
 
 // ── Cumplimiento del día (gauge circular animado + desglose interactivo) ──
-function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[]}){
+function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],setView,setFilterStatus}){
   const [open,setOpen]=useState(false);
   const [animPct,setAnimPct]=useState(0);
   const R=52, STROKE=12, CIRC=2*Math.PI*R;
@@ -2287,12 +2287,16 @@ function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[]}){
         </div>
       )}
 
-      <div style={{maxHeight:open?200:0,opacity:open?1:0,overflow:"hidden",transition:"max-height .25s ease, opacity .2s ease",display:"flex",flexDirection:"column",gap:6,marginTop:open?4:0}}>
+      <div style={{maxHeight:open?260:0,opacity:open?1:0,overflow:"hidden",transition:"max-height .25s ease, opacity .2s ease",display:"flex",flexDirection:"column",gap:4,marginTop:open?4:0}}>
         {desglose.map(d=>(
-          <div key={d.k} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+          <div key={d.k} onClick={()=>{setFilterStatus?.(d.k);setView?.("lista");}}
+            style={{display:"flex",alignItems:"center",gap:8,fontSize:12,cursor:"pointer",padding:"6px 8px",borderRadius:8,background:"transparent",transition:"background .15s"}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.navy}
+            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
             <span style={{width:9,height:9,borderRadius:"50%",background:d.color,flexShrink:0}}/>
             <span style={{flex:1,color:C.textSecondary}}>{d.label}</span>
             <span style={{fontWeight:700,color:d.color}}>{d.n}</span>
+            <span style={{color:C.muted,fontSize:11}}>→</span>
           </div>
         ))}
       </div>
@@ -2689,7 +2693,7 @@ function BuscadorDocumento(){
   );
 }
 
-function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
+function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,setFilterStatus,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
@@ -2787,7 +2791,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           {k:"no_entregado",label:"No entregado",color:"#F97316"},
           {k:"cancelada",label:"Canceladas",color:C.danger},
         ].map(x=>({...x,n:solHoy.filter(s=>s.status===x.k).length})).filter(x=>x.n>0);
-        return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose}/>;
+        return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose} setView={setView} setFilterStatus={setFilterStatus}/>;
       })():(
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
@@ -2884,6 +2888,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           return <div key={k} style={{fontSize:12,color:C.textSecondary}}><strong style={{color:meta.color}}>{n}</strong> {meta.label}</div>;
         })}
       </div>}
+      {!esCliente&&<>
       <div style={S.sectionTitle}>Solicitudes recientes</div>
       {solicitudes.length===0?<EmptyState msg="Sin solicitudes aún." action={()=>setView("nueva")}/>
         :[...solicitudes].sort((a,b)=>{
@@ -2891,6 +2896,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
             return f!==0?f:(b.createdAt||"").localeCompare(a.createdAt||"");
           }).slice(0,3).map(s=><SolicitudRow key={s.id} sol={s} onSelect={id=>{setSelectedId(id);setView("detalle");}}/>)}
       {solicitudes.length>3&&<button style={S.linkBtn} onClick={()=>setView("lista")}>Ver todas →</button>}
+      </>}
     </div>
   );
 }
