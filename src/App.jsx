@@ -3265,7 +3265,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
       {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div>{sol.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Por {sol.observacionAutor}{sol.observacionFecha?" · "+new Date(sol.observacionFecha).toLocaleString("es-CL"):""}</div>}</div>}
       {(sol.firmaReceptor||sol.rechazoFirma)&&(
         <div style={S.detailBlock}>
-          <div style={S.fieldLabel}>{sol.rechazoFirma?"Rechazo de firma":(sol.tipo==="carga_ol"?"Firma del despachador":"Firma del receptor")}</div>
+          <div style={S.fieldLabel}>{sol.rechazoFirma?"Firma digital no necesaria":(sol.tipo==="carga_ol"?"Firma del despachador":"Firma del receptor")}</div>
           {sol.nombreReceptor&&<div style={{fontSize:13,color:C.textPrimary,marginBottom:6}}>👤 {sol.nombreReceptor}</div>}
           {sol.rechazoFirma
             ?<div style={{background:C.info+"18",border:"1px solid "+C.info+"44",borderRadius:8,padding:"8px 12px",fontSize:13,color:C.info,fontWeight:600}}>🖊 Firma y timbre en papel · firma digital no fue necesaria</div>
@@ -4662,7 +4662,7 @@ function ModalFirma({ solId, onGuardar, onCerrar, rol="receptor" }) {
           <button style={{flex:1,padding:"8px",borderRadius:8,border:"2px solid "+(modo==="firma"?"#7C3AED":"#ddd"),background:modo==="firma"?"#7C3AED22":"transparent",color:modo==="firma"?"#7C3AED":C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}}
             onClick={()=>setModo("firma")}>✍️ Firma</button>
           <button style={{flex:1,padding:"8px",borderRadius:8,border:"2px solid "+(modo==="rechazo"?C.danger:"#ddd"),background:modo==="rechazo"?C.danger+"22":"transparent",color:modo==="rechazo"?C.danger:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}}
-            onClick={()=>setModo("rechazo")}>✗ No quiso firmar</button>
+            onClick={()=>setModo("rechazo")}>✗ No es necesaria firma digital</button>
         </div>
 
         {modo==="firma"?(
@@ -4678,7 +4678,7 @@ function ModalFirma({ solId, onGuardar, onCerrar, rol="receptor" }) {
           </>
         ):(
           <div style={{background:C.danger+"11",border:"1px solid "+C.danger+"44",borderRadius:10,padding:"12px",fontSize:13,color:C.danger,fontWeight:600}}>
-            Se registrará que el {ROL} se negó a firmar digitalmente.
+            Se registrará que no fue necesaria la firma digital del {ROL}.
           </div>
         )}
 
@@ -4693,7 +4693,7 @@ function ModalFirma({ solId, onGuardar, onCerrar, rol="receptor" }) {
             onClick={onCerrar}>Cancelar</button>
           <button style={{flex:1,background:modo==="rechazo"?C.danger:"#7C3AED",color:"#fff",border:"none",borderRadius:8,padding:"11px",fontWeight:800,fontSize:14,cursor:"pointer",opacity:(modo==="firma"&&!hayFirma)?0.4:1}}
             disabled={modo==="firma"&&!hayFirma} onClick={guardar}>
-            {modo==="rechazo"?"Registrar rechazo":"Guardar firma"}
+            {modo==="rechazo"?"Registrar":"Guardar firma"}
           </button>
         </div>
       </div>
@@ -4749,6 +4749,12 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
     s.fecha === hoy &&
     ["en_proceso","pendiente"].includes(s.status)
   );
+  // Solicitudes de hoy ya cerradas por este chofer, para poder revisar la info de cierre
+  const misSolsCerradas = solicitudes.filter(s =>
+    (s.ppuAsignada === chofer.ppu || s.choferAsignado === chofer.nombre) &&
+    s.fecha === hoy &&
+    ["completada","no_entregado","devolucion","cancelada"].includes(s.status)
+  ).sort((a,b)=>(b.updatedAt||"").localeCompare(a.updatedAt||""));
   const [cargando,setCargando]=useState(null);
   const [fotos,setFotos]=useState({});
   const [fotosManifiesto,setFotosManifiesto]=useState({}); // {solId: [b64,...]} para Carga OL
@@ -4758,6 +4764,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   const [modalFirma,setModalFirma]=useState(null); // solId activo
   const [llegadas,setLlegadas]=useState({}); // {solId: {hora, timestamp, geo}}
   const [tiempos,setTiempos]=useState({}); // {solId: segundosTranscurridos}
+  const [verCierre,setVerCierre]=useState(null); // solId de la solicitud cerrada seleccionada para ver su info de cierre
   const timerRef=useRef({});
 
   useEffect(()=>{
@@ -4958,6 +4965,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
               <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color,flexShrink:0}}>{tm.icon}</div>
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,fontSize:14}}>{s.titulo}</div>
+                <div style={{fontSize:12,color:C.cyan,fontWeight:700,marginTop:2}}>N° Solicitud: {s.ot||s.id}</div>
                 <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>{tm.label}</div>
               </div>
             </div>
@@ -5030,15 +5038,15 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
             {/* Firma del receptor (en Carga OL: firma del despachador) */}
             <button style={{background:firmas[s.id]?C.success+"22":"#7C3AED22",border:"1px solid "+(firmas[s.id]?C.success:"#7C3AED"),color:firmas[s.id]?C.success:"#A78BFA",borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
               onClick={()=>setModalFirma(s.id)}>
-              ✍️ {firmas[s.id]?(firmas[s.id].rechazo?"Rechazo registrado ✓":"Firma tomada ✓"):(s.tipo==="carga_ol"?"Firma Despachador (obligatorio)":"Firma del receptor (obligatorio)")}
+              ✍️ {firmas[s.id]?(firmas[s.id].rechazo?"Sin firma digital ✓":"Firma tomada ✓"):(s.tipo==="carga_ol"?"Firma Despachador (obligatorio)":"Firma del receptor (obligatorio)")}
             </button>
             {errorFoto===s.id+"firma"&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:8,padding:"8px 12px",fontSize:13,color:C.danger,fontWeight:600}}>
-              ✍️ {s.tipo==="carga_ol"?"Debes registrar la firma del despachador.":"Debes registrar la firma o el rechazo del receptor."}
+              ✍️ {s.tipo==="carga_ol"?"Debes registrar la firma del despachador.":"Debes registrar la firma del receptor o indicar que no es necesaria firma digital."}
             </div>}
             {/* Observación opcional del chofer */}
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               <label style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase"}}>Observación (opcional)</label>
-              <textarea style={{border:"1px solid "+C.border,background:C.navy,color:C.text,borderRadius:10,padding:"10px 12px",fontSize:13,outline:"none",resize:"vertical",minHeight:54,fontFamily:"inherit"}}
+              <textarea style={{border:"1px solid "+C.border,background:C.navy,color:C.textPrimary,borderRadius:10,padding:"10px 12px",fontSize:13,outline:"none",resize:"vertical",minHeight:54,fontFamily:"inherit"}}
                 placeholder="Alguna nota o situación de la entrega (ej. recibido por turno noche, acceso restringido, etc.)"
                 value={observaciones[s.id]||""} onChange={e=>setObservaciones(p=>({...p,[s.id]:e.target.value}))}/>
             </div>
@@ -5055,6 +5063,66 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
           </div>
         );
       })}
+
+      {misSolsCerradas.length>0&&<>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:1.5,textTransform:"uppercase",marginTop:8}}>
+          Entregas cerradas hoy
+        </div>
+        {misSolsCerradas.map(s=>{
+          const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:"#6B8CAE"};
+          const sm=STATUS_META[s.status]||{label:s.status,color:"#6B8CAE"};
+          const abierto=verCierre===s.id;
+          const docs=(s.fotosEntrega&&s.fotosEntrega.length>0)?s.fotosEntrega:(s.fotoEntrega?[s.fotoEntrega]:[]);
+          return(
+            <div key={s.id} style={{background:C.navySurface,border:"1px solid "+(abierto?C.cyan:C.border),borderRadius:12,overflow:"hidden"}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",cursor:"pointer"}} onClick={()=>setVerCierre(abierto?null:s.id)}>
+                <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color,flexShrink:0}}>{tm.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{s.titulo}</div>
+                  <div style={{fontSize:12,color:C.cyan,fontWeight:700,marginTop:2}}>N° Solicitud: {s.ot||s.id}</div>
+                </div>
+                <div style={{...S.badge,background:sm.color+"22",color:sm.color,flexShrink:0}}>{sm.label}</div>
+                <div style={{color:C.muted,fontSize:16,marginLeft:4}}>{abierto?"▲":"▼"}</div>
+              </div>
+              {abierto&&(
+                <div style={{padding:"0 16px 16px",display:"flex",flexDirection:"column",gap:10,borderTop:"1px solid "+C.border}}>
+                  {(s.horaLlegada||s.horaEntrega)&&<div style={{marginTop:12,background:C.navy,borderRadius:8,padding:"10px 12px"}}>
+                    {s.horaLlegada&&<div style={{fontSize:12,color:C.muted,marginBottom:4}}>📍 Llegada al punto: {s.horaLlegada}</div>}
+                    {s.horaEntrega&&<div style={{fontSize:13,color:C.textPrimary,fontWeight:600}}>🕐 Entrega registrada: {s.horaEntrega}</div>}
+                    {s.tiempoEnPunto&&<div style={{marginTop:6,fontSize:12,color:C.cyan,fontWeight:700}}>⏱ Tiempo en punto: {s.tiempoEnPunto}</div>}
+                  </div>}
+                  {(s.firmaReceptor||s.rechazoFirma)&&<div>
+                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>
+                      {s.rechazoFirma?"Firma digital no necesaria":(s.tipo==="carga_ol"?"Firma del despachador":"Firma del receptor")}
+                    </div>
+                    {s.nombreReceptor&&<div style={{fontSize:13,color:C.textPrimary,marginBottom:6}}>👤 {s.nombreReceptor}</div>}
+                    {s.rechazoFirma
+                      ?<div style={{background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:8,padding:"8px 12px",fontSize:13,color:C.cyan,fontWeight:600}}>🖊 Firma y timbre en papel · firma digital no fue necesaria</div>
+                      :<img src={s.firmaReceptor} alt="Firma receptor" style={{maxWidth:220,borderRadius:8,border:"1px solid "+C.border,background:"#f9f9f9"}}/>
+                    }
+                  </div>}
+                  {docs.length>0&&<div>
+                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Foto del documento ({docs.length})</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                      {docs.map((b,i)=><img key={i} src={b} alt={"Documento "+(i+1)} style={{width:72,height:72,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>)}
+                    </div>
+                  </div>}
+                  {(s.fotosManifiesto||[]).length>0&&<div>
+                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Registro Fotográfico Manifiesto DHL ({s.fotosManifiesto.length})</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                      {s.fotosManifiesto.map((b,i)=><img key={i} src={b} alt={"Manifiesto "+(i+1)} style={{width:72,height:72,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>)}
+                    </div>
+                  </div>}
+                  {s.observacionChofer&&<div style={{background:C.navy,borderRadius:8,padding:"10px 12px"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:4}}>Observación</div>
+                    <div style={{fontSize:13,color:C.textPrimary}}>📝 {s.observacionChofer}</div>
+                  </div>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </>}
     </div>
     {modalFirma&&<ModalFirma solId={modalFirma} rol={misSols.find(x=>x.id===modalFirma)?.tipo==="carga_ol"?"despachador":"receptor"}
       onGuardar={f=>{setFirmas(p=>({...p,[modalFirma]:f}));setModalFirma(null);}}
