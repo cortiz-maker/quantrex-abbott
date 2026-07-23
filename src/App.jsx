@@ -5357,9 +5357,12 @@ function ResumenCO2({ solicitudes, rutas=[], compact=false }) {
   const solsConDireccion = solicitudes.filter(s =>
     s.status === "completada" && s.direccion && s.tipo !== "carga_ol"
   );
+  // Clave estable (ids de las entregas que entran al cálculo) para saber cuándo
+  // realmente cambió el conjunto de datos y toca recalcular.
+  const clave = solsConDireccion.map(s=>s.id).sort().join(",");
 
   async function calcularCO2() {
-    if (solsConDireccion.length === 0) return;
+    if (solsConDireccion.length === 0) { setCo2Data(null); return; }
     setCalculando(true);
     let totalKm = 0;
     const detalles = [];
@@ -5376,6 +5379,14 @@ function ResumenCO2({ solicitudes, rutas=[], compact=false }) {
     setCalculando(false);
   }
 
+  // Cálculo automático: se dispara solo al montar la tarjeta o cuando cambia
+  // el conjunto real de entregas del período (ej. al refrescar la página o
+  // cambiar de período), sin necesidad de presionar un botón.
+  useEffect(()=>{
+    calcularCO2();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[clave]);
+
   if (solsConDireccion.length === 0) return null;
 
   if (compact) {
@@ -5384,7 +5395,7 @@ function ResumenCO2({ solicitudes, rutas=[], compact=false }) {
         <div style={{fontSize:11,fontWeight:700,color:C.success,letterSpacing:1.2,textTransform:"uppercase"}}>CO₂ estimado</div>
         {co2Data
           ? <><div style={{fontSize:22,fontWeight:900,color:C.success}}>{(parseInt(co2Data.co2)/1000*0.15).toFixed(1)} kg</div><div style={{fontSize:10,color:C.muted}}>tkm × 0,15 · {co2Data.nSols} entregas</div></>
-          : <button style={{...S.exportBtn,fontSize:11,alignSelf:"flex-start"}} disabled={calculando} onClick={calcularCO2}>{calculando?"Calculando...":"🌿 Calcular"}</button>}
+          : <div style={{fontSize:12,color:C.muted}}>Calculando...</div>}
       </div>
     );
   }
@@ -5393,9 +5404,9 @@ function ResumenCO2({ solicitudes, rutas=[], compact=false }) {
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Medición CO₂</div>
-        {!co2Data&&<button style={{...S.exportBtn,fontSize:11}} disabled={calculando} onClick={calcularCO2}>
-          {calculando?"Calculando...":"🌿 Calcular CO₂"}
-        </button>}
+        <button style={{...S.exportBtn,fontSize:11,opacity:calculando?.6:1}} disabled={calculando} onClick={calcularCO2} title="Recalcular">
+          {calculando?"Calculando...":"🔄 Recalcular"}
+        </button>
       </div>
       {co2Data?(
         <>
@@ -5413,7 +5424,7 @@ function ResumenCO2({ solicitudes, rutas=[], compact=false }) {
           </div>
         </>
       ):(
-        <div style={{fontSize:12,color:C.muted}}>Presiona para calcular el CO₂ del período.</div>
+        <div style={{fontSize:12,color:C.muted}}>Calculando el CO₂ del período automáticamente...</div>
       )}
     </div>
   );
