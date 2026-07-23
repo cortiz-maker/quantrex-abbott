@@ -237,7 +237,7 @@ function fmtCLP(n){ return "$"+Math.round(Number(n)||0).toLocaleString("es-CL");
 const USUARIOS = [
   { email:"cortiz@quantrex.cl",     password:"Qx@Admin2026", perfil:"admin",    nombre:"César Ortiz" },
   { email:"jmartinez@quantrex.cl",  password:"Qx@Op2026",    perfil:"operador", nombre:"J. Martínez" },
-  { email:"info@transportesbs.cl",  password:"libre2026",    perfil:"cliente",  nombre:"Abbott Chile" },
+  { email:"info@transportesbs.cl",  password:"libre2026",    perfil:"cliente",  nombre:"Abbott Laboratories de Chile" },
 ];
 
 
@@ -1382,7 +1382,7 @@ async function exportToExcel(solicitudes, nombreArchivo) {
   r2.push(["Total km recorridos (período):",hayKm?totalKmNum.toFixed(1)+" km":"Pendiente cálculo"]);
   r2.push(["Total kg transportados:",totalKgExcel.toLocaleString("es-CL")+" kg"]);
   r2.push([]);
-  r2.push(["Índice TKM (Abbott) — km × kg:", tkmAbbot]);
+  r2.push(["Índice TKM (Abbott Laboratories de Chile) — km × kg:", tkmAbbot]);
   r2.push([]);
   r2.push(["CO₂ Estimado (Estándar Mercado):", co2Estimado]);
   const ws2=XLSX.utils.aoa_to_sheet(r2);
@@ -1836,7 +1836,7 @@ export default function QuantrexAbbott() {
         {sesion?.perfil==="admin"&&<button style={{background:"transparent",border:"none",color:C.cyan,fontSize:22,cursor:"pointer",padding:"4px 8px",flexShrink:0}} onClick={()=>setSidebarOpen(p=>!p)}>≡</button>}
         <div style={S.logoWrap}>
           <img src={LOGO_QUANTREX} alt="" style={{width:38,height:38,borderRadius:"50%",flexShrink:0,boxShadow:"0 0 0 2px rgba(0,174,239,.18), 0 4px 12px rgba(0,0,0,.5)"}}/>
-          <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott</div></div>
+          <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott Laboratories de Chile</div></div>
         </div>
         <nav style={S.nav}>
           {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"],["trazabilidad","Trazabilidad"],["incidencias","Incidencias"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
@@ -1882,7 +1882,7 @@ export default function QuantrexAbbott() {
           <div style={{display:"flex",flexDirection:"column",gap:4,padding:"12px 12px",flex:1,overflowY:"auto"}}>
             {[
               {id:"usuarios",label:"👥 Gestión de Usuarios"},
-              {id:"clientes",label:"🏥 Clientes Abbott"},
+              {id:"clientes",label:"🏥 Clientes Abbott Laboratories de Chile"},
               {id:"gastos",label:"🚚 Costos / Bitácora Vehículos"},
               {id:"cierres",label:"📁 Cierres de Período"},
             ].map(item=>(
@@ -3078,7 +3078,7 @@ function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatu
   return(
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-        <div style={S.pageTitle}>Solicitudes Abbott</div>
+        <div style={S.pageTitle}>Solicitudes Abbott Laboratories de Chile</div>
         {total>0&&sesion?.perfil!=="cliente"&&<button title="Exporta TODAS las solicitudes de la historia, no solo el período actual" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Exportar historial completo ({total})</span></button>}
       </div>
       {filterFecha&&(
@@ -3306,9 +3306,9 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,setVi
         {editForm.tipo==="li_devol"&&<div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
             <input type="checkbox" checked={editForm.devolucionUrgente||false} onChange={e=>setEditForm(p=>({...p,devolucionUrgente:e.target.checked}))}/>
-            <span style={{color:C.warning}}>Devolución urgente exigida por Abbott — cuenta para cobro</span>
+            <span style={{color:C.warning}}>Devolución urgente exigida por Abbott Laboratories de Chile — cuenta para cobro</span>
           </label>
-          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Las devoluciones normales no se cobran ni cuentan al límite diario. Marca esto solo si Abbott exigió un viaje extra por insumos urgentes.</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Las devoluciones normales no se cobran ni cuentan al límite diario. Marca esto solo si Abbott Laboratories de Chile exigió un viaje extra por insumos urgentes.</div>
         </div>}
         <div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
@@ -3703,9 +3703,9 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         {form.tipo==="li_devol"&&<div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
             <input type="checkbox" checked={form.devolucionUrgente||false} onChange={e=>setForm(p=>({...p,devolucionUrgente:e.target.checked}))}/>
-            <span style={{color:C.warning}}>Devolución urgente exigida por Abbott — cuenta para cobro</span>
+            <span style={{color:C.warning}}>Devolución urgente exigida por Abbott Laboratories de Chile — cuenta para cobro</span>
           </label>
-          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Las devoluciones normales (fin de jornada a bodega) no se cobran ni cuentan al límite diario. Marca esto solo si Abbott exigió un viaje extra por insumos urgentes.</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Las devoluciones normales (fin de jornada a bodega) no se cobran ni cuentan al límite diario. Marca esto solo si Abbott Laboratories de Chile exigió un viaje extra por insumos urgentes.</div>
         </div>}
         <div style={{...S.fGroup,gridColumn:"1/-1",borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4}}>
           <label style={{...S.label,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
@@ -3768,7 +3768,7 @@ function PantallaLogin({onLogin,usuarios=USUARIOS,choferes=CHOFERES}){
     <div style={{minHeight:"100vh",background:C.navy,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:16,padding:"32px 28px",width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:20}}>
         <div style={{textAlign:"center"}}>
-          <img src={LOGO_QUANTREX} alt="Quantrex Abbott" style={{width:150,height:150,borderRadius:"50%",display:"block",margin:"0 auto",boxShadow:"0 0 0 4px rgba(0,174,239,.12), 0 18px 50px rgba(0,0,0,.55), 0 0 60px rgba(0,174,239,.18)"}}/>
+          <img src={LOGO_QUANTREX} alt="Quantrex Abbott Laboratories de Chile" style={{width:150,height:150,borderRadius:"50%",display:"block",margin:"0 auto",boxShadow:"0 0 0 4px rgba(0,174,239,.12), 0 18px 50px rgba(0,0,0,.55), 0 0 60px rgba(0,174,239,.18)"}}/>
         </div>
 
         {cambioRequerido?(
@@ -4216,7 +4216,7 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
       ?listaU.map((u,i)=>i===editU?{...formU}:u)
       :[...listaU,{...formU}];
     setListaU(upd);
-    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Chile"}];
+    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Laboratories de Chile"}];
     onSave(todosUsuarios);
     setEditU(null);setNuevoU(false);setFormU({email:"",password:"",nombre:"",perfil:"operador"});
   }
@@ -4225,7 +4225,7 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
     if(!window.confirm("¿Eliminar este usuario?"))return;
     const upd=listaU.filter((_,j)=>j!==i);
     setListaU(upd);
-    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Chile"}];
+    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Laboratories de Chile"}];
     onSave(todosUsuarios);
   }
 
@@ -4829,7 +4829,7 @@ function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver,choferes=CHOFERE
     <div style={{...S.section,maxWidth:400,margin:"40px auto"}}>
       <button style={S.backBtn} onClick={onVolver}>← Volver</button>
       <div style={{textAlign:"center",marginBottom:8}}>
-        <img src={LOGO_QUANTREX} alt="Quantrex Abbott" style={{width:110,height:110,borderRadius:"50%",display:"block",margin:"0 auto 12px",boxShadow:"0 0 0 3px rgba(0,174,239,.12), 0 12px 36px rgba(0,0,0,.5), 0 0 44px rgba(0,174,239,.16)"}}/>
+        <img src={LOGO_QUANTREX} alt="Quantrex Abbott Laboratories de Chile" style={{width:110,height:110,borderRadius:"50%",display:"block",margin:"0 auto 12px",boxShadow:"0 0 0 3px rgba(0,174,239,.12), 0 12px 36px rgba(0,0,0,.5), 0 0 44px rgba(0,174,239,.16)"}}/>
         <div style={S.pageTitle}>Acceso Choferes</div>
         <div style={{fontSize:13,color:C.textSecondary,marginTop:4}}>Selecciona tu nombre e ingresa tu PIN</div>
       </div>
@@ -5861,7 +5861,7 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
               <select style={S.input} value={form.tipo} onChange={e=>setForm(p=>({...p,tipo:e.target.value}))}>
                 {Object.entries(TIPO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.icon} {m.label}</option>)}
               </select></div>
-            <div style={S.fGroup}><label style={S.label}>Contraparte (Abbott/DHL/otro)</label>
+            <div style={S.fGroup}><label style={S.label}>Contraparte (Abbott Laboratories de Chile/DHL/otro)</label>
               <input style={S.input} placeholder="Ej: DHL" value={form.contraparte} onChange={e=>setForm(p=>({...p,contraparte:e.target.value}))}/></div>
             <div style={S.fGroup}><label style={S.label}>Ubicación / andén</label>
               <input style={S.input} placeholder="Ej: Andén 32" value={form.ubicacion} onChange={e=>setForm(p=>({...p,ubicacion:e.target.value}))}/></div>
