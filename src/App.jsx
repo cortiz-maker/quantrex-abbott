@@ -5083,6 +5083,23 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
               <div style={{color:C.muted,fontSize:16,flexShrink:0}}>{abierta?"▲":"▼"}</div>
             </div>
 
+            {/* Acción rápida de llegada — visible en la fila colapsada, sin desplegar el formulario */}
+            {!abierta&&(
+              <div style={{padding:"0 16px 14px"}} onClick={e=>e.stopPropagation()}>
+                {!llegadaOk?(
+                  <button style={{background:C.cyan+"22",border:"1px solid "+C.cyan,color:C.cyan,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}
+                    onClick={()=>registrarLlegada(s.id)}>
+                    📍 Llegué al punto de entrega
+                  </button>
+                ):(
+                  <div style={{background:C.navy,border:"1px solid "+C.cyan,borderRadius:10,padding:"8px 14px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div style={{fontSize:11,color:C.cyan,fontWeight:700}}>EN PUNTO DE ENTREGA · {llegadas[s.id].hora}</div>
+                    <div style={{fontSize:16,fontWeight:900,color:C.cyan,fontFamily:"monospace"}}>{formatTiempo(tiempos[s.id]||0)}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {abierta&&(
             <div style={{padding:"0 16px 16px",display:"flex",flexDirection:"column",gap:12,borderTop:"1px solid "+C.border,paddingTop:14}}>
             {s.direccion&&<div style={{background:C.navy,borderRadius:8,padding:"10px 12px",fontSize:13,color:C.textSecondary}}>
