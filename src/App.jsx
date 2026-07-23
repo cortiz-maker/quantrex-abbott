@@ -716,37 +716,54 @@ const COLS_LISTA = [
   "updated_at","created_at"
 ].join(",");
 
+function _mapSolicitudLigera(s){
+  return {
+    id:s.id, ot:s.ot, fecha:s.fecha, hora:s.hora, tipo:s.tipo, titulo:s.titulo,
+    descripcion:s.descripcion, direccion:s.direccion, contacto:s.contacto, guia:s.guia,
+    prioridad:s.prioridad, notas:s.notas, solicitante:s.solicitante,
+    canalSolicitud:s.canal_solicitud, usuarioDT:s.usuario_dt, ppuAsignada:s.ppu_asignada,
+    destino:s.destino, choferAsignado:s.chofer_asignado, documentos:s.documentos,
+    status:s.status, statusLog:s.status_log||[],
+    noPresentacion:s.no_presentacion, vehiculoNP:s.vehiculo_np, motivoNP:s.motivo_np,
+    geoEntrega:s.geo_entrega, horaEntrega:s.hora_entrega, horaLlegada:s.hora_llegada,
+    tiempoEnPunto:s.tiempo_en_punto, coordsEntrega:s.coords_entrega,
+    nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
+    canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
+    devolucionUrgente:s.devolucion_urgente||false,
+    observacionChofer:s.observacion_chofer||"",
+    observacionCobro:s.observacion_cobro||"",
+    facturarEnPeriodo:s.facturar_en_periodo||"",
+    sinCobro:!!s.sin_cobro,
+    observacionAutor:s.observacion_autor||"",
+    observacionFecha:s.observacion_fecha||"",
+    updatedAt:s.updated_at, createdAt:s.created_at,
+    // Campos pesados vacíos hasta que se abra el detalle:
+    fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
+    fotosManifiesto:[],
+    _fotosCargadas:false,
+  };
+}
+
 async function loadSolicitudes() {
   try {
     const data = await sbFetch("GET","solicitudes","",
       `?select=${COLS_LISTA}&order=created_at.desc`);
     if(!data) return [];
-    return data.map(s=>({
-      id:s.id, ot:s.ot, fecha:s.fecha, hora:s.hora, tipo:s.tipo, titulo:s.titulo,
-      descripcion:s.descripcion, direccion:s.direccion, contacto:s.contacto, guia:s.guia,
-      prioridad:s.prioridad, notas:s.notas, solicitante:s.solicitante,
-      canalSolicitud:s.canal_solicitud, usuarioDT:s.usuario_dt, ppuAsignada:s.ppu_asignada,
-      destino:s.destino, choferAsignado:s.chofer_asignado, documentos:s.documentos,
-      status:s.status, statusLog:s.status_log||[],
-      noPresentacion:s.no_presentacion, vehiculoNP:s.vehiculo_np, motivoNP:s.motivo_np,
-      geoEntrega:s.geo_entrega, horaEntrega:s.hora_entrega, horaLlegada:s.hora_llegada,
-      tiempoEnPunto:s.tiempo_en_punto, coordsEntrega:s.coords_entrega,
-      nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
-      canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
-      devolucionUrgente:s.devolucion_urgente||false,
-      observacionChofer:s.observacion_chofer||"",
-      observacionCobro:s.observacion_cobro||"",
-      facturarEnPeriodo:s.facturar_en_periodo||"",
-      sinCobro:!!s.sin_cobro,
-      observacionAutor:s.observacion_autor||"",
-      observacionFecha:s.observacion_fecha||"",
-      updatedAt:s.updated_at, createdAt:s.created_at,
-      // Campos pesados vacíos hasta que se abra el detalle:
-      fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
-      fotosManifiesto:[],
-      _fotosCargadas:false,
-    }));
+    return data.map(_mapSolicitudLigera);
   } catch(e) { console.error(e); return []; }
+}
+
+// Trae el estado LIGERO más reciente de UNA sola solicitud (status, log, gestión
+// del chofer, etc. — sin fotos). Se usa antes de habilitar edición desde el
+// perfil operador/admin, para no pisar con datos locales desactualizados una
+// gestión que el chofer ya haya cerrado desde otra sesión/dispositivo.
+async function loadSolicitudLigera(id) {
+  try {
+    const data = await sbFetch("GET","solicitudes","",
+      `?id=eq.${id}&select=${COLS_LISTA}`);
+    if(!data || !data[0]) return null;
+    return _mapSolicitudLigera(data[0]);
+  } catch(e) { console.error("loadSolicitudLigera error:",e); return null; }
 }
 
 // Trae SOLO los campos pesados de UNA solicitud (al abrir el detalle).
@@ -1526,20 +1543,51 @@ export default function QuantrexAbbott() {
     showToast(newStatus==="cancelada"?`Cancelada por ${canceladoPor}.`:"Estado actualizado.");
   }
 
+  // Antes de habilitar edición desde el perfil operador/admin, se refresca ESTA
+  // solicitud puntualmente contra la base (status, log, gestión del chofer) para
+  // no editar sobre una copia local desactualizada. Devuelve el registro fresco
+  // y también lo deja actualizado en el estado local.
+  async function refrescarSolicitud(id){
+    const fresco = await loadSolicitudLigera(id);
+    if(!fresco) return solicitudes.find(s=>s.id===id)||null;
+    setSolicitudes(prev=>prev.map(s=>s.id===id?{...s,...fresco,
+      // conservar fotos/firma ya cargadas localmente si existían (loadSolicitudLigera no las trae)
+      fotoEntrega:s._fotosCargadas?s.fotoEntrega:fresco.fotoEntrega,
+      fotosEntrega:s._fotosCargadas?s.fotosEntrega:fresco.fotosEntrega,
+      firmaReceptor:s._fotosCargadas?s.firmaReceptor:fresco.firmaReceptor,
+      fotosManifiesto:s._fotosCargadas?s.fotosManifiesto:fresco.fotosManifiesto,
+      _fotosCargadas:s._fotosCargadas}:s));
+    return fresco;
+  }
+
+  // Campos que el formulario de edición (perfil operador/admin) realmente permite
+  // modificar. Todo lo demás — status, statusLog, fotos, firma, hora de entrega,
+  // geolocalización, etc. (la "gestión" que deja el chofer al cerrar) — se toma
+  // siempre desde el registro más reciente conocido y NUNCA se pisa con lo que
+  // traiga el formulario, aunque venga desactualizado.
+  const CAMPOS_EDITABLES_OPERADOR = [
+    "tipo","prioridad","titulo","destino","fecha","hora","direccion","contacto",
+    "choferAsignado","documentos","solicitante","canalSolicitud","usuarioDT","ppuAsignada",
+    "descripcion","notas","observacionChofer","observacionCobro","facturarEnPeriodo","sinCobro",
+    "devolucionUrgente","noPresentacion","vehiculoNP","motivoNP",
+  ];
   async function handleEdit(updatedSol){
-    const sol = solicitudes.find(s=>s.id===updatedSol.id);
-    let newStatus = updatedSol.status;
-    // Auto En Tránsito si se asigna PPU y usuarioDT
-    if(updatedSol.ppuAsignada && updatedSol.usuarioDT && sol.status==="pendiente"){
-      newStatus = "en_proceso";
+    // Confirmar contra la base el estado más reciente justo antes de guardar,
+    // por si la gestión del chofer llegó mientras el operador tenía el formulario abierto.
+    const sol = (await refrescarSolicitud(updatedSol.id)) || solicitudes.find(s=>s.id===updatedSol.id);
+    if(!sol) return;
+    const cambios={};
+    for(const k of CAMPOS_EDITABLES_OPERADOR) cambios[k]=updatedSol[k];
+    let solActualizada={...sol,...cambios,updatedAt:new Date().toISOString()};
+    // Auto En Tránsito si se asigna PPU y usuarioDT sobre una solicitud aún pendiente
+    if(solActualizada.ppuAsignada && solActualizada.usuarioDT && sol.status==="pendiente"){
       const now=new Date();
       const fechaHora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
-      updatedSol = {...updatedSol, status:newStatus,
-        statusLog:[...(updatedSol.statusLog||[]),{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",fechaHora,canceladoPor:null,usuario:sesion?.nombre||sesion?.email||"—"}]};
+      solActualizada={...solActualizada, status:"en_proceso",
+        statusLog:[...(sol.statusLog||[]),{id:Date.now().toString(),de:"Pendiente",a:"En Tránsito",fechaHora,canceladoPor:null,usuario:sesion?.nombre||sesion?.email||"—"}]};
     }
-    const solActualizada={...updatedSol,updatedAt:new Date().toISOString()};
     // Si admin/operador modificó la observación, registrar quién y cuándo
-    if((updatedSol.observacionChofer||"")!==(sol?.observacionChofer||"")){
+    if((cambios.observacionChofer||"")!==(sol?.observacionChofer||"")){
       solActualizada.observacionAutor = sesion?.nombre || sesion?.email || "Administrador";
       solActualizada.observacionFecha = new Date().toISOString();
     }
@@ -1555,7 +1603,7 @@ export default function QuantrexAbbott() {
     setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada); showToast("Log actualizado.");
   }
 
-  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null, fotosManifiesto=null, observacion=null){
+  async function handleChoferEstado(id, nuevoEstado, fotoBase64=null, horaLlegada=null, tiempoEnPunto=null, firmaData=null, fotosManifiesto=null, observacion=null, documentosCliente=null){
     const now = new Date();
     const fechaHora = now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
     // Obtener geolocalización
@@ -1576,6 +1624,7 @@ export default function QuantrexAbbott() {
         statusLog:[...(s.statusLog||[]),entry], geoEntrega:geoStr, horaEntrega:fechaHora,
         fotoEntrega:fotosDoc[0]||null, fotosEntrega:fotosDoc, horaLlegada:horaLlegada||null, tiempoEnPunto:tiempoEnPunto||null,
         fotosManifiesto:fotosManifiesto||s.fotosManifiesto||[],
+        documentos:(documentosCliente!=null&&documentosCliente.trim()!=="")?documentosCliente.trim():s.documentos||"",
         observacionChofer:(observacion!=null?observacion:s.observacionChofer)||"",
         observacionAutor:(observacion!=null&&observacion!=="")?(s.choferAsignado||"Chofer"):s.observacionAutor||"",
         observacionFecha:(observacion!=null&&observacion!=="")?now.toISOString():s.observacionFecha||"",
@@ -1856,7 +1905,7 @@ export default function QuantrexAbbott() {
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
-            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
+            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} onRefrescar={refrescarSolicitud} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}/>)
         :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
         :view==="certificado_aseo"?(<CertificadoAseo gastos={gastos} vehiculos={vehiculos} choferes={choferes} setView={setView} sesion={sesion}/>)
@@ -3069,7 +3118,7 @@ function SolicitudRow({sol,onSelect}){
 }
 
 // ── Detalle ────────────────────────────────────────────────────────────────
-function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
+function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
   const opcionesPPU=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>{
     const ch=(choferes||[]).find(c=>c.ppu===v.ppu);
     const desc=ch?.nombre||[v.marca,v.modelo].filter(Boolean).join(" ");
@@ -3083,6 +3132,20 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
   const [canceladoPor,setCanceladoPor]=useState("");
   const [editMode,setEditMode]=useState(false);
   const [editForm,setEditForm]=useState({...sol});
+  const [refrescando,setRefrescando]=useState(false);
+  async function abrirEdicion(){
+    // Antes de editar, se confirma contra la base el estado más reciente (status,
+    // log, gestión del chofer) por si cambió mientras se estaba viendo el detalle.
+    if(onRefrescar){
+      setRefrescando(true);
+      const fresco = await onRefrescar(sol.id);
+      setRefrescando(false);
+      setEditForm({...(fresco||sol)});
+    } else {
+      setEditForm({...sol});
+    }
+    setEditMode(true);
+  }
   const fe=k=>e=>{
     const upd={...editForm,[k]:e.target.value};
     if(k==="tipo"){
@@ -3276,7 +3339,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,setView,clientes=
         <div style={{...S.badge,background:sm.color+"22",color:sm.color}}>{sm.label}</div>
         {esAdmin||sesion?.perfil==="operador"?(
           sol._fotosCargadas
-            ?<button style={{...S.exportBtn,fontSize:12}} onClick={()=>setEditMode(true)}>✎ Editar</button>
+            ?<button style={{...S.exportBtn,fontSize:12,opacity:refrescando?.6:1}} disabled={refrescando} onClick={abrirEdicion}>{refrescando?"Verificando estado...":"✎ Editar"}</button>
             :<button style={{...S.exportBtn,fontSize:12,opacity:.5,cursor:"not-allowed"}} disabled title="Esperando a que carguen foto y firma antes de habilitar edición">⏳ Cargando datos...</button>
         ):null}
       </div>
@@ -4793,6 +4856,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   const [fotos,setFotos]=useState({});
   const [fotosManifiesto,setFotosManifiesto]=useState({}); // {solId: [b64,...]} para Carga OL
   const [observaciones,setObservaciones]=useState({}); // {solId: texto} nota opcional del chofer
+  const [documentosGD,setDocumentosGD]=useState({}); // {solId: texto} N° GD/documento capturado por el chofer al recibirlo físicamente
   const [errorFoto,setErrorFoto]=useState(null);
   const [firmas,setFirmas]=useState({}); // {solId: {dataUrl, nombre, rechazo}}
   const [modalFirma,setModalFirma]=useState(null); // solId activo
@@ -4962,10 +5026,11 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
     const tiempoStr=tiempoEnPunto!==null?formatTiempo(tiempoEnPunto):null;
     // Detener cronómetro
     if(timerRef.current[id]){clearInterval(timerRef.current[id]);delete timerRef.current[id];}
-    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr, firmas[id]||null, fotosManifiesto[id]||null, observaciones[id]||null);
+    await onEstado(id, estado, fotos[id]||null, llegada?.hora||null, tiempoStr, firmas[id]||null, fotosManifiesto[id]||null, observaciones[id]||null, documentosGD[id]||null);
     setFotos(p=>{const n={...p};delete n[id];return n;});
     setFotosManifiesto(p=>{const n={...p};delete n[id];return n;});
     setObservaciones(p=>{const n={...p};delete n[id];return n;});
+    setDocumentosGD(p=>{const n={...p};delete n[id];return n;});
     setFirmas(p=>{const n={...p};delete n[id];return n;});
     setLlegadas(p=>{const n={...p};delete n[id];return n;});
     setTiempos(p=>{const n={...p};delete n[id];return n;});
@@ -5024,6 +5089,23 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
               📍 {s.direccion}
               {s.notas&&<div style={{color:C.muted,fontSize:12,marginTop:4}}>💬 {s.notas}</div>}
             </div>}
+            {/* GD / Documento Cliente — el chofer la recibe recién en físico, por eso se
+                captura aquí al momento del cierre en vez de exigirla al crear la solicitud.
+                Si la solicitud ya trae algo cargado (ej. editado por un operador), se precarga
+                mostrando solo un GD (prioriza el que mencione "maletas") y queda editable. */}
+            {(()=>{
+              const lista=(s.documentos||"").split(",").map(d=>d.trim()).filter(Boolean);
+              const gdPrecargada=lista.find(d=>/maletas/i.test(d))||lista[0]||"";
+              const valor=documentosGD[s.id]!==undefined?documentosGD[s.id]:gdPrecargada;
+              return(
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  <label style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:.5,textTransform:"uppercase"}}>📄 N° GD Cliente</label>
+                  <input style={{border:"1px solid "+C.border,background:C.navy,color:C.textPrimary,borderRadius:10,padding:"10px 12px",fontSize:13,outline:"none"}}
+                    placeholder="Ej: GD 12345 (según lo indicado en la guía física)"
+                    value={valor} onChange={e=>setDocumentosGD(p=>({...p,[s.id]:e.target.value}))}/>
+                </div>
+              );
+            })()}
             {/* Llegada al punto */}
             {!llegadas[s.id]?(
               <button style={{background:C.cyan+"22",border:"1px solid "+C.cyan,color:C.cyan,borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}
