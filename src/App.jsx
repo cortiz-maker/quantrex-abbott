@@ -28,6 +28,16 @@ const STATUS_META = {
   devolucion:      { label:"Devolución",     color:"#14B8A6" },
   cancelada:       { label:"Cancelada",      color:"#EF4444" },
 };
+// Forma plural de cada estado, para usar cuando el conteo es mayor a 1 en
+// textos tipo "110 Completadas" (STATUS_META.label se mantiene singular
+// porque también se usa como badge de una solicitud individual).
+const STATUS_META_PLURAL = {
+  pendiente:"Pendientes", en_proceso:"En Tránsito", completada:"Completadas",
+  no_entregado:"No Entregados", devolucion:"Devoluciones", cancelada:"Canceladas",
+};
+function statusLabelConteo(k,n){
+  return n===1 ? STATUS_META[k]?.label : (STATUS_META_PLURAL[k]||STATUS_META[k]?.label);
+}
 
 // Avance por etapa (Cumplimiento del día): una solicitud recién ingresada
 // (pendiente) representa un 25% de avance; una vez que el operador logístico
@@ -2876,7 +2886,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         {Object.entries(STATUS_META).map(([k,meta])=>{
           const n=solicitudesPeriodo.filter(s=>s.status===k).length;
           if(n===0)return null;
-          return <div key={k} style={{fontSize:12,color:C.textSecondary}}><strong style={{color:meta.color}}>{n}</strong> {meta.label}</div>;
+          return <div key={k} style={{fontSize:12,color:C.textSecondary}}><strong style={{color:meta.color}}>{n}</strong> {statusLabelConteo(k,n)}</div>;
         })}
       </div>}
 
