@@ -2563,8 +2563,16 @@ function ResumenKmAnual(){
       prev=p;
     }
     const diasArr=Object.entries(porDia);
+    // Igual que getPeriodoActual/getNombrePeriodo: el período factura del 26 del
+    // mes anterior al 25 del mes en curso, y se nombra con el mes de cierre (fin).
+    // Un día 26-31 pertenece entonces al período que cierra el mes siguiente.
+    const mesDelPeriodo=(fecha)=>{
+      const d=new Date(fecha+"T12:00:00");
+      let m=d.getDate()>=26 ? d.getMonth()+1 : d.getMonth();
+      return m%12;
+    };
     const porMes=Array(12).fill(0);
-    diasArr.forEach(([fecha,km])=>{ const mIdx=parseInt(fecha.slice(5,7),10)-1; if(mIdx>=0&&mIdx<12) porMes[mIdx]+=km; });
+    diasArr.forEach(([fecha,km])=>{ const mIdx=mesDelPeriodo(fecha); porMes[mIdx]+=km; });
     let record=null;
     diasArr.forEach(([fecha,km])=>{ if(!record||km>record.km) record={fecha,km}; });
     const totalKm=diasArr.reduce((s,[,km])=>s+km,0);
@@ -2582,7 +2590,10 @@ function ResumenKmAnual(){
     );
   }
 
-  const mesActual=new Date().getMonth();
+  // Mismo criterio 26-25 que el resto de la app: si hoy cae en día >=26, el
+  // período "actual" ya corresponde al mes siguiente.
+  const hoyHelper=new Date();
+  const mesActual=(hoyHelper.getDate()>=26 ? hoyHelper.getMonth()+1 : hoyHelper.getMonth())%12;
   const serie=data.porMes.slice(0,mesActual+1).map((km,i)=>({mes:MESES[i],km}));
   const max=Math.max(1,...serie.map(d=>d.km));
 
