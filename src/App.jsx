@@ -933,10 +933,11 @@ async function saveClientes(data) {
 async function loadUsuarios() {
   try {
     const data = await sbFetch("GET","usuarios","","?order=updated_at.asc");
-    if(!data||!data.length) return null;
+    if(data===null) { console.error("loadUsuarios: fallo de red/Supabase, NO se sembrará ni se borrará nada (protege ultimoAcceso)."); return {error:true}; }
+    if(!data.length) return {empty:true};
     return data.map(u=>({email:u.email,password:u.password,perfil:u.perfil,nombre:u.nombre,
       ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado}));
-  } catch(e) { return null; }
+  } catch(e) { console.error("loadUsuarios excepción:",e); return {error:true}; }
 }
 async function saveUsuarios(data) {
   try {
@@ -957,9 +958,10 @@ async function saveUsuarios(data) {
 async function loadChoferes() {
   try {
     const data = await sbFetch("GET","choferes","","?order=updated_at.asc");
-    if(!data||!data.length) return null;
+    if(data===null) { console.error("loadChoferes: fallo de red/Supabase, NO se sembrará ni se borrará nada."); return {error:true}; }
+    if(!data.length) return {empty:true};
     return data.map(c=>({nombre:c.nombre,ppu:c.ppu,usuarioDT:c.usuario_dt,pin:c.pin}));
-  } catch(e) { return null; }
+  } catch(e) { console.error("loadChoferes excepción:",e); return {error:true}; }
 }
 async function saveChoferes(data) {
   try {
@@ -977,10 +979,11 @@ async function saveChoferes(data) {
 async function loadVehiculos() {
   try {
     const data = await sbFetch("GET","vehiculos","","?order=updated_at.asc");
-    if(!data||!data.length) return null;
+    if(data===null) { console.error("loadVehiculos: fallo de red/Supabase, NO se sembrará ni se borrará nada."); return {error:true}; }
+    if(!data.length) return {empty:true};
     return data.map(v=>({ppu:v.ppu,marca:v.marca||"",modelo:v.modelo||"",anio:v.anio||"",
       capacidadM3:v.capacidad_m3==null?"":v.capacidad_m3, capacidadKg:v.capacidad_kg==null?"":v.capacidad_kg}));
-  } catch(e) { return null; }
+  } catch(e) { console.error("loadVehiculos excepción:",e); return {error:true}; }
 }
 async function saveVehiculos(data) {
   try {
@@ -1429,7 +1432,24 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios(),loadMetas(),loadIncidencias()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re,me,inc])=>{setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);if(us){setUsuarios(us);}else{await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}if(ch){setChoferes(ch);}else{await saveChoferes(CHOFERES);setChoferes(CHOFERES);}if(ve){setVehiculos(ve);}else{await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}setGastos(ga||[]);setRecordatorios(re||[]);setMetas(me||[]);setIncidencias(inc||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);});},[]);
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios(),loadMetas(),loadIncidencias()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re,me,inc])=>{
+    setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);
+    // IMPORTANTE: solo se siembra la tabla con los valores por defecto si esta
+    // vino realmente vacía ({empty:true}). Si hubo un error de red/Supabase
+    // ({error:true}) se usan los defaults SOLO en memoria para no dejar la
+    // pantalla en blanco, pero NUNCA se graban ni se borra nada en Supabase —
+    // eso fue lo que provocó la pérdida de choferes/vehículos/último acceso.
+    if(Array.isArray(us)){setUsuarios(us);}
+    else if(us&&us.empty){await saveUsuarios(USUARIOS);setUsuarios(USUARIOS);}
+    else{console.error("Carga de usuarios falló (red/Supabase); se muestran datos locales sin sobrescribir la base.");setUsuarios(USUARIOS);}
+    if(Array.isArray(ch)){setChoferes(ch);}
+    else if(ch&&ch.empty){await saveChoferes(CHOFERES);setChoferes(CHOFERES);}
+    else{console.error("Carga de choferes falló (red/Supabase); se muestran datos locales sin sobrescribir la base.");setChoferes(CHOFERES);}
+    if(Array.isArray(ve)){setVehiculos(ve);}
+    else if(ve&&ve.empty){await saveVehiculos(VEHICULOS_DEFAULT);setVehiculos(VEHICULOS_DEFAULT);}
+    else{console.error("Carga de vehículos falló (red/Supabase); se muestran datos locales sin sobrescribir la base.");setVehiculos(VEHICULOS_DEFAULT);}
+    setGastos(ga||[]);setRecordatorios(re||[]);setMetas(me||[]);setIncidencias(inc||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);
+  });},[]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
@@ -4208,6 +4228,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
 function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuario,setView}){
   const [listaU,setListaU]=useState(usuarios.filter(u=>u.perfil!=="admin"));
   const [listaC,setListaC]=useState(choferes);
+  useEffect(()=>{setListaC(choferes);},[choferes]);
   const [tab,setTab]=useState("operadores");
   const [editU,setEditU]=useState(null);
   const [editC,setEditC]=useState(null);
@@ -4216,6 +4237,7 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
   const [nuevoU,setNuevoU]=useState(false);
   const [nuevoC,setNuevoC]=useState(false);
   const [listaV,setListaV]=useState(vehiculos);
+  useEffect(()=>{setListaV(vehiculos);},[vehiculos]);
   const [editV,setEditV]=useState(null);
   const [nuevoV,setNuevoV]=useState(false);
   const [formV,setFormV]=useState({ppu:"",marca:"",modelo:"",anio:"",capacidadM3:"",capacidadKg:""});
