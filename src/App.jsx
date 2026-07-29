@@ -1637,9 +1637,15 @@ export default function QuantrexAbbott() {
     const now = new Date();
     const fechaHora = now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
     // Obtener geolocalización
+    // enableHighAccuracy + maximumAge: reutiliza una lectura reciente del GPS
+    // (por ejemplo la del tracking continuo ya activo) en vez de forzar una
+    // adquisición nueva desde cero, que es lo que provocaba el timeout y el
+    // "Sin geolocalización" aun con GPS activo.
     let geoStr = "Sin geolocalización";
     try {
-      const pos = await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{timeout:8000}));
+      const pos = await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{
+        enableHighAccuracy:true, maximumAge:10000, timeout:15000
+      }));
       geoStr = pos.coords.latitude.toFixed(6)+","+pos.coords.longitude.toFixed(6);
     } catch {}
     const statusLabel = nuevoEstado === "completada" ? "Entregado" : "No Entregado";
@@ -4970,7 +4976,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
         setLlegadas(p=>({...p,[solId]:{hora,timestamp:now.getTime(),geo}}));
       },
       ()=>{setLlegadas(p=>({...p,[solId]:{hora,timestamp:now.getTime(),geo:null}}));},
-      {timeout:5000}
+      {enableHighAccuracy:true, maximumAge:10000, timeout:15000}
     );
     // Iniciar cronómetro
     timerRef.current[solId]=setInterval(()=>{
