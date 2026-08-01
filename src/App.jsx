@@ -186,7 +186,7 @@ async function consultarDispatchTrack(identificador){
     });
     const data = await res.json().catch(()=>null);
     if(!res.ok) return { ok:false, error: data?.error||`Error ${res.status}` };
-    return { ok:true, resultado:data?.dispatchtrack };
+    return { ok:true, dispatches:data?.dispatches||[] };
   }catch(e){ console.error("consultarDispatchTrack:",e); return { ok:false, error:"No se pudo contactar el puente DispatchTrack." }; }
 }
 const GOOGLE_DRIVE_FOLDER_ID = "1a_AvHPtyAaNDdFDMJxvnigzgzt7TZHnp";
@@ -2803,13 +2803,12 @@ function BuscadorDocumento(){
   const [q,setQ]=useState("");
   const [buscado,setBuscado]=useState(false);
   const [drive,setDrive]=useState(null); // {loading}|{archivos}|{error}
+  const [dt,setDt]=useState(null); // {loading}|{porNumero:{n:{ok,dispatches,error}}}
   const [numerosBuscados,setNumerosBuscados]=useState([]);
   const [limiteExcedido,setLimiteExcedido]=useState(false);
-  const [ultimoCopiado,setUltimoCopiado]=useState("");
-  const [showDT,setShowDT]=useState(false);
   const carpetasCache=useRef(null); // cache de IDs de subcarpetas ya descubiertas en esta sesión
 
-  const dtConfigurado = DT_WIDGET_URL && !DT_WIDGET_URL.startsWith("TU_");
+  const dtConfigurado = QUANTREX_DT_BRIDGE_URL && !QUANTREX_DT_BRIDGE_URL.startsWith("TU_");
   const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
 
   const buscarDrive=async(terminos)=>{
@@ -2827,6 +2826,17 @@ function BuscadorDocumento(){
     }
   };
 
+  const buscarDT=async(numeros)=>{
+    if(!dtConfigurado) return;
+    setDt({loading:true});
+    const entries = await Promise.all(numeros.map(async n=>{
+      const r = await consultarDispatchTrack(n);
+      return [n, r];
+    }));
+    const porNumero = Object.fromEntries(entries);
+    setDt({porNumero});
+  };
+
   const buscar=()=>{
     const numeros=Array.from(new Set(q.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean)));
     if(numeros.length===0) return;
@@ -2835,22 +2845,51 @@ function BuscadorDocumento(){
     setNumerosBuscados(numeros);
     setBuscado(true);
     setDrive(null);
+    setDt(null);
     buscarDrive(numeros.map(n=>n.replace(/'/g,"\\'")));
-  };
-
-  const copiarNumero=async(n)=>{
-    try{ await navigator.clipboard.writeText(n); setUltimoCopiado(n); setTimeout(()=>setUltimoCopiado(""),2500); }catch{}
+    buscarDT(numeros);
   };
 
   const resultCard = (contenido)=>(
     <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:8,flex:1,minWidth:180}}>{contenido}</div>
   );
 
+  // Mapeo de estados propios de DispatchTrack (distintos de los STATUS_META de Quantrex).
+  const DT_ESTADO_META = {
+    delivered:{label:"Entregado",color:C.success},
+    on_route:{label:"En ruta",color:C.cyan},
+    pending:{label:"Pendiente",color:C.warning},
+    rejected:{label:"Rechazado",color:C.danger},
+    canceled:{label:"Cancelado",color:C.danger},
+  };
+  const fmtFechaDT = (f)=>{ if(!f) return null; try{return new Date(f).toLocaleString("es-CL");}catch{return f;} };
+
+  const dispatchCard = (d)=>{
+    const em = DT_ESTADO_META[d.status]||{label:d.status||"—",color:C.muted};
+    return (
+      <div key={d.id} style={{border:`1px solid ${C.border}`,borderRadius:8,padding:8,display:"flex",flexDirection:"column",gap:4}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:700,fontSize:12,color:C.textPrimary}}>{d.identifier}</div>
+          <div style={{fontSize:11,fontWeight:700,color:em.color}}>{em.label}</div>
+        </div>
+        {d.substatus&&<div style={{fontSize:11,color:C.textSecondary}}>Subestado: {d.substatus}</div>}
+        {(d.arrived_at||d.estimated_at)&&<div style={{fontSize:11,color:C.muted}}>Fecha: {fmtFechaDT(d.arrived_at||d.estimated_at)}</div>}
+        {d.contact_name&&<div style={{fontSize:11,color:C.textSecondary}}>Contacto: {d.contact_name}</div>}
+        {d.contact_address&&<div style={{fontSize:11,color:C.muted}}>{d.contact_address}</div>}
+        {d.contact_phone&&<div style={{fontSize:11,color:C.muted}}>Tel: {d.contact_phone}</div>}
+        {(d.tags||[]).filter(t=>t?.value).map((t,i)=>(
+          <div key={i} style={{fontSize:11,color:C.muted}}>{t.name?.trim()}: {t.value}</div>
+        ))}
+        {(d.items||[]).length>0&&<div style={{fontSize:11,color:C.muted}}>Items: {d.items.map(it=>it.name).join(", ")}</div>}
+      </div>
+    );
+  };
+
   return (
     <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:10}}>
       <div>
         <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔍 Buscar documento</div>
-        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho o documento para ubicarlo en DispatchTrack o el PDF escaneado. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
+        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho o documento para ver su estado en DispatchTrack o el PDF escaneado. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <input style={{...S.input,flex:1,minWidth:180}} placeholder="Ej: 432263, 424948, 1037054..." value={q}
@@ -2862,19 +2901,31 @@ function BuscadorDocumento(){
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
           {resultCard(<>
             <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>🚚 DispatchTrack</div>
-            {dtConfigurado?(<>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {numerosBuscados.map(n=>(
-                  <button key={n} style={{...S.exportBtn,textAlign:"left",display:"flex",justifyContent:"space-between",gap:8}}
-                    onClick={async()=>{await copiarNumero(n);setShowDT(true);}}>
-                    <span>{n}</span><span>{ultimoCopiado===n?"✓ copiado":"Copiar →"}</span>
-                  </button>
-                ))}
+            {!dtConfigurado?(
+              <div style={{fontSize:12,color:C.warning}}>Falta configurar QUANTREX_DT_BRIDGE_URL/TOKEN.</div>
+            ):dt?.loading?(
+              <div style={{fontSize:12,color:C.muted}}>Consultando DispatchTrack...</div>
+            ):dt?.porNumero?(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {numerosBuscados.map(n=>{
+                  const r=dt.porNumero[n];
+                  return (
+                    <div key={n}>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:4}}>{n}</div>
+                      {!r?.ok?(
+                        <div style={{fontSize:12,color:C.danger,paddingLeft:6}}>Error: {r?.error||"no se pudo consultar"}</div>
+                      ):(r.dispatches||[]).length===0?(
+                        <div style={{fontSize:12,color:C.muted,paddingLeft:6}}>— no encontrado</div>
+                      ):(
+                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                          {r.dispatches.map(dispatchCard)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <div style={{fontSize:11,color:C.muted}}>Copia cada número y pégalo (Ctrl+V) en el campo "Ingrese su número de despacho" del widget.</div>
-            </>):(
-              <div style={{fontSize:12,color:C.warning}}>Falta configurar DT_WIDGET_URL con la URL del widget de tu cuenta DispatchTrack.</div>
-            )}
+            ):null}
           </>)}
           {resultCard(<>
             <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>📄 Documento escaneado</div>
@@ -2905,26 +2956,6 @@ function BuscadorDocumento(){
               {drive.carpetasConError>0&&<div style={{fontSize:11,color:C.warning,marginTop:2}}>⚠ {drive.carpetasConError} carpeta(s) no se pudieron revisar por permisos — si algún documento no aparece, puede estar ahí. Revisa que estén compartidas como "Cualquiera con el enlace".</div>}
             </>):null}
           </>)}
-        </div>
-      )}
-      {showDT&&(
-        <div style={{position:"fixed",inset:0,background:"#000000AA",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>setShowDT(false)}>
-          <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:14,padding:16,width:"100%",maxWidth:460,boxShadow:"0 12px 40px #000000AA"}} onClick={e=>e.stopPropagation()}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-              <div style={{fontWeight:800,color:C.cyan,fontSize:13}}>🚚 Seguimiento DispatchTrack</div>
-              <button style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}} onClick={()=>setShowDT(false)}>✕</button>
-            </div>
-            <div style={{fontSize:12,color:C.textSecondary,marginBottom:8}}>{ultimoCopiado?<>N° copiado al portapapeles: <b style={{color:C.textPrimary}}>{ultimoCopiado}</b> — pégalo (Ctrl+V) en el campo de abajo.</>:"Copia un número de la lista y pégalo en el campo de abajo."}</div>
-            <iframe
-              name="beetrack-widget"
-              id="beetrack-widget"
-              frameBorder="0"
-              width="100%"
-              height="310px"
-              src={DT_WIDGET_URL}
-              title="Widget DispatchTrack"
-            />
-          </div>
         </div>
       )}
     </div>
