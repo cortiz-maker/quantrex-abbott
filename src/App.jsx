@@ -4246,6 +4246,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
 // ── Admin Usuarios ─────────────────────────────────────────────────────────
 function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuario,setView}){
   const [listaU,setListaU]=useState(usuarios.filter(u=>u.perfil!=="admin"));
+  useEffect(()=>{setListaU(usuarios.filter(u=>u.perfil!=="admin"));},[usuarios]);
   const [listaC,setListaC]=useState(choferes);
   useEffect(()=>{setListaC(choferes);},[choferes]);
   const [tab,setTab]=useState("operadores");
@@ -4262,13 +4263,24 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
   const [formV,setFormV]=useState({ppu:"",marca:"",modelo:"",anio:"",capacidadM3:"",capacidadKg:""});
   const [autollenado,setAutollenado]=useState(false);
 
+  // Abbott debe existir siempre como cliente, pero SOLO se agrega si no está
+  // ya en la lista. Antes se agregaba sin condición, y como usuarios/saveUsuarios
+  // usa el email como id de upsert, mandar el mismo email dos veces en un solo
+  // POST hace que Postgres rechace TODO el lote (ON CONFLICT no puede afectar
+  // la misma fila dos veces) — el guardado completo fallaba en silencio y el
+  // cliente nuevo nunca llegaba a persistirse en Supabase.
+  function conAbbottGarantizado(lista){
+    if(lista.some(u=>u.email==="info@transportesbs.cl")) return lista;
+    return [...lista,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Laboratories de Chile"}];
+  }
+
   function guardarOperador(){
     if(!formU.email||!formU.password||!formU.nombre)return;
     const upd=editU!==null
       ?listaU.map((u,i)=>i===editU?{...formU}:u)
       :[...listaU,{...formU}];
     setListaU(upd);
-    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Laboratories de Chile"}];
+    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...conAbbottGarantizado(upd)];
     onSave(todosUsuarios);
     setEditU(null);setNuevoU(false);setFormU({email:"",password:"",nombre:"",perfil:"operador"});
   }
@@ -4277,9 +4289,10 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
     if(!window.confirm("¿Eliminar este usuario?"))return;
     const upd=listaU.filter((_,j)=>j!==i);
     setListaU(upd);
-    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...upd,{email:"info@transportesbs.cl",password:"libre2026",perfil:"cliente",nombre:"Abbott Laboratories de Chile"}];
+    const todosUsuarios=[usuarios.find(u=>u.perfil==="admin"),...conAbbottGarantizado(upd)];
     onSave(todosUsuarios);
   }
+
 
   return(
     <div style={S.section}>
