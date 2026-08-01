@@ -1088,17 +1088,24 @@ async function deleteRecordatorio(id) {
 }
 // ── Incidencias (no conformidades NT147 / cumplimiento de flota) ──────────
 async function loadIncidencias() {
+  const mapear = data => data.map(i=>({
+    id:i.id, folio:i.folio||"", fecha:i.fecha||"", tipo:i.tipo||"otro",
+    contraparte:i.contraparte||"", ubicacion:i.ubicacion||"", descripcion:i.descripcion||"",
+    fotos:i.fotos||[], notificado:!!i.notificado, fechaNotificacion:i.fecha_notificacion||"",
+    estado:i.estado||"abierta", autor:i.autor||"", origen:i.origen||"manual",
+    createdAt:i.created_at||"", updatedAt:i.updated_at||"",
+  }));
   try {
-    const data = await sbFetch("GET","incidencias","","?order=fecha.desc");
-    if(!data) return [];
-    return data.map(i=>({
-      id:i.id, folio:i.folio||"", fecha:i.fecha||"", tipo:i.tipo||"otro",
-      contraparte:i.contraparte||"", ubicacion:i.ubicacion||"", descripcion:i.descripcion||"",
-      fotos:i.fotos||[], notificado:!!i.notificado, fechaNotificacion:i.fecha_notificacion||"",
-      estado:i.estado||"abierta", autor:i.autor||"", origen:i.origen||"manual",
-      createdAt:i.created_at||"", updatedAt:i.updated_at||"",
-    }));
-  } catch(e) { return []; }
+    let data = await sbFetch("GET","incidencias","","?order=fecha.desc");
+    if(!data){
+      // Reintento único: un fallo puntual (cold start, blip de red) no debe
+      // mostrarse como "0 incidencias" — se reintenta una vez antes de rendirse.
+      await new Promise(r=>setTimeout(r,900));
+      data = await sbFetch("GET","incidencias","","?order=fecha.desc");
+    }
+    if(!data){ console.error("loadIncidencias: sin datos tras reintento"); return null; }
+    return mapear(data);
+  } catch(e) { console.error("loadIncidencias:",e); return null; }
 }
 async function saveIncidencia(i) {
   try {
@@ -1109,6 +1116,7 @@ async function saveIncidencia(i) {
       estado:i.estado||"abierta", autor:i.autor||null, origen:i.origen||"manual",
       updated_at:new Date().toISOString(),
     };
+    const body = JSON.stringify([payload]);
     const res = await fetch(`${SUPABASE_URL}/rest/v1/incidencias?on_conflict=id`, {
       method:"POST",
       headers:{
@@ -1117,10 +1125,15 @@ async function saveIncidencia(i) {
         "Authorization":`Bearer ${SUPABASE_KEY}`,
         "Prefer":"resolution=merge-duplicates,return=minimal",
       },
-      body:JSON.stringify([payload]),
+      body,
     });
-    return res.ok;
-  } catch(e) { console.error("saveIncidencia:",e); return false; }
+    if(!res.ok){
+      const e=await res.text().catch(()=>"");
+      console.error(`saveIncidencia error [${res.status}] (payload ~${(body.length/1024/1024).toFixed(2)}MB):`, e);
+      return false;
+    }
+    return true;
+  } catch(e) { console.error("saveIncidencia excepción:",e); return false; }
 }
 async function deleteIncidencia(id) {
   try {
@@ -5856,9 +5869,20 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
   function iniciarNueva(){ setForm(EMPTY); setEditId(null); setNuevo(true); setExpandId(null); }
   function iniciarEdicion(i){ setForm({fecha:i.fecha,tipo:i.tipo,contraparte:i.contraparte,ubicacion:i.ubicacion,descripcion:i.descripcion,fotos:i.fotos||[],notificado:i.notificado,fechaNotificacion:i.fechaNotificacion,estado:i.estado}); setEditId(i.id); setNuevo(true); setExpandId(null); }
 
+  const FOTOS_MAX_MB=4; // margen bajo el límite real del gateway de Supabase
+  function pesoFotosMB(fotos){
+    const bytes=(fotos||[]).reduce((acc,f)=>acc+((evData(f)||"").length*0.75),0); // base64 → bytes aprox.
+    return bytes/1024/1024;
+  }
+
   async function guardar(){
     if(!form.descripcion.trim()){window.alert("Describe brevemente la incidencia.");return;}
     if(!form.fecha){window.alert("Indica la fecha.");return;}
+    const pesoMB=pesoFotosMB(form.fotos);
+    if(pesoMB>FOTOS_MAX_MB){
+      window.alert(`La evidencia adjunta pesa ~${pesoMB.toFixed(1)}MB, supera el límite de ${FOTOS_MAX_MB}MB por incidencia. Quita algún PDF/Word/Excel pesado o divide la evidencia en dos incidencias — si no, Supabase rechaza el guardado sin más detalle.`);
+      return;
+    }
     const base=editId?incidencias.find(x=>x.id===editId):null;
     const i={
       id: editId || ("inc_"+Date.now().toString()),
