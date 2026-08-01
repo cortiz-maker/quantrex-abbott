@@ -2859,28 +2859,41 @@ function BuscadorDocumento(){
     delivered:{label:"Entregado",color:C.success},
     on_route:{label:"En ruta",color:C.cyan},
     pending:{label:"Pendiente",color:C.warning},
-    rejected:{label:"Rechazado",color:C.danger},
+    rejected:{label:"No entregado",color:C.danger},
     canceled:{label:"Cancelado",color:C.danger},
+  };
+  // El subestado es un campo libre configurado por la cuenta (ej. "Devolución",
+  // "Venta", "Reposición"), así que no hay un enum fijo para saber cuáles son
+  // "no entregado". Se detecta por palabras clave en el texto como respaldo,
+  // además del status base de DispatchTrack.
+  const esNoEntregado = (d)=>{
+    if(d.status==="rejected"||d.status==="canceled") return true;
+    const s=(d.substatus||"").toLowerCase();
+    return ["no entreg","rechaz","fallid"].some(h=>s.includes(h));
   };
   const fmtFechaDT = (f)=>{ if(!f) return null; try{return new Date(f).toLocaleString("es-CL");}catch{return f;} };
 
   const dispatchCard = (d)=>{
     const em = DT_ESTADO_META[d.status]||{label:d.status||"—",color:C.muted};
+    const color = esNoEntregado(d) ? C.danger : em.color;
+    const etiqueta = d.substatus || em.label;
+    const evidencias = (d.tags||[]).filter(t=>t?.value);
     return (
       <div key={d.id} style={{border:`1px solid ${C.border}`,borderRadius:8,padding:8,display:"flex",flexDirection:"column",gap:4}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontWeight:700,fontSize:12,color:C.textPrimary}}>{d.identifier}</div>
-          <div style={{fontSize:11,fontWeight:700,color:em.color}}>{em.label}</div>
+          <div style={{fontSize:11,fontWeight:700,color}}>{etiqueta}</div>
         </div>
-        {d.substatus&&<div style={{fontSize:11,color:C.textSecondary}}>Subestado: {d.substatus}</div>}
-        {(d.arrived_at||d.estimated_at)&&<div style={{fontSize:11,color:C.muted}}>Fecha: {fmtFechaDT(d.arrived_at||d.estimated_at)}</div>}
-        {d.contact_name&&<div style={{fontSize:11,color:C.textSecondary}}>Contacto: {d.contact_name}</div>}
-        {d.contact_address&&<div style={{fontSize:11,color:C.muted}}>{d.contact_address}</div>}
-        {d.contact_phone&&<div style={{fontSize:11,color:C.muted}}>Tel: {d.contact_phone}</div>}
-        {(d.tags||[]).filter(t=>t?.value).map((t,i)=>(
-          <div key={i} style={{fontSize:11,color:C.muted}}>{t.name?.trim()}: {t.value}</div>
-        ))}
-        {(d.items||[]).length>0&&<div style={{fontSize:11,color:C.muted}}>Items: {d.items.map(it=>it.name).join(", ")}</div>}
+        {d.contact_name&&<div style={{fontSize:11,color:C.textSecondary}}>Nombre: {d.contact_name}</div>}
+        {d.contact_address&&<div style={{fontSize:11,color:C.muted}}>Dirección: {d.contact_address}</div>}
+        {d.number_of_retries!=null&&<div style={{fontSize:11,color:C.muted}}>Intentos de entrega: {d.number_of_retries}</div>}
+        {(d.arrived_at||evidencias.length>0)&&(
+          <div style={{marginTop:4,paddingTop:4,borderTop:`1px solid ${C.border}`}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Prueba de entrega</div>
+            {d.arrived_at&&<div style={{fontSize:11,color:C.muted}}>Fecha: {fmtFechaDT(d.arrived_at)}</div>}
+            {evidencias.map((t,i)=>(<div key={i} style={{fontSize:11,color:C.muted}}>{t.name?.trim()}: {t.value}</div>))}
+          </div>
+        )}
       </div>
     );
   };
