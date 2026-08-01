@@ -160,6 +160,35 @@ const GOOGLE_MAPS_API_KEY = "AIzaSyA_8neDl2i9IcdIOotSFzryKu0ocaqAzgM";
 
 // ── Buscador de documentos (DispatchTrack + Drive) ──────────────────────────
 const DT_WIDGET_URL = "https://quantrex.dispatchtrack.com/widget/Ah-7HMAviKex7L2T6j3yHg";
+// Puente Railway (repo quantrex-dt-bridge) — reemplaza QUANTREX_DT_BRIDGE_URL
+// por el dominio real una vez desplegado (Settings → Networking → Generate
+// Domain en Railway). QUANTREX_DT_BRIDGE_TOKEN debe coincidir con la variable
+// PUENTE_TOKEN configurada en ese mismo servicio.
+const QUANTREX_DT_BRIDGE_URL = "https://quantrex-dt-bridge-production.up.railway.app";
+const QUANTREX_DT_BRIDGE_TOKEN = "FZME_PlgBDUvvC1pYiqYcleO7BI5Hv45YFDpyuG0yfk";
+async function enviarADispatchTrack(solicitud){
+  try{
+    const res = await fetch(`${QUANTREX_DT_BRIDGE_URL}/api/dispatches`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "x-puente-token":QUANTREX_DT_BRIDGE_TOKEN },
+      body:JSON.stringify({ solicitud }),
+    });
+    const data = await res.json().catch(()=>null);
+    if(!res.ok) return { ok:false, error: data?.error||`Error ${res.status}`, detalle:data?.detalle };
+    const dispatchId = data?.dispatchtrack?.id || data?.dispatchtrack?.dispatch_id || null;
+    return { ok:true, dispatchId };
+  }catch(e){ console.error("enviarADispatchTrack:",e); return { ok:false, error:"No se pudo contactar el puente DispatchTrack." }; }
+}
+async function consultarDispatchTrack(identificador){
+  try{
+    const res = await fetch(`${QUANTREX_DT_BRIDGE_URL}/api/track/${encodeURIComponent(identificador)}`, {
+      headers:{ "x-puente-token":QUANTREX_DT_BRIDGE_TOKEN },
+    });
+    const data = await res.json().catch(()=>null);
+    if(!res.ok) return { ok:false, error: data?.error||`Error ${res.status}` };
+    return { ok:true, resultado:data?.dispatchtrack };
+  }catch(e){ console.error("consultarDispatchTrack:",e); return { ok:false, error:"No se pudo contactar el puente DispatchTrack." }; }
+}
 const GOOGLE_DRIVE_FOLDER_ID = "1a_AvHPtyAaNDdFDMJxvnigzgzt7TZHnp";
 const GOOGLE_DRIVE_API_KEY = "AIzaSyCVg7hdvGehvFXpnPV4aT_fKb2SFbjlrO0";
 const ORIGEN_PUDAHUEL = "Av. Los Alerces, Pudahuel, Región Metropolitana, Chile";
@@ -723,6 +752,7 @@ const COLS_LISTA = [
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
   "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro",
+  "dt_dispatch_id","dt_enviado_en",
   "updated_at","created_at"
 ].join(",");
 
@@ -746,6 +776,8 @@ function _mapSolicitudLigera(s){
     sinCobro:!!s.sin_cobro,
     observacionAutor:s.observacion_autor||"",
     observacionFecha:s.observacion_fecha||"",
+    dtDispatchId:s.dt_dispatch_id||null,
+    dtEnviadoEn:s.dt_enviado_en||null,
     updatedAt:s.updated_at, createdAt:s.created_at,
     // Campos pesados vacíos hasta que se abra el detalle:
     fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
@@ -819,6 +851,8 @@ async function saveSolicitud(s) {
       observacion_cobro:s.observacionCobro||null,
       facturar_en_periodo:s.facturarEnPeriodo||null,
       sin_cobro:!!s.sinCobro,
+      dt_dispatch_id:s.dtDispatchId||null,
+      dt_enviado_en:s.dtEnviadoEn||null,
       updated_at:new Date().toISOString(),
     };
     // Campos pesados (foto/firma/manifiesto): SOLO se incluyen en el guardado si
@@ -1604,6 +1638,19 @@ export default function QuantrexAbbott() {
     return fresco;
   }
 
+  // Botón manual "Enviar a DispatchTrack". El puente (Railway) ya escribe
+  // dt_dispatch_id/dt_enviado_en en Supabase tras crear el despacho; acá solo
+  // se refleja ese mismo resultado en el estado local para que la UI cambie
+  // de inmediato sin esperar un recargo completo de la lista.
+  async function handleEnviarDT(sol){
+    const r = await enviarADispatchTrack(sol);
+    if(r.ok){
+      const ahora = new Date().toISOString();
+      setSolicitudes(prev=>prev.map(s=>s.id===sol.id?{...s,dtDispatchId:r.dispatchId||"ok",dtEnviadoEn:ahora}:s));
+    }
+    return r;
+  }
+
   // Campos que el formulario de edición (perfil operador/admin) realmente permite
   // modificar. Todo lo demás — status, statusLog, fotos, firma, hora de entrega,
   // geolocalización, etc. (la "gestión" que deja el chofer al cerrar) — se toma
@@ -1974,7 +2021,7 @@ export default function QuantrexAbbott() {
             onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
-            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} onRefrescar={refrescarSolicitud} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
+            onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} onRefrescar={refrescarSolicitud} onEnviarDT={handleEnviarDT} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}/>)
         :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
         :view==="certificado_aseo"?(<CertificadoAseo gastos={gastos} vehiculos={vehiculos} choferes={choferes} setView={setView} sesion={sesion}/>)
@@ -3198,7 +3245,7 @@ function SolicitudRow({sol,onSelect}){
 }
 
 // ── Detalle ────────────────────────────────────────────────────────────────
-function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
+function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnviarDT,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
   const opcionesPPU=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>{
     const ch=(choferes||[]).find(c=>c.ppu===v.ppu);
     const desc=ch?.nombre||[v.marca,v.modelo].filter(Boolean).join(" ");
@@ -3212,6 +3259,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,setVi
   const [canceladoPor,setCanceladoPor]=useState("");
   const [editMode,setEditMode]=useState(false);
   const [editForm,setEditForm]=useState({...sol});
+  const [enviandoDT,setEnviandoDT]=useState(false);
   const [refrescando,setRefrescando]=useState(false);
   async function abrirEdicion(){
     // Antes de editar, se confirma contra la base el estado más reciente (status,
@@ -3422,6 +3470,18 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,setVi
             ?<button style={{...S.exportBtn,fontSize:12,opacity:refrescando?.6:1}} disabled={refrescando} onClick={abrirEdicion}>{refrescando?"Verificando estado...":"✎ Editar"}</button>
             :<button style={{...S.exportBtn,fontSize:12,opacity:.5,cursor:"not-allowed"}} disabled title="Esperando a que carguen foto y firma antes de habilitar edición">⏳ Cargando datos...</button>
         ):null}
+        {(esAdmin||sesion?.perfil==="operador")&&(
+          sol.dtDispatchId
+            ?<div style={{...S.exportBtn,fontSize:12,borderColor:C.success,color:C.success,cursor:"default"}} title={`Enviado a DispatchTrack (${sol.dtEnviadoEn?new Date(sol.dtEnviadoEn).toLocaleString("es-CL"):""})`}>✓ En DispatchTrack</div>
+            :<button style={{...S.exportBtn,fontSize:12,opacity:enviandoDT?.6:1}} disabled={enviandoDT}
+                onClick={async()=>{
+                  if(!window.confirm(`¿Crear el despacho ${sol.ot} en DispatchTrack? Esta acción no se puede deshacer desde aquí.`))return;
+                  setEnviandoDT(true);
+                  const r=await onEnviarDT(sol);
+                  setEnviandoDT(false);
+                  if(!r?.ok) window.alert(`No se pudo enviar a DispatchTrack: ${r?.error||"error desconocido"}`);
+                }}>{enviandoDT?"Enviando...":"🚚 Enviar a DispatchTrack"}</button>
+        )}
       </div>
       <div style={S.detailGrid}>
         {[["Dirección",sol.direccion],["Contacto",sol.contacto],["N° Guía",sol.guia],
