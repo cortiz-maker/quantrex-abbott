@@ -936,14 +936,14 @@ async function loadUsuarios() {
     if(data===null) { console.error("loadUsuarios: fallo de red/Supabase, NO se sembrará ni se borrará nada (protege ultimoAcceso)."); return {error:true}; }
     if(!data.length) return {empty:true};
     return data.map(u=>({email:u.email,password:u.password,perfil:u.perfil,nombre:u.nombre,
-      ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado}));
+      ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado, pwChangedAt:u.pw_changed_at||null}));
   } catch(e) { console.error("loadUsuarios excepción:",e); return {error:true}; }
 }
 async function saveUsuarios(data) {
   try {
     const rows=(data||[]).filter(Boolean).map(u=>({
       id:u.email, email:u.email, password:u.password, perfil:u.perfil, nombre:u.nombre,
-      ultimo_acceso:u.ultimoAcceso||null, bloqueado:!!u.bloqueado,
+      ultimo_acceso:u.ultimoAcceso||null, bloqueado:!!u.bloqueado, pw_changed_at:u.pwChangedAt||null,
       updated_at:new Date().toISOString(),
     }));
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
@@ -1192,19 +1192,20 @@ function diasInactividadUsuario(u) {
   if (isNaN(ua.getTime())) return null;
   return Math.floor((new Date() - ua) / (1000 * 60 * 60 * 24));
 }
+// Antes esto se controlaba con localStorage, que es por-dispositivo: un usuario
+// que cambiaba su clave desde su PC seguía viendo el aviso en su celular, porque
+// cada navegador tiene su propio localStorage sin relación con Supabase.
+// Ahora se controla con pwChangedAt, persistido en la tabla usuarios — el mismo
+// dato para cualquier dispositivo desde el que inicie sesión.
 function debeCambiarPassword(usuario) {
   if (usuario.perfil === "admin") return false;
   const hoy = new Date();
   // Primer día del mes
   if (hoy.getDate() !== 1) return false;
-  const key = "qx:pwchange:" + usuario.email;
-  const ultimo = localStorage.getItem(key);
-  if (!ultimo) return true;
-  const ultimaFecha = new Date(ultimo);
+  if (!usuario.pwChangedAt) return true;
+  const ultimaFecha = new Date(usuario.pwChangedAt);
+  if (isNaN(ultimaFecha.getTime())) return true;
   return ultimaFecha.getMonth() !== hoy.getMonth() || ultimaFecha.getFullYear() !== hoy.getFullYear();
-}
-function marcarPasswordCambiado(email) {
-  try { localStorage.setItem("qx:pwchange:" + email, new Date().toISOString()); } catch {}
 }
 async function loadRutas() {
   try {
@@ -1738,6 +1739,18 @@ export default function QuantrexAbbott() {
       await saveUsuarios(actualizados);
     }
   }
+  // Persiste la contraseña nueva (y la marca de fecha de cambio) en Supabase.
+  // Antes el cambio de contraseña forzado solo vivía en la sesión en memoria
+  // y nunca se guardaba, por lo que la clave original seguía siendo la única
+  // válida desde cualquier otro dispositivo. Devuelve el usuario actualizado
+  // para que el login continúe con la contraseña ya persistida.
+  async function handleCambiarPassword(usuarioOriginal, nuevaPassword){
+    const ahora=new Date().toISOString();
+    const actualizados=usuarios.map(x=>x&&x.email===usuarioOriginal.email?{...x,password:nuevaPassword,pwChangedAt:ahora}:x);
+    setUsuarios(actualizados);
+    await saveUsuarios(actualizados);
+    return actualizados.find(x=>x.email===usuarioOriginal.email)||{...usuarioOriginal,password:nuevaPassword,pwChangedAt:ahora};
+  }
   async function handleSaveIncidencia(i){
     const existe=incidencias.some(x=>x.id===i.id);
     const upd=existe?incidencias.map(x=>x.id===i.id?i:x):[i,...incidencias];
@@ -1939,7 +1952,7 @@ export default function QuantrexAbbott() {
       {sesion?.perfil==="admin"&&sidebarOpen&&<div style={{position:"fixed",inset:0,background:"#0006",zIndex:199}} onClick={()=>setSidebarOpen(false)}/>}
       <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
         {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
-        :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={handleLoginExitoso}/>)
+        :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={handleLoginExitoso} onCambiarPassword={handleCambiarPassword}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
@@ -3789,13 +3802,14 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
 
 
 // ── Pantalla Login ─────────────────────────────────────────────────────────
-function PantallaLogin({onLogin,usuarios=USUARIOS,choferes=CHOFERES}){
+function PantallaLogin({onLogin,onCambiarPassword,usuarios=USUARIOS,choferes=CHOFERES}){
   const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [error,setError]=useState("");
   const [modo,setModo]=useState("login");
   const [cambioRequerido,setCambioRequerido]=useState(null);
   const [nuevaPassword,setNuevaPassword]=useState("");
+  const [guardandoPassword,setGuardandoPassword]=useState(false);
   const [pinChofer,setPinChofer]=useState("");
 
   function handleLogin(){
@@ -3831,14 +3845,15 @@ function PantallaLogin({onLogin,usuarios=USUARIOS,choferes=CHOFERES}){
               <label style={S.label}>Nueva contraseña</label>
               <input style={S.input} type="password" placeholder="Nueva contraseña" value={nuevaPassword} onChange={e=>setNuevaPassword(e.target.value)}/>
             </div>
-            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15,opacity:nuevaPassword.length>=6?1:0.5}}
-              disabled={nuevaPassword.length<6}
-              onClick={()=>{
-                const u={...cambioRequerido,password:nuevaPassword};
-                marcarPasswordCambiado(u.email);
-                onLogin(u);
+            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15,opacity:nuevaPassword.length>=6&&!guardandoPassword?1:0.5}}
+              disabled={nuevaPassword.length<6||guardandoPassword}
+              onClick={async ()=>{
+                setGuardandoPassword(true);
+                const uActualizado=await onCambiarPassword(cambioRequerido,nuevaPassword);
+                setGuardandoPassword(false);
+                onLogin(uActualizado);
               }}>
-              Actualizar y continuar
+              {guardandoPassword?"Guardando...":"Actualizar y continuar"}
             </button>
             <div style={{fontSize:11,color:C.muted,textAlign:"center"}}>Mínimo 6 caracteres</div>
           </>
