@@ -1734,7 +1734,14 @@ export default function QuantrexAbbott() {
     try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}
     if(u.perfil==="chofer") setPerfilChofer(u);
     if(u.perfil==="cliente"){
-      const actualizados=usuarios.map(x=>x&&x.email===u.email?{...x,ultimoAcceso:new Date().toISOString(),bloqueado:false}:x);
+      // Importante: se aplica "u" (el usuario recién autenticado, fuente de
+      // verdad más reciente) SOBRE la fila existente, no al revés. Si "u"
+      // viene de un cambio de contraseña recién guardado, el closure local
+      // de "usuarios" puede todavía tener la foto vieja del estado (carrera
+      // entre el guardado de la contraseña y este guardado de ultimoAcceso).
+      // Guardar {...x,...u,...} en vez de {...x,...} evita pisar la
+      // contraseña/pwChangedAt recién persistidos con datos obsoletos.
+      const actualizados=usuarios.map(x=>x&&x.email===u.email?{...x,...u,ultimoAcceso:new Date().toISOString(),bloqueado:false}:x);
       setUsuarios(actualizados);
       await saveUsuarios(actualizados);
     }
