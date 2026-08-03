@@ -79,7 +79,34 @@ const EMPTY_FORM = {
   contacto:"", guia:"", prioridad:"urgente", notas:"",
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
   destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[], devolucionUrgente:false, fotosManifiesto:[],
+  items:[], // [{id,nombre,cantidad}] — opcional, se manda tal cual al array items[] de DispatchTrack
 };
+
+// Lista editable de ítems (nombre + cantidad) para una solicitud — opcional,
+// pensada originalmente para Carga Operador Logístico (múltiples destinos
+// consolidados en un solo despacho DT), pero disponible para cualquier tipo.
+function ItemsEditor({items=[],onChange}){
+  const agregar=()=>onChange([...(items||[]),{id:`it_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,nombre:"",cantidad:1}]);
+  const quitar=(id)=>onChange((items||[]).filter(it=>it.id!==id));
+  const actualizar=(id,campo,val)=>onChange((items||[]).map(it=>it.id===id?{...it,[campo]:val}:it));
+  return (
+    <div style={{...S.fGroup,gridColumn:"1/-1"}}>
+      <label style={S.label}>Ítems (opcional)</label>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {(items||[]).map(it=>(
+          <div key={it.id} style={{display:"flex",gap:6,alignItems:"center"}}>
+            <input style={{...S.input,flex:1}} placeholder="Nombre (ej. Hospital Sótero del Río)" value={it.nombre}
+              onChange={e=>actualizar(it.id,"nombre",e.target.value)}/>
+            <input style={{...S.input,width:70}} type="number" min="1" placeholder="Cant." value={it.cantidad}
+              onChange={e=>actualizar(it.id,"cantidad",Math.max(1,parseInt(e.target.value)||1))}/>
+            <button type="button" style={{...S.exportBtn,padding:"6px 10px",borderColor:C.danger,color:C.danger}} onClick={()=>quitar(it.id)}>✕</button>
+          </div>
+        ))}
+        <button type="button" style={{...S.exportBtn,alignSelf:"flex-start"}} onClick={agregar}>+ Agregar ítem</button>
+      </div>
+    </div>
+  );
+}
 
 
 // ── Supabase Config ────────────────────────────────────────────────────────
@@ -752,7 +779,7 @@ const COLS_LISTA = [
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
   "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro",
-  "dt_dispatch_id","dt_enviado_en",
+  "dt_dispatch_id","dt_enviado_en","items",
   "updated_at","created_at"
 ].join(",");
 
@@ -778,6 +805,7 @@ function _mapSolicitudLigera(s){
     observacionFecha:s.observacion_fecha||"",
     dtDispatchId:s.dt_dispatch_id||null,
     dtEnviadoEn:s.dt_enviado_en||null,
+    items:s.items||[],
     updatedAt:s.updated_at, createdAt:s.created_at,
     // Campos pesados vacíos hasta que se abra el detalle:
     fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
@@ -853,6 +881,7 @@ async function saveSolicitud(s) {
       sin_cobro:!!s.sinCobro,
       dt_dispatch_id:s.dtDispatchId||null,
       dt_enviado_en:s.dtEnviadoEn||null,
+      items:s.items||[],
       updated_at:new Date().toISOString(),
     };
     // Campos pesados (foto/firma/manifiesto): SOLO se incluyen en el guardado si
@@ -3413,6 +3442,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
           </select>
           {editForm.tipo==="li_devol"&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Destino fijo: bodega DHL (devolución a operador logístico).</div>}
           </div>}
+        <ItemsEditor items={editForm.items} onChange={its=>setEditForm(p=>({...p,items:its}))}/>
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={editForm.fecha} onChange={fe("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
@@ -3562,6 +3592,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
       </div>}
       {sol.documentos&&<div style={S.detailBlock}><div style={S.fieldLabel}>N° Guías / Documentos Cliente</div><div style={S.fieldValue}>{sol.documentos}</div></div>}
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
+      {(sol.items||[]).length>0&&<div style={S.detailBlock}><div style={S.fieldLabel}>Ítems</div><div style={S.fieldValue}>{sol.items.map((it,i)=>(<div key={it.id||i}>{it.nombre} {it.cantidad>1?`× ${it.cantidad}`:""}</div>))}</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.observacionCobro&&<div style={{...S.detailBlock,border:`1px solid ${C.warning}`,background:C.warning+"11"}}><div style={{...S.fieldLabel,color:C.warning}}>🧾 Observación Facturación / Pre-Cierre</div><div style={S.fieldValue}>{sol.observacionCobro}</div>
         {sol.sinCobro&&<div style={{fontSize:11.5,color:C.danger,marginTop:6,fontWeight:700}}>🚫 EXENTA DE COBRO — no genera cargo en ningún período</div>}
@@ -3841,6 +3872,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           </select>
           {form.tipo==="li_devol"&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Destino fijo: bodega DHL (devolución a operador logístico).</div>}
           </div>}
+        <ItemsEditor items={form.items} onChange={its=>setForm(p=>({...p,items:its}))}/>
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={form.fecha} onChange={f("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
