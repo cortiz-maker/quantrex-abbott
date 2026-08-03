@@ -2877,7 +2877,14 @@ function BuscadorDocumento(){
     const em = DT_ESTADO_META[d.status]||{label:d.status||"—",color:C.muted};
     const color = esNoEntregado(d) ? C.danger : em.color;
     const etiqueta = d.substatus || em.label;
-    const evidencias = (d.tags||[]).filter(t=>t?.value);
+    const evidenciasTag = (d.tags||[]).filter(t=>t?.value);
+    // evaluation_answers viene del webhook (guardado en Supabase al cerrarse la
+    // entrega) — es la "Pruebas de entrega" real de DispatchTrack (firma, fotos,
+    // nombre de quien recibe, comentarios personalizados). Solo existe si la
+    // entrega se cerró DESPUÉS de activar el webhook; entregas anteriores no
+    // tendrán este bloque.
+    const esUrl = (v)=> typeof v==="string" && /^https?:\/\//i.test(v);
+    const pruebas = Array.isArray(d.evaluation_answers) ? d.evaluation_answers.filter(a=>a?.value) : [];
     return (
       <div key={d.id} style={{border:`1px solid ${C.border}`,borderRadius:8,padding:8,display:"flex",flexDirection:"column",gap:4}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2887,11 +2894,23 @@ function BuscadorDocumento(){
         {d.contact_name&&<div style={{fontSize:11,color:C.textSecondary}}>Nombre: {d.contact_name}</div>}
         {d.contact_address&&<div style={{fontSize:11,color:C.muted}}>Dirección: {d.contact_address}</div>}
         {d.number_of_retries!=null&&<div style={{fontSize:11,color:C.muted}}>Intentos de entrega: {d.number_of_retries}</div>}
-        {(d.arrived_at||evidencias.length>0)&&(
+        {(d.arrived_at||evidenciasTag.length>0)&&(
           <div style={{marginTop:4,paddingTop:4,borderTop:`1px solid ${C.border}`}}>
             <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Prueba de entrega</div>
             {d.arrived_at&&<div style={{fontSize:11,color:C.muted}}>Fecha: {fmtFechaDT(d.arrived_at)}</div>}
-            {evidencias.map((t,i)=>(<div key={i} style={{fontSize:11,color:C.muted}}>{t.name?.trim()}: {t.value}</div>))}
+            {evidenciasTag.map((t,i)=>(<div key={i} style={{fontSize:11,color:C.muted}}>{t.name?.trim()}: {t.value}</div>))}
+          </div>
+        )}
+        {pruebas.length>0&&(
+          <div style={{marginTop:4,paddingTop:4,borderTop:`1px solid ${C.border}`}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Pruebas de entrega (DispatchTrack)</div>
+            {pruebas.map((a,i)=>(
+              <div key={i} style={{fontSize:11,color:C.muted}}>
+                {a.name?.trim()||"Dato"}: {esUrl(a.value)
+                  ?<a href={a.value} target="_blank" rel="noreferrer" style={{color:C.cyan,fontWeight:600}}>Ver →</a>
+                  :a.value}
+              </div>
+            ))}
           </div>
         )}
       </div>
