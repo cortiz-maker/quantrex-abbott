@@ -3387,7 +3387,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
             spark={serieView.map(p=>p.costos)} color={C.warning}
             sub={topeCostos>0?`${costosActual<=topeCostos?"bajo el tope":"sobre el tope"} (${Math.round(costosActual/topeCostos*100)}%)`:"sin tope definido"}
             subColor={topeCostos>0?(costosActual<=topeCostos?C.success:C.danger):C.muted}/>
-          <KpiEjecutivo label="Extras · Overnight + SPOT" valor={fmtCLP(mpActual.extras)}
+          <KpiEjecutivo label="Extras · Overnight + SPOT + Otros" valor={fmtCLP(mpActual.extras)}
             delta={mom("extras")} spark={serieView.map(p=>p.extras)} color={C.info}
             sub={esRecordActual?"🏆 nuevo récord":`récord: ${fmtCLP(recordExtras)} · ${Math.round((recordExtras?mpActual.extras/recordExtras:1)*100)}%`}
             subColor={esRecordActual?C.success:C.muted}/>
@@ -3419,7 +3419,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
             {metaFact>0
               ? <BulletMeta label="Facturación" actual={mpActual.facturacion} meta={metaFact}/>
               : <div style={{fontSize:12,color:C.muted}}>Define la meta de facturación para ver su cumplimiento.</div>}
-            <BulletMeta label="Extras (O/N + SPOT)" actual={mpActual.extras} meta={recordExtras} record/>
+            <BulletMeta label="Extras (O/N + SPOT + Otros)" actual={mpActual.extras} meta={recordExtras} record/>
             {topeCostos>0
               ? <BulletMeta label="Costos de flota" actual={costosActual} meta={topeCostos} lessIsBetter/>
               : <div style={{fontSize:12,color:C.muted}}>Define el tope de costos para ver su cumplimiento.</div>}
@@ -3646,7 +3646,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
           <div style={{...S.fGroup,gridColumn:"1/-1",flexDirection:"row",alignItems:"center",gap:8}}>
             <input type="checkbox" id="trasladoEM_edit" checked={!!editForm.trasladoEquipoMedico}
               onChange={e=>setEditForm(p=>({...p,trasladoEquipoMedico:e.target.checked}))}/>
-            <label htmlFor="trasladoEM_edit" style={{...S.label,marginBottom:0,cursor:"pointer"}}>🩺 Servicio Traslado Equipos Médicos (+$68.000)</label>
+            <label htmlFor="trasladoEM_edit" style={{...S.label,marginBottom:0,cursor:"pointer"}}>🩺 Servicio Traslado Equipos Médicos</label>
           </div>
         )}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
@@ -3799,7 +3799,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
       {sol.documentos&&<div style={S.detailBlock}><div style={S.fieldLabel}>N° Guías / Documentos Cliente</div><div style={S.fieldValue}>{sol.documentos}</div></div>}
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {(sol.items||[]).length>0&&<div style={S.detailBlock}><div style={S.fieldLabel}>Ítems</div><div style={S.fieldValue}>{sol.items.map((it,i)=>(<div key={it.id||i}>{it.nombre} {it.cantidad>1?`× ${it.cantidad}`:""}</div>))}</div></div>}
-      {sol.trasladoEquipoMedico&&(sol.tipo==="entrega"||sol.tipo==="li_retiro")&&<div style={{...S.detailBlock,border:`1px solid ${C.cyan}`,background:C.cyan+"11"}}><div style={{...S.fieldLabel,color:C.cyan}}>🩺 Servicio Traslado Equipos Médicos</div><div style={S.fieldValue}>Incluido (+$68.000)</div></div>}
+      {sol.trasladoEquipoMedico&&(sol.tipo==="entrega"||sol.tipo==="li_retiro")&&<div style={{...S.detailBlock,border:`1px solid ${C.cyan}`,background:C.cyan+"11"}}><div style={{...S.fieldLabel,color:C.cyan}}>🩺 Servicio Traslado Equipos Médicos</div><div style={S.fieldValue}>Incluido</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.observacionCobro&&<div style={{...S.detailBlock,border:`1px solid ${C.warning}`,background:C.warning+"11"}}><div style={{...S.fieldLabel,color:C.warning}}>🧾 Observación Facturación / Pre-Cierre</div><div style={S.fieldValue}>{sol.observacionCobro}</div>
         {sol.sinCobro&&<div style={{fontSize:11.5,color:C.danger,marginTop:6,fontWeight:700}}>🚫 EXENTA DE COBRO — no genera cargo en ningún período</div>}
@@ -4084,7 +4084,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           <div style={{...S.fGroup,gridColumn:"1/-1",flexDirection:"row",alignItems:"center",gap:8}}>
             <input type="checkbox" id="trasladoEM_nueva" checked={!!form.trasladoEquipoMedico}
               onChange={e=>setForm(p=>({...p,trasladoEquipoMedico:e.target.checked}))}/>
-            <label htmlFor="trasladoEM_nueva" style={{...S.label,marginBottom:0,cursor:"pointer"}}>🩺 Servicio Traslado Equipos Médicos (+$68.000)</label>
+            <label htmlFor="trasladoEM_nueva" style={{...S.label,marginBottom:0,cursor:"pointer"}}>🩺 Servicio Traslado Equipos Médicos</label>
           </div>
         )}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
