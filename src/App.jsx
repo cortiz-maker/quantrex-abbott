@@ -96,6 +96,7 @@ const EMPTY_FORM = {
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
   destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[], devolucionUrgente:false, fotosManifiesto:[],
   items:[], // [{id,nombre,cantidad}] — opcional, se manda tal cual al array items[] de DispatchTrack
+  trasladoEquipoMedico:false, // Servicio Traslado Equipos Médicos ($68.000) — solo aplica a Entrega/Retiro
 };
 
 // Lista editable de ítems (nombre + cantidad) para una solicitud — opcional,
@@ -605,6 +606,18 @@ function overnightIds(sols){
   return ids;
 }
 
+// ── Caché de tarifas/feriados a nivel de módulo ─────────────────────────────
+// Se llena una sola vez al cargar la app (ver useEffect en el componente
+// principal). calcularCobros/metricasPeriodo/exportToExcel la usan como
+// respaldo cuando no se les pasa tarifas/feriados explícitamente — así todos
+// los puntos existentes que ya llaman a estas funciones (Excel, gráficos,
+// resúmenes) quedan usando las mismas tarifas editables sin tener que tocar
+// cada llamada una por una.
+let _tarifasCache = [];
+let _feriadosCache = [];
+function setTarifasCache(t){ _tarifasCache = t||[]; }
+function setFeriadosCache(f){ _feriadosCache = f||[]; }
+
 // ── Motor de cobros centralizado ───────────────────────────────────────────
 // Reglas acordadas:
 //  SPOT Extra ($50.000): contador GLOBAL por día (todas las PPU juntas). Desde la 7ma
@@ -631,7 +644,9 @@ function _ordenCierre(s){
   const u = Date.parse(s.updatedAt||s.createdAt||"")||0;
   return u;
 }
-function calcularCobros(solicitudes){
+function calcularCobros(solicitudes, tarifas, feriados){
+  tarifas = tarifas || _tarifasCache;
+  feriados = feriados || _feriadosCache;
   const sols = (solicitudes || []).filter(s=>!s.sinCobro); // exentas de cobro: fuera de todo cálculo
   const perId = {};
   for(const s of sols){
@@ -690,38 +705,58 @@ function calcularCobros(solicitudes){
     }
   }
   // Prevalece overnight sobre SPOT
-  let spotCount = 0, ohCount = 0;
+  let spotCount = 0, ohCount = 0, montoSpot = 0, montoOH = 0;
   for(const s of sols){
     const r = perId[s.id]; if(!r) continue;
     if(r.esSpot && (r.ohEarly||r.ohLate)) r.esSpot = false;
-    if(r.esSpot) spotCount++;
-    if(r.ohEarly) ohCount++;
-    if(r.ohLate) ohCount++;
+    const feriado = esFeriado(feriados, s.fecha);
+    r.ohFeriado = feriado && (r.ohEarly||r.ohLate);
+    const precioOH = feriado ? tarifaVigente(tarifas,"overnight_feriado",s.fecha) : tarifaVigente(tarifas,"overnight",s.fecha);
+    if(r.esSpot){ spotCount++; montoSpot += tarifaVigente(tarifas,"spot_extra",s.fecha); }
+    if(r.ohEarly){ ohCount++; montoOH += precioOH; }
+    if(r.ohLate){ ohCount++; montoOH += precioOH; }
   }
-  return { perId, spotCount, ohCount, montoSpot: spotCount*PRECIO_SPOT, montoOH: ohCount*PRECIO_OVERNIGHT };
+  // ── Servicio Traslado Equipos Médicos — cargo adicional independiente del
+  // SPOT/Overnight (no se suprime por la regla de prevalencia), aplica a
+  // "entrega" y "li_retiro" cuando se marca el checkbox en la solicitud.
+  let montoTraslado = 0, trasladoCount = 0;
+  for(const s of sols){
+    if(s.trasladoEquipoMedico && (s.tipo==="entrega"||s.tipo==="li_retiro")){
+      trasladoCount++;
+      montoTraslado += tarifaVigente(tarifas,"traslado_equipos_medicos", s.fecha);
+    }
+  }
+  return { perId, spotCount, ohCount, montoSpot, montoOH, montoTraslado, trasladoCount };
 }
 
 // Métricas ejecutivas de un período (mismas reglas que ResumenMes / Excel)
-const COBRO_M1_FIJO = 2840000, COBRO_M2_FIJO = 2840000, DESC_NP_DIA = Math.round(2840000/30);
-function metricasPeriodo(sols){
+const DESC_NP_DIA_RESPALDO = Math.round(2840000/30);
+function metricasPeriodo(sols, tarifas, feriados){
+  tarifas = tarifas || _tarifasCache;
+  feriados = feriados || _feriadosCache;
   const arr = sols || [];
-  const c = calcularCobros(arr);
-  const np = arr.filter(s=>s.noPresentacion).length * DESC_NP_DIA;
-  // SPOT Regional — recargo por destinos fuera de la RM (misma tabla usada en el Excel/GraficoCobros)
+  const c = calcularCobros(arr, tarifas, feriados);
+  const fechaRef = arr[0]?.fecha || new Date().toISOString().split("T")[0];
+  const m1 = tarifas?.length ? tarifaVigente(tarifas,"m1_fijo",fechaRef) : 2840000;
+  const m2 = tarifas?.length ? tarifaVigente(tarifas,"m2_fijo",fechaRef) : 2840000;
+  const descNpDia = tarifas?.length ? Math.round(m1/30) : DESC_NP_DIA_RESPALDO;
+  const np = arr.filter(s=>s.noPresentacion).length * descNpDia;
+  // SPOT Regional — recargo por destinos fuera de la RM (tarifa editable en mantenedores)
   let montoSpotRegional=0, nSpotRegional=0;
   arr.forEach(s=>{
     if(s.sinCobro) return;
     const reg=detectarRegion(s.direccion||s.destino||"");
-    const v=reg?(reg.valor||0):0;
+    const v=reg&&reg.concepto ? tarifaVigente(tarifas, reg.concepto, s.fecha) : 0;
     if(v>0){ montoSpotRegional+=v; nSpotRegional++; }
   });
-  const extras = c.montoSpot + c.montoOH + montoSpotRegional;   // Overnight + Extra SPOT + SPOT Regional
-  const facturacion = COBRO_M1_FIJO + COBRO_M2_FIJO + extras - np;
+  const extras = c.montoSpot + c.montoOH + montoSpotRegional + c.montoTraslado;   // Overnight + Extra SPOT + SPOT Regional + Traslado Equipos Médicos
+  const facturacion = m1 + m2 + extras - np;
   const completadas = arr.filter(s=>s.status==="completada"||s.status==="devolucion").length;
   const noEnt = arr.filter(s=>s.status==="no_entregado").length;
   const baseEnt = completadas + noEnt;
   const cumplimiento = baseEnt>0 ? (completadas/baseEnt*100) : null;
-  return { facturacion, extras, montoSpot:c.montoSpot, montoOH:c.montoOH, montoSpotRegional, nSpotRegional, spotCount:c.spotCount, ohCount:c.ohCount,
+  return { facturacion, extras, montoSpot:c.montoSpot, montoOH:c.montoOH, montoSpotRegional, nSpotRegional,
+    montoTraslado:c.montoTraslado, trasladoCount:c.trasladoCount, spotCount:c.spotCount, ohCount:c.ohCount,
     total:arr.length, completadas, noEnt, cumplimiento };
 }
 function costosEnRango(gastos, di, df){
@@ -733,13 +768,13 @@ function costosEnRango(gastos, di, df){
 
 // ── Tabla SPOT Regional ────────────────────────────────────────────────────
 const SPOT_REGIONAL = [
-  { region:"RM",   label:"Región Metropolitana", valor:0,      keywords:["santiago","providencia","las condes","vitacura","ñuñoa","maipú","maipu","pudahuel","quilicura","estacion central","estación central","macul","peñalolen","peñalolén","la florida","san miguel","cerrillos","renca","independencia","recoleta","huechuraba","lo barnechea","san ramon","la pintana","el bosque","pedro aguirre","cerro navia","quinta normal","lo espejo","la granja","la cisterna","san joaquin","san joaquín","lo prado"] },
-  { region:"IV",   label:"IV Región - Coquimbo",  valor:520000, keywords:["coquimbo","la serena","ovalle","illapel","los vilos","andacollo","vicuña","paihuano","monte patria","combarbalá","combarbala","canela","punitaqui","río hurtado","rio hurtado"] },
-  { region:"V",    label:"V Región - Valparaíso", valor:270000, keywords:["valparaíso","valparaiso","viña del mar","vina del mar","quilpué","quilpue","villa alemana","quillota","san antonio","los andes","san felipe","rancagua valparaíso","cartagena","el tabo","el quisco","algarrobo","limache","olmué","olmue","nogales","la calera","hijuelas","la cruz","puchuncaví","puchuncavi","quintero","papudo","zapallar","cabildo","petorca","ligua"] },
-  { region:"VI",   label:"VI Región - O'Higgins", valor:260000, keywords:["rancagua","san fernando","rengo","pichilemu","santa cruz","graneros","mostazal","coinco","coltauco","doñihue","doñihue","requinoa","olivar","machalí","machali","malloa","peumo","pichidegua","las cabras","placilla","nancagua","chépica","chepica","palmilla","peralillo","lolol","pumanque","marchihue","paredones","navidad","litueche","la estrella","punitaqui"] },
-  { region:"VII",  label:"VII Región - Maule",    valor:410000, keywords:["talca","curicó","curico","linares","constitución","constitucion","cauquenes","parral","san javier","molina","sagrada familia","licantén","licanten","vichuquén","vichuquen","hualañé","hualane","rauco","teno","romeral","curepto","pelarco","río claro","rio claro","pencahue","maule","colbún","colbun","longaví","longavi","retiro","villa alegre","yerbas buenas","chanco","pelluhue"] },
-  { region:"VIII", label:"VIII Región - Biobío",  valor:650000, keywords:["concepción","concepcion","biobío","biobio","talcahuano","los ángeles","los angeles","chillán","chillan","coronel","lota","tomé","tome","penco","san pedro de la paz","hualqui","santa juana","florida","quillón","quillon","yumbel","cabrero","tucapel","antuco","quilaco","mulchén","mulchen","negrete","nacimiento","lebu","arauco","curanilahue","los álamos","los alamos","tirúa","tirua","cañete","canete"] },
-  { region:"IX",   label:"IX Región - Araucanía", valor:800000, keywords:["temuco","araucanía","araucania","padre las casas","villarrica","pucón","pucon","angol","victoria","collipulli","curacautín","curacautin","lonquimay","ercilla","traiguén","traiguen","lumaco","purén","puren","los sauces","lebu","nueva imperial","carahue","saavedra","teodoro schmidt","freire","pitrufquén","pitrufquen","gorbea","loncoche","vilcún","vilcun","melipeuco","cholchol","galvarino","perquenco","lautaro","cuneo","cunco"] },
+  { region:"RM",   label:"Región Metropolitana", valor:0,      concepto:null,          keywords:["santiago","providencia","las condes","vitacura","ñuñoa","maipú","maipu","pudahuel","quilicura","estacion central","estación central","macul","peñalolen","peñalolén","la florida","san miguel","cerrillos","renca","independencia","recoleta","huechuraba","lo barnechea","san ramon","la pintana","el bosque","pedro aguirre","cerro navia","quinta normal","lo espejo","la granja","la cisterna","san joaquin","san joaquín","lo prado"] },
+  { region:"IV",   label:"IV Región - Coquimbo",  valor:520000, concepto:"regional_IV", keywords:["coquimbo","la serena","ovalle","illapel","los vilos","andacollo","vicuña","paihuano","monte patria","combarbalá","combarbala","canela","punitaqui","río hurtado","rio hurtado"] },
+  { region:"V",    label:"V Región - Valparaíso", valor:270000, concepto:"regional_V",  keywords:["valparaíso","valparaiso","viña del mar","vina del mar","quilpué","quilpue","villa alemana","quillota","san antonio","los andes","san felipe","rancagua valparaíso","cartagena","el tabo","el quisco","algarrobo","limache","olmué","olmue","nogales","la calera","hijuelas","la cruz","puchuncaví","puchuncavi","quintero","papudo","zapallar","cabildo","petorca","ligua"] },
+  { region:"VI",   label:"VI Región - O'Higgins", valor:260000, concepto:"regional_VI", keywords:["rancagua","san fernando","rengo","pichilemu","santa cruz","graneros","mostazal","coinco","coltauco","doñihue","doñihue","requinoa","olivar","machalí","machali","malloa","peumo","pichidegua","las cabras","placilla","nancagua","chépica","chepica","palmilla","peralillo","lolol","pumanque","marchihue","paredones","navidad","litueche","la estrella","punitaqui"] },
+  { region:"VII",  label:"VII Región - Maule",    valor:410000, concepto:"regional_VII",keywords:["talca","curicó","curico","linares","constitución","constitucion","cauquenes","parral","san javier","molina","sagrada familia","licantén","licanten","vichuquén","vichuquen","hualañé","hualane","rauco","teno","romeral","curepto","pelarco","río claro","rio claro","pencahue","maule","colbún","colbun","longaví","longavi","retiro","villa alegre","yerbas buenas","chanco","pelluhue"] },
+  { region:"VIII", label:"VIII Región - Biobío",  valor:650000, concepto:"regional_VIII",keywords:["concepción","concepcion","biobío","biobio","talcahuano","los ángeles","los angeles","chillán","chillan","coronel","lota","tomé","tome","penco","san pedro de la paz","hualqui","santa juana","florida","quillón","quillon","yumbel","cabrero","tucapel","antuco","quilaco","mulchén","mulchen","negrete","nacimiento","lebu","arauco","curanilahue","los álamos","los alamos","tirúa","tirua","cañete","canete"] },
+  { region:"IX",   label:"IX Región - Araucanía", valor:800000, concepto:"regional_IX", keywords:["temuco","araucanía","araucania","padre las casas","villarrica","pucón","pucon","angol","victoria","collipulli","curacautín","curacautin","lonquimay","ercilla","traiguén","traiguen","lumaco","purén","puren","los sauces","lebu","nueva imperial","carahue","saavedra","teodoro schmidt","freire","pitrufquén","pitrufquen","gorbea","loncoche","vilcún","vilcun","melipeuco","cholchol","galvarino","perquenco","lautaro","cuneo","cunco"] },
 ];
 
 function detectarRegion(direccion) {
@@ -792,7 +827,7 @@ const COLS_LISTA = [
   "no_presentacion","vehiculo_np","motivo_np","geo_entrega","hora_entrega",
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
-  "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro",
+  "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro","traslado_equipo_medico",
   "dt_dispatch_id","dt_enviado_en","items",
   "updated_at","created_at"
 ].join(",");
@@ -815,6 +850,7 @@ function _mapSolicitudLigera(s){
     observacionCobro:s.observacion_cobro||"",
     facturarEnPeriodo:s.facturar_en_periodo||"",
     sinCobro:!!s.sin_cobro,
+    trasladoEquipoMedico:!!s.traslado_equipo_medico,
     observacionAutor:s.observacion_autor||"",
     observacionFecha:s.observacion_fecha||"",
     dtDispatchId:s.dt_dispatch_id||null,
@@ -893,6 +929,7 @@ async function saveSolicitud(s) {
       observacion_cobro:s.observacionCobro||null,
       facturar_en_periodo:s.facturarEnPeriodo||null,
       sin_cobro:!!s.sinCobro,
+      traslado_equipo_medico:!!s.trasladoEquipoMedico,
       dt_dispatch_id:s.dtDispatchId||null,
       dt_enviado_en:s.dtEnviadoEn||null,
       items:s.items||[],
@@ -1032,6 +1069,86 @@ async function saveUsuarios(data) {
     await sbDeleteFaltantes("usuarios", rows.map(r=>r.id));
   } catch(e) { console.error(e); }
 }
+// ── Tarifas versionadas (Supabase) ──────────────────────────────────────────
+// Cada concepto puede tener varias filas con distinta vigente_desde — se usa
+// siempre la más reciente cuya vigente_desde sea <= la fecha de la solicitud.
+// Así el ajuste anual ICT (01/01/2027 en adelante, según inciso sexto del
+// contrato) se agrega como una fila nueva sin perder el precio histórico.
+async function loadTarifas() {
+  try {
+    const data = await sbFetch("GET","tarifas","","?order=vigente_desde.asc");
+    return data || [];
+  } catch(e) { console.error("loadTarifas excepción:",e); return []; }
+}
+async function saveTarifa(t) {
+  // Guarda SIEMPRE como fila nueva (no upsert por id) — cada cambio de precio
+  // es una versión nueva con su propia vigente_desde, nunca se sobreescribe
+  // un precio histórico ya aplicado a solicitudes pasadas.
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tarifas`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", apikey:SUPABASE_KEY, Authorization:`Bearer ${SUPABASE_KEY}`, Prefer:"return=representation" },
+      body: JSON.stringify([{ concepto:t.concepto, label:t.label, precio:Number(t.precio)||0, vigente_desde:t.vigenteDesde }]),
+    });
+    if(!res.ok){ console.error("saveTarifa error:", await res.text()); return false; }
+    return true;
+  } catch(e){ console.error("saveTarifa excepción:",e); return false; }
+}
+async function eliminarTarifa(id) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/tarifas?id=eq.${id}`, {
+      method:"DELETE",
+      headers:{ apikey:SUPABASE_KEY, Authorization:`Bearer ${SUPABASE_KEY}` },
+    });
+    return res.ok;
+  } catch(e){ console.error("eliminarTarifa excepción:",e); return false; }
+}
+// Precio vigente de un concepto a una fecha dada. Si no hay tarifas cargadas
+// todavía (ej. justo al iniciar la app) o no existe el concepto, cae en un
+// valor de respaldo — así nunca queda en $0 por un problema de carga.
+const TARIFAS_RESPALDO = {
+  spot_extra:50000, overnight:85000, overnight_feriado:170000, traslado_equipos_medicos:68000,
+  m1_fijo:2840000, m2_fijo:2840000,
+  regional_IV:520000, regional_V:270000, regional_VI:260000, regional_VII:410000, regional_VIII:650000, regional_IX:800000,
+};
+function tarifaVigente(tarifas, concepto, fecha) {
+  const f = fecha || "9999-12-31";
+  const candidatas = (tarifas||[]).filter(t=>t.concepto===concepto && t.vigente_desde<=f);
+  if(!candidatas.length) return TARIFAS_RESPALDO[concepto] ?? 0;
+  candidatas.sort((a,b)=>a.vigente_desde.localeCompare(b.vigente_desde));
+  return Number(candidatas[candidatas.length-1].precio) || 0;
+}
+
+// ── Feriados (Supabase) ──────────────────────────────────────────────────────
+async function loadFeriados() {
+  try {
+    const data = await sbFetch("GET","feriados","","?order=fecha.asc");
+    return data || [];
+  } catch(e) { console.error("loadFeriados excepción:",e); return []; }
+}
+async function saveFeriado(fecha, nombre) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/feriados`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", apikey:SUPABASE_KEY, Authorization:`Bearer ${SUPABASE_KEY}`, Prefer:"resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify([{ fecha, nombre }]),
+    });
+    return res.ok;
+  } catch(e){ console.error("saveFeriado excepción:",e); return false; }
+}
+async function eliminarFeriado(fecha) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/feriados?fecha=eq.${fecha}`, {
+      method:"DELETE",
+      headers:{ apikey:SUPABASE_KEY, Authorization:`Bearer ${SUPABASE_KEY}` },
+    });
+    return res.ok;
+  } catch(e){ console.error("eliminarFeriado excepción:",e); return false; }
+}
+function esFeriado(feriados, fecha) {
+  return (feriados||[]).some(f=>f.fecha===fecha);
+}
+
 async function loadChoferes() {
   try {
     const data = await sbFetch("GET","choferes","","?order=updated_at.asc");
@@ -1362,9 +1479,10 @@ function descargarRespaldo(payload, nombreArchivo) {
 }
 
 // ── Excel ─────────────────────────────────────────────────────────────────
-async function exportToExcel(solicitudes, nombreArchivo) {
-  const PRECIO_SPOT=50000, PRECIO_OVERNIGHT=85000, COBRO_M1=2840000, COBRO_M2=2840000;
-  const DESCUENTO_DIA = Math.round(2840000/30);
+async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
+  tarifas = tarifas || _tarifasCache;
+  feriados = feriados || _feriadosCache;
+  const DESCUENTO_DIA = tarifas?.length ? Math.round(tarifaVigente(tarifas,"m1_fijo", solicitudes[0]?.fecha)/30) : Math.round(2840000/30);
 
   function horaAMinutos(h) {
     if (!h) return null; const [hh,mm] = h.split(":").map(Number);
@@ -1374,22 +1492,25 @@ async function exportToExcel(solicitudes, nombreArchivo) {
     return (log||[]).some(e => { const p=(e.fechaHora||"").split(" "); if(p.length<2)return false; const m=horaAMinutos(p[1]); return m!==null&&m>=17*60; });
   }
 
-  const cobros = calcularCobros(solicitudes);
+  const cobros = calcularCobros(solicitudes, tarifas, feriados);
   const rows = solicitudes.map((s,i) => {
     const r = cobros.perId[s.id] || {esSpot:false,ohEarly:false,ohLate:false,nro:0};
     const esSpot = r.esSpot;
     const ohEarly = r.ohEarly, ohLate = r.ohLate, ohCharge = ohEarly||ohLate;
     const nro = r.nro;
-    const cSpot = esSpot?PRECIO_SPOT:0;
-    const cOH = (ohEarly?PRECIO_OVERNIGHT:0)+(ohLate?PRECIO_OVERNIGHT:0);
-    const motivoOH = [ohEarly?"Antes 08:30":null, ohLate?"Cierre ≥17:00 (más tardío por PPU)":null].filter(Boolean).join(" / ");
+    const precioSpotFila = tarifaVigente(tarifas,"spot_extra",s.fecha);
+    const precioOHFila = r.ohFeriado ? tarifaVigente(tarifas,"overnight_feriado",s.fecha) : tarifaVigente(tarifas,"overnight",s.fecha);
+    const cSpot = esSpot?precioSpotFila:0;
+    const cOH = (ohEarly?precioOHFila:0)+(ohLate?precioOHFila:0);
+    const motivoOH = [ohEarly?"Antes 08:30":null, ohLate?"Cierre ≥17:00 (más tardío por PPU)":null, r.ohFeriado?"Día feriado":null].filter(Boolean).join(" / ");
     // Tiempo en punto solo para carga_ol, li_retiro, li_devol
     const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
     const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
     // SPOT Regional — recargo por destino fuera de la RM (según dirección)
     const regionSol = s.sinCobro ? null : detectarRegion(s.direccion || s.destino || "");
-    const cSpotRegional = regionSol ? (regionSol.valor || 0) : 0;
+    const cSpotRegional = regionSol&&regionSol.concepto ? tarifaVigente(tarifas, regionSol.concepto, s.fecha) : 0;
     const esSpotRegional = cSpotRegional > 0;
+    const cTraslado = (s.trasladoEquipoMedico && (s.tipo==="entrega"||s.tipo==="li_retiro")) ? tarifaVigente(tarifas,"traslado_equipos_medicos",s.fecha) : 0;
     return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
       s.documentos||"",
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
@@ -1398,7 +1519,8 @@ async function exportToExcel(solicitudes, nombreArchivo) {
       (() => { const log=s.statusLog||[]; if(!log.length) return ""; const ultima=log[log.length-1]; return (ultima.fechaHora||"").split(" ")[1]||""; })(),
       esSpot?"Sí":"No", cSpot||"", ohCharge?"Sí":"No", motivoOH, cOH||"",
       esSpotRegional?(regionSol?.label||""):"", cSpotRegional||"",
-      (cSpot+cOH+cSpotRegional)||"",
+      cTraslado>0?"Sí":"No", cTraslado||"",
+      (cSpot+cOH+cSpotRegional+cTraslado)||"",
       s.choferAsignado||"", tiempoEnPunto,
       s.noPresentacion?(s.vehiculoNP||""):"", s.noPresentacion?(s.motivoNP||""):"",
       s.noPresentacion?DESCUENTO_DIA:"",
@@ -1406,11 +1528,15 @@ async function exportToExcel(solicitudes, nombreArchivo) {
       (s.sinCobro?"[EXENTA DE COBRO] ":"")+(s.observacionCobro||"")];
   });
 
+  const fechaRefTot = solicitudes[0]?.fecha;
+  const COBRO_M1 = tarifaVigente(tarifas,"m1_fijo",fechaRefTot), COBRO_M2 = tarifaVigente(tarifas,"m2_fijo",fechaRefTot);
   const totalSpot=cobros.spotCount;
   const totalOH=cobros.ohCount;
   const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[22])||0),0);
   const cantSpotRegional=rows.filter(r=>(Number(r[22])||0)>0).length;
-  const totalCobro=cobros.montoSpot+cobros.montoOH+totalSpotRegional;
+  const totalTraslado=cobros.montoTraslado;
+  const cantTraslado=cobros.trasladoCount;
+  const totalCobro=cobros.montoSpot+cobros.montoOH+totalSpotRegional+totalTraslado;
   const totalNP=solicitudes.filter(s=>s.noPresentacion).length;
   const totalDescNP=totalNP*DESCUENTO_DIA;
   const granTotal=totalCobro+COBRO_M1+COBRO_M2-totalDescNP;
@@ -1418,13 +1544,14 @@ async function exportToExcel(solicitudes, nombreArchivo) {
   const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","Tipo","Estado","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
+    "Traslado Equipo Médico","Costo Traslado Equipo Médico",
     "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP","Observación","Observación Facturación / Pre-Cierre"];
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
   ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:30},{wch:28},{wch:13},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
-    {wch:22},{wch:18},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45},{wch:45}];
+    {wch:22},{wch:18},{wch:16},{wch:20},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45},{wch:45}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
 
   const periodoNombre=nombreArchivo.replace("Quantrex_Abbott_","").replace(".xlsx","").replace("_"," ");
@@ -1441,9 +1568,10 @@ async function exportToExcel(solicitudes, nombreArchivo) {
     [],
     ["COBROS VARIABLES"],
     ["Concepto","Cantidad","Monto"],
-    ["Pedido SPOT Extra",totalSpot,totalSpot*PRECIO_SPOT],
-    ["Servicio Overnight / Fuera Horario",totalOH,totalOH*PRECIO_OVERNIGHT],
+    ["Pedido SPOT Extra",totalSpot,cobros.montoSpot],
+    ["Servicio Overnight / Fuera Horario",totalOH,cobros.montoOH],
     ["SPOT Regional (fuera RM)",cantSpotRegional,totalSpotRegional],
+    ["Servicio Traslado Equipos Médicos",cantTraslado,totalTraslado],
     ["SUBTOTAL VARIABLE","",totalCobro],
     [],
   ];
@@ -1509,6 +1637,8 @@ export default function QuantrexAbbott() {
   const [gastos,setGastos]=useState([]);
   const [recordatorios,setRecordatorios]=useState([]);
   const [incidencias,setIncidencias]=useState([]);
+  const [tarifas,setTarifas]=useState([]);
+  const [feriados,setFeriados]=useState([]);
   const [alertasOpen,setAlertasOpen]=useState(false);
   const [metas,setMetas]=useState([]);
   const [sesion,setSesion]=useState(()=>{
@@ -1523,8 +1653,10 @@ export default function QuantrexAbbott() {
   const [nuevaFechaInicio,setNuevaFechaInicio]=useState("");
   const toastRef=useRef();
 
-  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios(),loadMetas(),loadIncidencias()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re,me,inc])=>{
+  useEffect(()=>{Promise.all([loadSolicitudes(),loadCierres(),loadPeriodo(),loadClientes(),loadRutas(),loadUsuarios(),loadChoferes(),loadVehiculos(),loadGastos(),loadRecordatorios(),loadMetas(),loadIncidencias(),loadTarifas(),loadFeriados()]).then(async ([s,c,p,cl,r,us,ch,ve,ga,re,me,inc,tar,fer])=>{
     setSolicitudes(s);setCierres(c);setPeriodo(p);if(cl)setClientes(cl);setRutas(r||[]);
+    setTarifas(tar||[]); setTarifasCache(tar||[]);
+    setFeriados(fer||[]); setFeriadosCache(fer||[]);
     // IMPORTANTE: solo se siembra la tabla con los valores por defecto si esta
     // vino realmente vacía ({empty:true}). Si hubo un error de red/Supabase
     // ({error:true}) se usan los defaults SOLO en memoria para no dejar la
@@ -2065,7 +2197,13 @@ export default function QuantrexAbbott() {
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} onRefrescar={refrescarSolicitud} onEnviarDT={handleEnviarDT} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
-        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}/>)
+        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}
+            tarifas={tarifas} feriados={feriados}
+            onSaveTarifa={async(t)=>{const ok=await saveTarifa(t);if(ok){const tar=await loadTarifas();setTarifas(tar);setTarifasCache(tar);}return ok;}}
+            onEliminarTarifa={async(id)=>{const ok=await eliminarTarifa(id);if(ok){const tar=await loadTarifas();setTarifas(tar);setTarifasCache(tar);}return ok;}}
+            onSaveFeriado={async(fecha,nombre)=>{const ok=await saveFeriado(fecha,nombre);if(ok){const fer=await loadFeriados();setFeriados(fer);setFeriadosCache(fer);}return ok;}}
+            onEliminarFeriado={async(fecha)=>{const ok=await eliminarFeriado(fecha);if(ok){const fer=await loadFeriados();setFeriados(fer);setFeriadosCache(fer);}return ok;}}
+          />)
         :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
         :view==="certificado_aseo"?(<CertificadoAseo gastos={gastos} vehiculos={vehiculos} choferes={choferes} setView={setView} sesion={sesion}/>)
         :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
@@ -2091,7 +2229,8 @@ export default function QuantrexAbbott() {
 // ── ResumenMes ─────────────────────────────────────────────────────────────
 
 function GraficoCobros({ solicitudes }) {
-  const P_SPOT=50000, P_OH=85000, M1=2840000, M2=2840000;
+  const fechaRef = solicitudes[0]?.fecha;
+  const M1=tarifaVigente(_tarifasCache,"m1_fijo",fechaRef), M2=tarifaVigente(_tarifasCache,"m2_fijo",fechaRef);
   const cobros=calcularCobros(solicitudes);
   const tSpot=cobros.spotCount;
   const tOH=cobros.ohCount;
@@ -2100,12 +2239,12 @@ function GraficoCobros({ solicitudes }) {
   solicitudes.forEach(s=>{
     if(s.sinCobro) return;
     const reg=detectarRegion(s.direccion||s.destino||"");
-    const v=reg?(reg.valor||0):0;
+    const v=reg&&reg.concepto ? tarifaVigente(_tarifasCache, reg.concepto, s.fecha) : 0;
     if(v>0){mSpotReg+=v;nSpotReg++;}
   });
-  const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(2840000/30);
-  const mFijo=M1+M2,mSpot=tSpot*P_SPOT,mOH=tOH*P_OH;
-  const total=mFijo+mSpot+mOH+mSpotReg-tNP;
+  const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(M1/30);
+  const mFijo=M1+M2, mSpot=cobros.montoSpot, mOH=cobros.montoOH, mTraslado=cobros.montoTraslado;
+  const total=mFijo+mSpot+mOH+mSpotReg+mTraslado-tNP;
   if(total<=0) return null;
 
   const segmentos=[
@@ -2113,6 +2252,7 @@ function GraficoCobros({ solicitudes }) {
     {label:"SPOT Extra",valor:mSpot,color:"#F59E0B"},
     {label:"Overnight",valor:mOH,color:"#38BDF8"},
     ...(mSpotReg>0?[{label:`SPOT Regional (${nSpotReg})`,valor:mSpotReg,color:"#A78BFA"}]:[]),
+    ...(mTraslado>0?[{label:`Traslado Equipos Médicos (${cobros.trasladoCount})`,valor:mTraslado,color:"#22D3EE"}]:[]),
     ...(tNP>0?[{label:"Descuento NP",valor:tNP,color:"#EF4444",negativo:true}]:[]),
   ];
   const positivos=segmentos.filter(s=>!s.negativo&&s.valor>0);
@@ -2202,19 +2342,23 @@ function TarjetaCobro({label,color,count,monto,items}){
 }
 
 function ResumenMes({solicitudes}){
-  const P_SPOT=50000,P_OH=85000,M1=2840000,M2=2840000;
+  const fechaRef = solicitudes[0]?.fecha;
+  const M1=tarifaVigente(_tarifasCache,"m1_fijo",fechaRef), M2=tarifaVigente(_tarifasCache,"m2_fijo",fechaRef);
   const cobros=calcularCobros(solicitudes);
   const tSpot=cobros.spotCount;
   const tOH=cobros.ohCount;
+  const tTraslado=cobros.trasladoCount;
   const _ordItems=arr=>arr.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")||(a.hora||"").localeCompare(b.hora||""));
   const itemsSpot=_ordItems(solicitudes.filter(s=>cobros.perId[s.id]?.esSpot)
     .map(s=>({id:s.id,fecha:s.fecha,hora:s.hora,tipo:s.tipo})));
   const itemsOH=_ordItems(solicitudes.filter(s=>{const r=cobros.perId[s.id];return r&&(r.ohEarly||r.ohLate);})
-    .map(s=>{const r=cobros.perId[s.id];const motivo=r.ohEarly&&r.ohLate?"Temprano + Tarde":(r.ohEarly?"Temprano (<08:30)":"Tarde (≥17:00)");
+    .map(s=>{const r=cobros.perId[s.id];const motivo=(r.ohEarly&&r.ohLate?"Temprano + Tarde":(r.ohEarly?"Temprano (<08:30)":"Tarde (≥17:00)"))+(r.ohFeriado?" · Feriado":"");
       return {id:s.id,fecha:s.fecha,hora:s.hora,tipo:s.tipo,motivo};}));
-  const mSpot=tSpot*P_SPOT,mOH=tOH*P_OH,tMov=M1+M2;
-  const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(2840000/30);
-  const gran=mSpot+mOH+tMov-tNP;
+  const itemsTraslado=_ordItems(solicitudes.filter(s=>s.trasladoEquipoMedico&&(s.tipo==="entrega"||s.tipo==="li_retiro"))
+    .map(s=>({id:s.id,fecha:s.fecha,hora:s.hora,tipo:s.tipo})));
+  const mSpot=cobros.montoSpot,mOH=cobros.montoOH,mTraslado=cobros.montoTraslado,tMov=M1+M2;
+  const tNP=solicitudes.filter(s=>s.noPresentacion).length*Math.round(M1/30);
+  const gran=mSpot+mOH+mTraslado+tMov-tNP;
   return(
     <div style={{background:C.navySurface,border:`1px solid ${C.cyan}44`,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
       <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.5,textTransform:"uppercase"}}>Resumen de cobros · OC-4000255637</div>
@@ -2223,10 +2367,11 @@ function ResumenMes({solicitudes}){
           <div style={{fontSize:11,color:C.muted}}>Quantrex M1 + M2 · Mensual fijo</div></div>
         <div style={{fontSize:22,fontWeight:900,color:C.textPrimary}}>${tMov.toLocaleString("es-CL")}</div>
       </div>
-      {(tSpot>0||tOH>0)&&(
+      {(tSpot>0||tOH>0||tTraslado>0)&&(
         <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
           {tSpot>0&&<TarjetaCobro label="SPOT Extra" color={C.warning} count={tSpot} monto={mSpot} items={itemsSpot}/>}
           {tOH>0&&<TarjetaCobro label="Overnight" color={C.info} count={tOH} monto={mOH} items={itemsOH}/>}
+          {tTraslado>0&&<TarjetaCobro label="Traslado Equipos Médicos" color="#22D3EE" count={tTraslado} monto={mTraslado} items={itemsTraslado}/>}
         </div>
       )}
       {tNP>0&&<div style={{background:C.navy,borderRadius:10,padding:"12px 14px",border:`1px solid ${C.danger}44`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -3497,6 +3642,13 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
           {editForm.tipo==="li_devol"&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Destino fijo: bodega DHL (devolución a operador logístico).</div>}
           </div>}
         <ItemsEditor items={editForm.items} onChange={its=>setEditForm(p=>({...p,items:its}))}/>
+        {(editForm.tipo==="entrega"||editForm.tipo==="li_retiro")&&(
+          <div style={{...S.fGroup,gridColumn:"1/-1",flexDirection:"row",alignItems:"center",gap:8}}>
+            <input type="checkbox" id="trasladoEM_edit" checked={!!editForm.trasladoEquipoMedico}
+              onChange={e=>setEditForm(p=>({...p,trasladoEquipoMedico:e.target.checked}))}/>
+            <label htmlFor="trasladoEM_edit" style={{...S.label,marginBottom:0,cursor:"pointer"}}>🩺 Servicio Traslado Equipos Médicos (+$68.000)</label>
+          </div>
+        )}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={editForm.fecha} onChange={fe("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
@@ -3647,6 +3799,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
       {sol.documentos&&<div style={S.detailBlock}><div style={S.fieldLabel}>N° Guías / Documentos Cliente</div><div style={S.fieldValue}>{sol.documentos}</div></div>}
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {(sol.items||[]).length>0&&<div style={S.detailBlock}><div style={S.fieldLabel}>Ítems</div><div style={S.fieldValue}>{sol.items.map((it,i)=>(<div key={it.id||i}>{it.nombre} {it.cantidad>1?`× ${it.cantidad}`:""}</div>))}</div></div>}
+      {sol.trasladoEquipoMedico&&(sol.tipo==="entrega"||sol.tipo==="li_retiro")&&<div style={{...S.detailBlock,border:`1px solid ${C.cyan}`,background:C.cyan+"11"}}><div style={{...S.fieldLabel,color:C.cyan}}>🩺 Servicio Traslado Equipos Médicos</div><div style={S.fieldValue}>Incluido (+$68.000)</div></div>}
       {sol.notas&&<div style={S.detailBlock}><div style={S.fieldLabel}>Notas internas</div><div style={S.fieldValue}>{sol.notas}</div></div>}
       {sol.observacionCobro&&<div style={{...S.detailBlock,border:`1px solid ${C.warning}`,background:C.warning+"11"}}><div style={{...S.fieldLabel,color:C.warning}}>🧾 Observación Facturación / Pre-Cierre</div><div style={S.fieldValue}>{sol.observacionCobro}</div>
         {sol.sinCobro&&<div style={{fontSize:11.5,color:C.danger,marginTop:6,fontWeight:700}}>🚫 EXENTA DE COBRO — no genera cargo en ningún período</div>}
@@ -3927,6 +4080,13 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           {form.tipo==="li_devol"&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Destino fijo: bodega DHL (devolución a operador logístico).</div>}
           </div>}
         <ItemsEditor items={form.items} onChange={its=>setForm(p=>({...p,items:its}))}/>
+        {(form.tipo==="entrega"||form.tipo==="li_retiro")&&(
+          <div style={{...S.fGroup,gridColumn:"1/-1",flexDirection:"row",alignItems:"center",gap:8}}>
+            <input type="checkbox" id="trasladoEM_nueva" checked={!!form.trasladoEquipoMedico}
+              onChange={e=>setForm(p=>({...p,trasladoEquipoMedico:e.target.checked}))}/>
+            <label htmlFor="trasladoEM_nueva" style={{...S.label,marginBottom:0,cursor:"pointer"}}>🩺 Servicio Traslado Equipos Médicos (+$68.000)</label>
+          </div>
+        )}
         <div style={S.fGroup}><label style={S.label}>Fecha *</label>
           <input style={S.input} type="date" value={form.fecha} onChange={f("fecha")}/></div>
         <div style={S.fGroup}><label style={S.label}>Hora</label>
@@ -4475,7 +4635,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
 
 
 // ── Admin Usuarios ─────────────────────────────────────────────────────────
-function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuario,setView}){
+function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuario,setView,tarifas=[],feriados=[],onSaveTarifa,onEliminarTarifa,onSaveFeriado,onEliminarFeriado}){
   const [listaU,setListaU]=useState(usuarios.filter(u=>u.perfil!=="admin"));
   useEffect(()=>{setListaU(usuarios.filter(u=>u.perfil!=="admin"));},[usuarios]);
   const [listaC,setListaC]=useState(choferes);
@@ -4493,6 +4653,24 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
   const [nuevoV,setNuevoV]=useState(false);
   const [formV,setFormV]=useState({ppu:"",marca:"",modelo:"",anio:"",capacidadM3:"",capacidadKg:""});
   const [autollenado,setAutollenado]=useState(false);
+  const [formTarifa,setFormTarifa]=useState({concepto:"",label:"",precio:"",vigenteDesde:new Date().toISOString().split("T")[0]});
+  const [formFeriado,setFormFeriado]=useState({fecha:"",nombre:""});
+  const [guardandoTarifa,setGuardandoTarifa]=useState(false);
+  const [guardandoFeriado,setGuardandoFeriado]=useState(false);
+  const CONCEPTOS_TARIFA=[
+    {id:"spot_extra",label:"SPOT Extra"},
+    {id:"overnight",label:"Overnight / Fuera de Horario"},
+    {id:"overnight_feriado",label:"Overnight Inhábil (Día Feriado)"},
+    {id:"traslado_equipos_medicos",label:"Servicio Traslado Equipos Médicos"},
+    {id:"m1_fijo",label:"Quantrex M1 (mensual fijo)"},
+    {id:"m2_fijo",label:"Quantrex M2 (mensual fijo)"},
+    {id:"regional_IV",label:"SPOT Regional — IV Región Coquimbo"},
+    {id:"regional_V",label:"SPOT Regional — V Región Valparaíso"},
+    {id:"regional_VI",label:"SPOT Regional — VI Región O'Higgins"},
+    {id:"regional_VII",label:"SPOT Regional — VII Región Maule"},
+    {id:"regional_VIII",label:"SPOT Regional — VIII Región Biobío"},
+    {id:"regional_IX",label:"SPOT Regional — IX Región Araucanía"},
+  ];
 
   // Abbott debe existir siempre como cliente, pero SOLO se agrega si no está
   // ya en la lista. Antes se agregaba sin condición, y como usuarios/saveUsuarios
@@ -4529,7 +4707,7 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
     <div style={S.section}>
       <div style={S.pageTitle}>Gestión de Usuarios</div>
       <div style={{display:"flex",gap:8,marginBottom:4,flexWrap:"wrap"}}>
-        {[["operadores","👤 Operadores"],["clientes_acc","🏢 Clientes"],["choferes","🚗 Choferes"],["vehiculos","🚚 Vehículos"]].map(([id,label])=>(
+        {[["operadores","👤 Operadores"],["clientes_acc","🏢 Clientes"],["choferes","🚗 Choferes"],["vehiculos","🚚 Vehículos"],["tarifas","💰 Tarifas"]].map(([id,label])=>(
           <button key={id} style={{...S.statusBtn,background:tab===id?C.cyan+"33":"transparent",border:"1px solid "+(tab===id?C.cyan:C.border),color:tab===id?C.cyan:C.muted,fontWeight:700,fontSize:13}}
             onClick={()=>setTab(id)}>{label}</button>
         ))}
@@ -4759,6 +4937,88 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
             </div>
           ))}
           {listaV.length===0&&!nuevoV&&<EmptyState msg="No hay vehículos registrados."/>}
+        </div>
+      )}
+
+      {tab==="tarifas"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
+          <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:16}}>
+            <div style={{fontWeight:800,color:C.cyan,fontSize:14,marginBottom:4}}>💰 Tarifas y recargos</div>
+            <div style={{fontSize:12,color:C.textSecondary,marginBottom:12}}>
+              Cada precio se guarda con su fecha de vigencia — nunca se sobreescribe un precio histórico. Para el ajuste anual ICT
+              (inciso sexto del contrato, próximo el 01/01/2027), agrega una fila nueva con esa fecha y el precio actualizado: la app
+              seguirá calculando correctamente las solicitudes anteriores con el precio viejo, y las nuevas con el precio nuevo.
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:8,marginBottom:10}}>
+              <select style={S.input} value={formTarifa.concepto} onChange={e=>{
+                const c=CONCEPTOS_TARIFA.find(x=>x.id===e.target.value);
+                setFormTarifa(p=>({...p,concepto:e.target.value,label:c?c.label:""}));
+              }}>
+                <option value="">-- Concepto --</option>
+                {CONCEPTOS_TARIFA.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+              <input style={S.input} type="number" placeholder="Precio ($)" value={formTarifa.precio} onChange={e=>setFormTarifa(p=>({...p,precio:e.target.value}))}/>
+              <input style={S.input} type="date" value={formTarifa.vigenteDesde} onChange={e=>setFormTarifa(p=>({...p,vigenteDesde:e.target.value}))}/>
+              <button style={{...S.btnPri,opacity:guardandoTarifa?0.6:1}} disabled={guardandoTarifa||!formTarifa.concepto||!formTarifa.precio}
+                onClick={async()=>{
+                  setGuardandoTarifa(true);
+                  const ok=await onSaveTarifa(formTarifa);
+                  setGuardandoTarifa(false);
+                  if(ok) setFormTarifa({concepto:"",label:"",precio:"",vigenteDesde:new Date().toISOString().split("T")[0]});
+                  else window.alert("No se pudo guardar la tarifa. Revisa la conexión e inténtalo de nuevo.");
+                }}>{guardandoTarifa?"Guardando...":"+ Agregar"}</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {CONCEPTOS_TARIFA.map(c=>{
+                const historial=tarifas.filter(t=>t.concepto===c.id).sort((a,b)=>b.vigente_desde.localeCompare(a.vigente_desde));
+                if(!historial.length) return null;
+                return (
+                  <div key={c.id} style={{border:`1px solid ${C.border}`,borderRadius:8,padding:10}}>
+                    <div style={{fontSize:12,fontWeight:700,color:C.textPrimary,marginBottom:6}}>{c.label}</div>
+                    {historial.map((t,i)=>(
+                      <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,color:i===0?C.success:C.muted,padding:"3px 0"}}>
+                        <span>{i===0?"✓ Vigente desde ":"Histórico desde "}{new Date(t.vigente_desde+"T00:00:00").toLocaleDateString("es-CL")}</span>
+                        <span style={{display:"flex",gap:8,alignItems:"center"}}>
+                          <b>${Number(t.precio).toLocaleString("es-CL")}</b>
+                          {i!==0&&<button style={{background:"transparent",border:"none",color:C.danger,cursor:"pointer",fontSize:12}}
+                            onClick={()=>{ if(window.confirm("¿Eliminar este precio histórico?")) onEliminarTarifa(t.id); }}>✕</button>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+              {tarifas.length===0&&<EmptyState msg="Sin tarifas cargadas. Corre el SQL inicial en Supabase primero."/>}
+            </div>
+          </div>
+
+          <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:16}}>
+            <div style={{fontWeight:800,color:C.cyan,fontSize:14,marginBottom:4}}>📅 Feriados (para Overnight Inhábil)</div>
+            <div style={{fontSize:12,color:C.textSecondary,marginBottom:12}}>
+              Cualquier solicitud con cobro Overnight cuya fecha esté en esta lista se cobra a la tarifa "Overnight Inhábil" en vez de la normal.
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 2fr auto",gap:8,marginBottom:10}}>
+              <input style={S.input} type="date" value={formFeriado.fecha} onChange={e=>setFormFeriado(p=>({...p,fecha:e.target.value}))}/>
+              <input style={S.input} placeholder="Nombre del feriado" value={formFeriado.nombre} onChange={e=>setFormFeriado(p=>({...p,nombre:e.target.value}))}/>
+              <button style={{...S.btnPri,opacity:guardandoFeriado?0.6:1}} disabled={guardandoFeriado||!formFeriado.fecha}
+                onClick={async()=>{
+                  setGuardandoFeriado(true);
+                  const ok=await onSaveFeriado(formFeriado.fecha,formFeriado.nombre);
+                  setGuardandoFeriado(false);
+                  if(ok) setFormFeriado({fecha:"",nombre:""});
+                  else window.alert("No se pudo guardar el feriado.");
+                }}>{guardandoFeriado?"Guardando...":"+ Agregar"}</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:280,overflowY:"auto"}}>
+              {feriados.slice().sort((a,b)=>a.fecha.localeCompare(b.fecha)).map(f=>(
+                <div key={f.fecha} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,color:C.textSecondary,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:6}}>
+                  <span>{new Date(f.fecha+"T00:00:00").toLocaleDateString("es-CL",{weekday:"short",day:"numeric",month:"short",year:"numeric"})} — {f.nombre||"Sin nombre"}</span>
+                  <button style={{background:"transparent",border:"none",color:C.danger,cursor:"pointer"}} onClick={()=>{ if(window.confirm("¿Eliminar este feriado?")) onEliminarFeriado(f.fecha); }}>✕</button>
+                </div>
+              ))}
+              {feriados.length===0&&<EmptyState msg="Sin feriados cargados. Corre el SQL inicial en Supabase primero."/>}
+            </div>
+          </div>
         </div>
       )}
     </div>
