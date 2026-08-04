@@ -2841,7 +2841,7 @@ async function buscarEnCarpetasDrive(carpetas, apiKey, terms){
   return {resultados, carpetasConError};
 }
 
-function BuscadorDocumento(){
+function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
   const MAX_DOCS=5;
   const [q,setQ]=useState("");
   const [buscado,setBuscado]=useState(false);
@@ -2849,6 +2849,7 @@ function BuscadorDocumento(){
   const [dt,setDt]=useState(null); // {loading}|{porNumero:{n:{ok,dispatches,error}}}
   const [numerosBuscados,setNumerosBuscados]=useState([]);
   const [limiteExcedido,setLimiteExcedido]=useState(false);
+  const [quantrexResultados,setQuantrexResultados]=useState(null);
   const carpetasCache=useRef(null); // cache de IDs de subcarpetas ya descubiertas en esta sesión
 
   const dtConfigurado = QUANTREX_DT_BRIDGE_URL && !QUANTREX_DT_BRIDGE_URL.startsWith("TU_");
@@ -2880,6 +2881,21 @@ function BuscadorDocumento(){
     setDt({porNumero});
   };
 
+  // Búsqueda local en las solicitudes de Quantrex (ot, guía, documentos) —
+  // de cara a que a futuro Quantrex sea la fuente de verdad y no DispatchTrack.
+  const buscarQuantrex=(numeros)=>{
+    const porNumero={};
+    for(const n of numeros){
+      const nLower=n.trim().toLowerCase();
+      porNumero[n]=(solicitudes||[]).filter(s=>
+        (s.ot||"").toLowerCase()===nLower ||
+        (s.guia||"").toLowerCase().includes(nLower) ||
+        (s.documentos||"").toLowerCase().includes(nLower)
+      );
+    }
+    return porNumero;
+  };
+
   const buscar=()=>{
     const numeros=Array.from(new Set(q.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean)));
     if(numeros.length===0) return;
@@ -2889,6 +2905,7 @@ function BuscadorDocumento(){
     setBuscado(true);
     setDrive(null);
     setDt(null);
+    setQuantrexResultados(buscarQuantrex(numeros));
     buscarDrive(numeros.map(n=>n.replace(/'/g,"\\'")));
     buscarDT(numeros);
   };
@@ -2996,6 +3013,29 @@ function BuscadorDocumento(){
                           {r.dispatches.map(dispatchCard)}
                         </div>
                       )}
+                    </div>
+                  );
+                })}
+              </div>
+            ):null}
+          </>)}
+          {resultCard(<>
+            <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>📋 Solicitud Quantrex</div>
+            {quantrexResultados?(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {numerosBuscados.map(n=>{
+                  const matches=quantrexResultados[n]||[];
+                  return (
+                    <div key={n}>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{n}</div>
+                      {matches.length===0
+                        ?<div style={{fontSize:12,color:C.muted,paddingLeft:6}}>— no encontrada</div>
+                        :matches.map(s=>(
+                          <button key={s.id} onClick={()=>{setSelectedId(s.id);setView("detalle");}}
+                            style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",cursor:"pointer",fontSize:12,color:C.cyan,fontWeight:600,paddingLeft:6,paddingTop:2,paddingBottom:2}}>
+                            📋 {s.ot} — {s.titulo||"Sin título"} →
+                          </button>
+                        ))}
                     </div>
                   );
                 })}
@@ -3117,7 +3157,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         <div style={S.pageTitle}>Dashboard</div>
         {solicitudes.length>0&&!esCliente&&<button title="Exporta solo las solicitudes del período activo" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte del período</span></button>}
       </div>
-      <BuscadorDocumento/>
+      <BuscadorDocumento solicitudes={solicitudes} setView={setView} setSelectedId={setSelectedId}/>
       {abrirPeriodo && (
         <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
           <div style={{fontSize:13,fontWeight:800,color:C.cyan}}>Abrir nuevo período de facturación</div>
