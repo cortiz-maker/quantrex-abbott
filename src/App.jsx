@@ -621,9 +621,9 @@ function setFeriadosCache(f){ _feriadosCache = f||[]; }
 // ── Motor de cobros centralizado ───────────────────────────────────────────
 // Reglas acordadas:
 //  SPOT Extra ($50.000): contador GLOBAL por día (todas las PPU juntas). Desde la 7ma
-//    gestión del día, cada una es SPOT. NO cuentan: Carga OL (siempre) ni Devolución normal.
-//    La Devolución urgente sí cuenta.
-//  Overnight ($85.000), por PPU y por día:
+//    gestión del día, cada una es SPOT. Carga OL: las primeras 2 del día NO cuentan,
+//    la 3ra en adelante SÍ entra al contador. Devolución normal NO cuenta (la urgente sí).
+//  Overnight ($85.000, o $170.000 si la fecha es feriado), por PPU y por día:
 //    · Temprano: PPU con ≥1 solicitud (≠ Carga OL, ≠ Devolución normal) agendada antes de 08:30.
 //    · Tarde: PPU con ≥1 registro de log ≥17:00 (se cobra la que cierra más tarde).
 //    · Temprano y tarde se cobran AMBOS (hasta 2 por PPU/día).
@@ -656,7 +656,19 @@ function calcularCobros(solicitudes, tarifas, feriados){
     const esDevolNormal = esDevol && !esDevolUrg;
     perId[s.id] = { esSpot:false, ohEarly:false, ohLate:false, nro:0,
       _cargaOL:esCargaOL, _devolNormal:esDevolNormal,
+      // Se define _cuenta más abajo para Carga OL (depende de cuántas cargas
+      // OL ya hubo ese mismo día); para el resto de tipos es como siempre.
       _cuenta: !esCargaOL && !esDevolNormal };
+  }
+  // Carga Operador Logístico: las primeras 2 del día son libres de cobro; la
+  // 3ª en adelante SÍ entra al contador global de gestiones (y por lo tanto
+  // puede contribuir al Extra SPOT si el total del día supera las 6).
+  const ordenCargaOL = [...sols].filter(s=>s.tipo==="carga_ol").sort((a,b)=>_ordenCierre(a)-_ordenCierre(b));
+  const contCargaOL = {};
+  for(const s of ordenCargaOL){
+    const f = s.fecha || "sin-fecha";
+    contCargaOL[f] = (contCargaOL[f]||0) + 1;
+    if(contCargaOL[f] > 2) perId[s.id]._cuenta = true;
   }
   // SPOT: contador global por día, numerado en ORDEN DE CIERRE ascendente
   const contN = {};
