@@ -2974,17 +2974,26 @@ async function obtenerSubcarpetasDrive(folderIdRaiz, apiKey, maxCarpetas=60){
   return todas;
 }
 
-// Busca el término en cada carpeta POR SEPARADO (en paralelo) en vez de una
-// sola consulta combinada — así, si alguna carpeta tiene permisos rotos, esa
-// consulta individual falla pero el resto de las carpetas igual entregan
-// resultado, en vez de tirar abajo toda la búsqueda.
-async function buscarEnCarpetasDrive(carpetas, apiKey, terms){
+// Busca UN término en todas las carpetas EN PARALELO. Se hace término por
+// término (en vez de una sola consulta con todos los términos combinados con
+// "or") para poder asociar cada resultado con el número buscado que lo generó
+// — algo que ya no se puede inferir solo mirando el nombre del archivo, ahora
+// que también se busca dentro del contenido del PDF (ver más abajo).
+//
+// La cláusula usa "name contains" (nombre del archivo) OR "fullText contains"
+// (contenido indexado por Drive: texto del PDF, y también el texto que Drive
+// extrae vía OCR de PDFs escaneados/imágenes cuando ese indexado ya se
+// completó del lado de Drive). Así el buscador encuentra un documento aunque
+// el número no esté en el nombre del archivo, sino solo escrito dentro del
+// PDF.
+async function buscarTerminoEnCarpetasDrive(carpetas, apiKey, term){
   const vistos=new Set();
   const resultados=[];
   let carpetasConError=0;
-  const nameClause = terms.map(t=>`name contains '${t}'`).join(" or ");
+  const termEsc = term.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+  const clause = `name contains '${termEsc}' or fullText contains '${termEsc}'`;
   await Promise.all(carpetas.map(async folderId=>{
-    const query=`'${folderId}' in parents and (${nameClause}) and trashed = false`;
+    const query=`'${folderId}' in parents and (${clause}) and trashed = false`;
     const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=50&key=${apiKey}`;
     try{
       const res=await fetch(url);
@@ -3020,8 +3029,16 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
         carpetasCache.current = await obtenerSubcarpetasDrive(GOOGLE_DRIVE_FOLDER_ID, GOOGLE_DRIVE_API_KEY);
       }
       const carpetas=carpetasCache.current;
-      const {resultados,carpetasConError} = await buscarEnCarpetasDrive(carpetas, GOOGLE_DRIVE_API_KEY, terminos);
-      setDrive({archivos:resultados, carpetasConError});
+      // Una búsqueda por término (no combinada) para poder mostrar, para cada
+      // número ingresado, los archivos que lo mencionan — ya sea en el nombre
+      // o dentro del contenido del PDF.
+      const entries = await Promise.all(terminos.map(async t=>{
+        const r = await buscarTerminoEnCarpetasDrive(carpetas, GOOGLE_DRIVE_API_KEY, t);
+        return [t, r];
+      }));
+      const porTermino = Object.fromEntries(entries);
+      const carpetasConError = entries.reduce((max,[,r])=>Math.max(max,r.carpetasConError),0);
+      setDrive({porTermino, carpetasConError});
     }catch{
       setDrive({error:"red"});
     }
@@ -3063,7 +3080,7 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     setDrive(null);
     setDt(null);
     setQuantrexResultados(buscarQuantrex(numeros));
-    buscarDrive(numeros.map(n=>n.replace(/'/g,"\\'")));
+    buscarDrive(numeros);
     buscarDT(numeros);
   };
 
@@ -3138,7 +3155,7 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:10}}>
       <div>
         <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔍 Buscar documento</div>
-        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho o documento para ver su estado en DispatchTrack o el PDF escaneado. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
+        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho o documento para ver su estado en DispatchTrack o el PDF escaneado. La búsqueda revisa tanto el nombre del archivo como el contenido dentro del PDF. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <input style={{...S.input,flex:1,minWidth:180}} placeholder="Ej: 432263, 424948, 1037054..." value={q}
@@ -3209,10 +3226,10 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
               <div style={{fontSize:12,color:C.danger}}>Error de la API de Drive{drive?.detalle?`: ${drive.detalle}`:" (revisa la clave o los permisos de la carpeta)."}</div>
             ):drive?.error==="red"?(
               <div style={{fontSize:12,color:C.danger}}>Error de conexión con Drive.</div>
-            ):drive?.archivos?(<>
+            ):drive?.porTermino?(<>
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {numerosBuscados.map(n=>{
-                  const matches=drive.archivos.filter(f=>f.name.includes(n));
+                  const matches=drive.porTermino[n]?.resultados||[];
                   return (
                     <div key={n}>
                       <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{n}</div>
