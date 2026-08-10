@@ -3299,6 +3299,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
   const [showCostosDesglose,setShowCostosDesglose]=useState(false);
   const [showMetasTendencia,setShowMetasTendencia]=useState(false);
+  const [hoverEstadoChip,setHoverEstadoChip]=useState(null); // key del status con el mouse encima (solo no_entregado/cancelada)
 
   // ── Cálculo ejecutivo: serie de períodos (cierres + período actual) ──
   const metasMap={};
@@ -3363,9 +3364,31 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
         <div style={{width:1,height:18,background:C.border}}/>
         {Object.entries(STATUS_META).map(([k,meta])=>{
-          const n=solicitudesPeriodo.filter(s=>s.status===k).length;
+          const enEstado=solicitudesPeriodo.filter(s=>s.status===k);
+          const n=enEstado.length;
           if(n===0)return null;
-          return <div key={k} style={{fontSize:12,color:C.textSecondary}}><strong style={{color:meta.color}}>{n}</strong> {statusLabelConteo(k,n)}</div>;
+          const conPopover = k==="no_entregado"||k==="cancelada";
+          return (
+            <div key={k} style={{fontSize:12,color:C.textSecondary,position:"relative"}}
+              onMouseEnter={()=>conPopover&&setHoverEstadoChip(k)}
+              onMouseLeave={()=>conPopover&&setHoverEstadoChip(null)}
+            >
+              <span style={{cursor:conPopover?"default":undefined,borderBottom:conPopover?`1px dotted ${meta.color}88`:"none"}}>
+                <strong style={{color:meta.color}}>{n}</strong> {statusLabelConteo(k,n)}
+              </span>
+              {conPopover&&hoverEstadoChip===k&&(
+                <div style={{position:"absolute",top:"calc(100% + 8px)",left:0,zIndex:60,minWidth:260,maxWidth:340,maxHeight:280,overflowY:"auto",background:C.navy,border:`1px solid ${meta.color}66`,borderRadius:10,boxShadow:"0 10px 28px #00000066",padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
+                  <div style={{fontSize:11,fontWeight:700,color:meta.color,letterSpacing:.5,textTransform:"uppercase"}}>{statusLabelConteo(k,n)}</div>
+                  {enEstado.map(s=>(
+                    <div key={s.id} style={{fontSize:12,color:C.textPrimary,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{fontWeight:600}}>{s.titulo||"(sin cliente)"}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{s.guia?`Guía ${s.guia}`:s.ot?`OT ${s.ot}`:"Sin N° de guía"}{s.fecha?` · ${s.fecha}`:""}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
         })}
       </div>}
 
