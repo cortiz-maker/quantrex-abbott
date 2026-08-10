@@ -3186,7 +3186,7 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:10}}>
       <div>
         <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔍 Buscar documento</div>
-        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho, código de cliente, orden de compra, número de delivery o RUT del cliente. La búsqueda revisa tanto el nombre del archivo como el contenido dentro del PDF. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
+        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho, código de cliente, orden de compra, número de delivery o RUT del cliente. La búsqueda revisa tanto el nombre del archivo como el contenido dentro del PDF — un mismo número puede traer varios documentos si aparece en más de uno. Puedes buscar hasta {MAX_DOCS} números distintos a la vez, separados por coma.</div>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <input style={{...S.input,flex:1,minWidth:180}} placeholder="Ej: 432263, 424948, 1037054..." value={q}
