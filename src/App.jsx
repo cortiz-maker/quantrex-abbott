@@ -2980,18 +2980,19 @@ async function obtenerSubcarpetasDrive(folderIdRaiz, apiKey, maxCarpetas=60){
 // — algo que ya no se puede inferir solo mirando el nombre del archivo, ahora
 // que también se busca dentro del contenido del PDF (ver más abajo).
 //
-// La cláusula usa "name contains" (nombre del archivo) OR "fullText contains"
-// (contenido indexado por Drive: texto del PDF, y también el texto que Drive
-// extrae vía OCR de PDFs escaneados/imágenes cuando ese indexado ya se
-// completó del lado de Drive). Así el buscador encuentra un documento aunque
-// el número no esté en el nombre del archivo, sino solo escrito dentro del
-// PDF.
+// La cláusula usa solo "fullText contains": según la documentación de Drive,
+// fullText YA compara internamente contra el nombre del archivo, la
+// descripción y el contenido indexado (incluyendo el texto que Drive extrae
+// vía OCR de PDFs escaneados una vez que ese indexado se completó). Combinar
+// "name contains X or fullText contains X" —como se hizo en una primera
+// versión— rompe la consulta en la API de Drive (devuelve 0 resultados
+// aunque el archivo exista y esté indexado); por eso se usa solo fullText.
 async function buscarTerminoEnCarpetasDrive(carpetas, apiKey, term){
   const vistos=new Set();
   const resultados=[];
   let carpetasConError=0;
   const termEsc = term.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
-  const clause = `name contains '${termEsc}' or fullText contains '${termEsc}'`;
+  const clause = `fullText contains '${termEsc}'`;
   await Promise.all(carpetas.map(async folderId=>{
     const query=`'${folderId}' in parents and (${clause}) and trashed = false`;
     const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=50&key=${apiKey}`;
