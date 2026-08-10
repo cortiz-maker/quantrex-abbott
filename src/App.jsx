@@ -3017,10 +3017,40 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
   const [numerosBuscados,setNumerosBuscados]=useState([]);
   const [limiteExcedido,setLimiteExcedido]=useState(false);
   const [quantrexResultados,setQuantrexResultados]=useState(null);
+  const [descargando,setDescargando]=useState({}); // {[termino]: true} mientras se descargan todos los archivos de ese término
   const carpetasCache=useRef(null); // cache de IDs de subcarpetas ya descubiertas en esta sesión
 
   const dtConfigurado = QUANTREX_DT_BRIDGE_URL && !QUANTREX_DT_BRIDGE_URL.startsWith("TU_");
   const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
+
+  // Descarga cada archivo de la lista uno por uno (con un pequeño retraso
+  // entre cada uno, para que Chrome no bloquee descargas múltiples de golpe).
+  // Usa el endpoint alt=media de Drive con la misma API key de solo lectura
+  // que ya usa el buscador — funciona porque son archivos públicos ("Cualquiera
+  // con el enlace"), igual que la búsqueda por contenido.
+  const descargarTodos = async (termino, archivos) => {
+    if(!archivos || archivos.length===0) return;
+    setDescargando(prev=>({...prev,[termino]:true}));
+    for(let i=0;i<archivos.length;i++){
+      const f=archivos[i];
+      try{
+        const url=`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${GOOGLE_DRIVE_API_KEY}`;
+        const res=await fetch(url);
+        if(!res.ok) continue;
+        const blob=await res.blob();
+        const blobUrl=URL.createObjectURL(blob);
+        const a=document.createElement("a");
+        a.href=blobUrl;
+        a.download=f.name||`documento_${i+1}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(()=>URL.revokeObjectURL(blobUrl),10000);
+      }catch{ /* se salta este archivo y sigue con el resto */ }
+      if(i<archivos.length-1) await new Promise(r=>setTimeout(r,400));
+    }
+    setDescargando(prev=>({...prev,[termino]:false}));
+  };
 
   const buscarDrive=async(terminos)=>{
     if(!driveConfigurado){ setDrive({error:"config"}); return; }
@@ -3156,7 +3186,7 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:10}}>
       <div>
         <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔍 Buscar documento</div>
-        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho o documento para ver su estado en DispatchTrack o el PDF escaneado. La búsqueda revisa tanto el nombre del archivo como el contenido dentro del PDF. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
+        <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>Ingresa N° de despacho, código de cliente, orden de compra, número de delivery o RUT del cliente. La búsqueda revisa tanto el nombre del archivo como el contenido dentro del PDF. Puedes buscar hasta {MAX_DOCS} a la vez, separados por coma.</div>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <input style={{...S.input,flex:1,minWidth:180}} placeholder="Ej: 432263, 424948, 1037054..." value={q}
@@ -3233,7 +3263,18 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
                   const matches=drive.porTermino[n]?.resultados||[];
                   return (
                     <div key={n}>
-                      <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{n}</div>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                        <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{n}</div>
+                        {matches.length>1&&(
+                          <button
+                            onClick={()=>descargarTodos(n,matches)}
+                            disabled={!!descargando[n]}
+                            style={{fontSize:11,fontWeight:700,color:C.cyan,background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,padding:"2px 8px",cursor:descargando[n]?"default":"pointer",opacity:descargando[n]?0.6:1}}
+                          >
+                            {descargando[n]?"Descargando...":`⬇ Descargar todos (${matches.length})`}
+                          </button>
+                        )}
+                      </div>
                       {matches.length===0
                         ?<div style={{fontSize:12,color:C.muted,paddingLeft:6}}>— no encontrado</div>
                         :matches.map(f=>(
