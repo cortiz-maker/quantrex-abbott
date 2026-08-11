@@ -146,6 +146,26 @@ async function sbFetch(method, table, body=null, query="") {
   return text ? JSON.parse(text) : null;
 }
 
+// PostgREST (Supabase) por defecto no devuelve más de 1000 filas por
+// request, y lo hace SIN error ni aviso — simplemente corta ahí. Para
+// tablas de alto volumen como tracking_puntos (un punto GPS cada ~8
+// segundos por vehículo), una consulta de varios días/vehículos supera
+// esa cifra fácil, y como se corta en el orden pedido (más antiguo primero
+// en las consultas de trazabilidad), lo que se pierde es justo lo más
+// reciente — el peor caso posible para este uso. Esta función pagina con
+// limit/offset hasta traer todas las filas.
+async function sbFetchPaginado(table, query, pageSize=1000) {
+  let offset=0, todo=[];
+  while(true){
+    const pagina=await sbFetch("GET", table, "", `${query}&limit=${pageSize}&offset=${offset}`);
+    if(!pagina || !pagina.length) break;
+    todo=todo.concat(pagina);
+    if(pagina.length<pageSize) break; // última página
+    offset+=pageSize;
+  }
+  return todo;
+}
+
 // UPSERT seguro: devuelve true SOLO si Supabase confirmó la escritura (res.ok).
 // Así la UI no asume "guardado" cuando el servidor rechazó la operación.
 async function sbUpsert(table, rows) {
@@ -2785,7 +2805,7 @@ function MapaTrazabilidadHoy(){
         const hoy=hoyChile();
         const [inicioUTC,finUTC]=rangoDiaChileUTC(hoy);
         const q=`?order=vehiculo_id.asc,timestamp_captura.asc&timestamp_captura=gte.${inicioUTC}&timestamp_captura=lt.${finUTC}`;
-        const data=await sbFetch("GET","tracking_puntos","",q);
+        const data=await sbFetchPaginado("tracking_puntos",q);
         if(cancelado) return;
         const puntos=data||[];
         if(!puntos.length){ setEstado("vacio"); return; }
@@ -6244,7 +6264,7 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
       let q=`?order=timestamp_captura.asc&timestamp_captura=gte.${inicioUTC}&timestamp_captura=lt.${finUTC}`;
       if(filtroVehiculo) q+=`&vehiculo_id=eq.${encodeURIComponent(filtroVehiculo)}`;
       if(filtroChofer) q+=`&chofer_id=eq.${encodeURIComponent(filtroChofer)}`;
-      const data=await sbFetch("GET","tracking_puntos","",q);
+      const data=await sbFetchPaginado("tracking_puntos",q);
       setPuntos(data||[]);
     }catch(e){
       setError("No se pudo cargar la trazabilidad.");
