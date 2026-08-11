@@ -359,6 +359,40 @@ function encodePolyline(points){
   return result;
 }
 
+// ── Fecha/hora en huso de Chile (America/Santiago) ───────────────────────
+// new Date().toISOString() devuelve la fecha en UTC. Chile está en UTC-4
+// (UTC-3 en horario de verano), así que desde ~20:00 hora local en adelante
+// (o ~21:00 en verano) el reloj UTC ya cruzó la medianoche y toISOString()
+// entrega el día siguiente. Esto rompía el selector "hoy" de Trazabilidad
+// y el widget "Trazabilidad de hoy", mostrando la fecha equivocada y
+// consultando un rango de datos corrido respecto al día calendario real.
+function hoyChile(){
+  // en-CA formatea como YYYY-MM-DD, y respeta el huso horario indicado
+  // (incluye el cambio de horario de verano automáticamente).
+  return new Date().toLocaleDateString("en-CA",{timeZone:"America/Santiago"});
+}
+function offsetChileMinutos(fechaStr){
+  // Offset real (en minutos) de America/Santiago para esa fecha puntual,
+  // ej. -240 en invierno (UTC-4) o -180 en horario de verano (UTC-3).
+  const medianocheUTC=new Date(fechaStr+"T12:00:00Z");
+  const horaSantiago=parseInt(new Intl.DateTimeFormat("en-US",{timeZone:"America/Santiago",hour:"2-digit",hour12:false}).format(medianocheUTC),10);
+  let diffHoras=horaSantiago-12;
+  if(diffHoras>12) diffHoras-=24;
+  if(diffHoras<-12) diffHoras+=24;
+  return diffHoras*60;
+}
+// Dado un día calendario de Chile ("YYYY-MM-DD"), devuelve el rango
+// [inicioUTC, finUTC) como ISO strings, correspondiente a ese día completo
+// en hora de Chile (00:00:00 a 23:59:59.999 hora Santiago), listo para
+// filtrar una columna timestamptz sin que quede corrido por el huso.
+function rangoDiaChileUTC(fechaStr){
+  const offsetMin=offsetChileMinutos(fechaStr);
+  const inicio=new Date(fechaStr+"T00:00:00Z");
+  inicio.setUTCMinutes(inicio.getUTCMinutes()-offsetMin);
+  const fin=new Date(inicio.getTime()+24*3600*1000);
+  return [inicio.toISOString(), fin.toISOString()];
+}
+
 function distanciaMetros(lat1,lng1,lat2,lng2){
   const R=6371000, rad=x=>x*Math.PI/180;
   const dLat=rad(lat2-lat1), dLng=rad(lng2-lng1);
@@ -2748,8 +2782,9 @@ function MapaTrazabilidadHoy(){
     (async()=>{
       setEstado("cargando");
       try{
-        const hoy=new Date().toISOString().slice(0,10);
-        const q=`?order=vehiculo_id.asc,timestamp_captura.asc&timestamp_captura=gte.${hoy}T00:00:00&timestamp_captura=lte.${hoy}T23:59:59`;
+        const hoy=hoyChile();
+        const [inicioUTC,finUTC]=rangoDiaChileUTC(hoy);
+        const q=`?order=vehiculo_id.asc,timestamp_captura.asc&timestamp_captura=gte.${inicioUTC}&timestamp_captura=lt.${finUTC}`;
         const data=await sbFetch("GET","tracking_puntos","",q);
         if(cancelado) return;
         const puntos=data||[];
@@ -6189,7 +6224,7 @@ function EmptyState({msg,action}){
 
 // ── Trazabilidad GPS: vista admin/operador ─────────────────────────────────
 function VistaTrazabilidad({vehiculos=[],choferes=[]}){
-  const hoy=new Date().toISOString().split("T")[0];
+  const hoy=hoyChile();
   const [filtroVehiculo,setFiltroVehiculo]=useState("");
   const [filtroChofer,setFiltroChofer]=useState("");
   const [fechaDesde,setFechaDesde]=useState(hoy);
@@ -6204,7 +6239,9 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
   async function buscar(){
     setLoading(true); setError(null); setBuscado(true);
     try{
-      let q=`?order=timestamp_captura.asc&timestamp_captura=gte.${fechaDesde}T00:00:00&timestamp_captura=lte.${fechaHasta}T23:59:59`;
+      const [inicioUTC]=rangoDiaChileUTC(fechaDesde);
+      const [,finUTC]=rangoDiaChileUTC(fechaHasta);
+      let q=`?order=timestamp_captura.asc&timestamp_captura=gte.${inicioUTC}&timestamp_captura=lt.${finUTC}`;
       if(filtroVehiculo) q+=`&vehiculo_id=eq.${encodeURIComponent(filtroVehiculo)}`;
       if(filtroChofer) q+=`&chofer_id=eq.${encodeURIComponent(filtroChofer)}`;
       const data=await sbFetch("GET","tracking_puntos","",q);
