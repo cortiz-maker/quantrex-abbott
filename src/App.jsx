@@ -2246,7 +2246,7 @@ export default function QuantrexAbbott() {
       )}
       {sesion?.perfil==="admin"&&sidebarOpen&&<div style={{position:"fixed",inset:0,background:"#0006",zIndex:199}} onClick={()=>setSidebarOpen(false)}/>}
       <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
-        {loading?(<div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
+        {loading?(<div style={S.loadingWrap}><img src={LOGO_QUANTREX} alt="" style={S.logoSpinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
         :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={handleLoginExitoso} onCambiarPassword={handleCambiarPassword}/>)
         :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
@@ -6406,7 +6406,7 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
           <p style={{margin:0,fontWeight:600}}>Selecciona filtros y presiona Buscar</p>
         </div>
       ):loading?(
-        <div style={S.loadingWrap}><div style={S.spinner}/><p style={{color:C.muted}}>Cargando trazabilidad...</p></div>
+        <div style={S.loadingWrap}><img src={LOGO_QUANTREX} alt="" style={S.logoSpinner}/><p style={{color:C.muted}}>Cargando trazabilidad...</p></div>
       ):puntos.length===0?(
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"40px 0",color:C.muted}}>
           <div style={{fontSize:36}}>·</div>
@@ -7462,10 +7462,11 @@ const S={
   toast:{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",padding:"10px 22px",borderRadius:10,color:"#fff",fontWeight:700,fontSize:14,zIndex:999,boxShadow:"0 4px 20px #0006",whiteSpace:"nowrap"},
   loadingWrap:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,minHeight:300},
   spinner:{width:36,height:36,border:`3px solid ${C.border}`,borderTop:`3px solid ${C.cyan}`,borderRadius:"50%",animation:"spin 1s linear infinite"},
+  logoSpinner:{width:64,height:64,borderRadius:"50%",animation:"logoPulse 1.4s ease-in-out infinite",boxShadow:"0 0 24px rgba(0,174,239,.25)"},
 };
 
 if(typeof document!=="undefined"){
   const s=document.createElement("style");
-  s.textContent=`@keyframes spin{to{transform:rotate(360deg)}} @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800;900&display=swap'); *{box-sizing:border-box} ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:#0D1F3C} ::-webkit-scrollbar-thumb{background:#1E3A6E;border-radius:3px}`;
+  s.textContent=`@keyframes spin{to{transform:rotate(360deg)}} @keyframes logoPulse{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.08);opacity:1}} @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800;900&display=swap'); *{box-sizing:border-box} ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:#0D1F3C} ::-webkit-scrollbar-thumb{background:#1E3A6E;border-radius:3px}`;
   document.head.appendChild(s);
 }
