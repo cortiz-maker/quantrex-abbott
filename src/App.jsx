@@ -74,6 +74,113 @@ const PRIORIDAD_DEFAULT = {
 
 // Clientes válidos y destinos para Carga Operador Logístico
 const CARGA_OL_CLIENTES = ["000-2 - Dhl Atlantis","81.378.300-2 - Abbott Laboratories De Chile"];
+
+// ── Unidad de negocio por guía (módulo 3 — retomado tras standby) ──────────
+// Las 5 quedan siempre visibles e independientes entre sí — ANI no se oculta
+// bajo CRM aunque Quantrex no tenga contrato directo con esa división, por
+// desconfianza hacia esa contraparte (decisión explícita de César).
+const UNIDADES_NEGOCIO = ["AV","CRM","EP","HF","ANI"];
+
+// El campo legado "guia" (texto libre, usado en búsqueda/listado/DispatchTrack)
+// se sigue alimentando automáticamente desde la lista estructurada de guías
+// por unidad de negocio, así todo el código existente que lee sol.guia como
+// string sigue funcionando sin tocarlo.
+function guiaTextoDesde(guiasNegocio){
+  return (guiasNegocio||[]).map(g=>g.guia).filter(Boolean).join(", ");
+}
+
+// Lee un archivo de respaldo (imagen o PDF) a base64. Si es imagen, la
+// comprime igual que el resto de la app (evita respaldos de varios MB por
+// una captura de correo tomada con el celular).
+function leerArchivoRespaldo(file, cb){
+  const RESPALDO_MAX=1400, RESPALDO_CALIDAD=0.8;
+  if(file.type.startsWith("image/")){
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const img=new Image();
+      img.onload=()=>{
+        const canvas=document.createElement("canvas");
+        let w=img.width,h=img.height;
+        if(w>RESPALDO_MAX){h=Math.round(h*RESPALDO_MAX/w);w=RESPALDO_MAX;}
+        if(h>RESPALDO_MAX){w=Math.round(w*RESPALDO_MAX/h);h=RESPALDO_MAX;}
+        canvas.width=w; canvas.height=h;
+        const ctx=canvas.getContext("2d");
+        ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+        ctx.drawImage(img,0,0,w,h);
+        cb(canvas.toDataURL("image/jpeg",RESPALDO_CALIDAD));
+      };
+      img.src=ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  } else {
+    const reader=new FileReader();
+    reader.onload=ev=>cb(ev.target.result);
+    reader.readAsDataURL(file);
+  }
+}
+
+// ── Editor de "Guías por Unidad de Negocio" (módulo 3) ─────────────────────
+// Componente compartido entre FormNueva (crear) y Detalle (editar). Cada fila
+// es una guía de despacho con su unidad asociada (AV/CRM/EP/HF/ANI, siempre
+// las 5 visibles). Si alguna fila queda en ANI, exige respaldo de autorización
+// (PDF o captura) a nivel de la SOLICITUD completa (no por guía individual).
+function GuiasNegocioEditor({guiasNegocio, onChangeGuias, respaldoAni, onChangeRespaldoAni, error}){
+  const hayANI = (guiasNegocio||[]).some(g=>g.unidad==="ANI");
+  const [subiendoRespaldo,setSubiendoRespaldo]=useState(false);
+
+  function actualizarFila(i,campo,valor){
+    const nueva=[...guiasNegocio]; nueva[i]={...nueva[i],[campo]:valor};
+    onChangeGuias(nueva);
+  }
+  function agregarFila(){
+    onChangeGuias([...(guiasNegocio||[]),{id:Date.now().toString(),guia:"",unidad:"AV"}]);
+  }
+  function quitarFila(i){
+    onChangeGuias(guiasNegocio.filter((_,j)=>j!==i));
+  }
+  function subirRespaldo(e){
+    const file=e.target.files?.[0]; if(!file) return;
+    setSubiendoRespaldo(true);
+    leerArchivoRespaldo(file, b64=>{ onChangeRespaldoAni(b64); setSubiendoRespaldo(false); });
+  }
+
+  return (
+    <div style={{...S.fGroup,gridColumn:"1/-1"}}>
+      <label style={S.label}>Guías por Unidad de Negocio</label>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {(guiasNegocio||[]).map((g,i)=>(
+          <div key={g.id||i} style={{display:"flex",gap:8,alignItems:"center"}}>
+            <input style={{...S.input,flex:1}} placeholder="N° de guía" value={g.guia||""} onChange={e=>actualizarFila(i,"guia",e.target.value)}/>
+            <select style={{...S.input,width:110}} value={g.unidad||"AV"} onChange={e=>actualizarFila(i,"unidad",e.target.value)}>
+              {UNIDADES_NEGOCIO.map(u=><option key={u} value={u}>{u}</option>)}
+            </select>
+            <button type="button" style={{...S.btnSec,padding:"8px 12px"}} onClick={()=>quitarFila(i)}>✕</button>
+          </div>
+        ))}
+        <button type="button" style={{...S.exportBtn,fontSize:12,alignSelf:"flex-start"}} onClick={agregarFila}>+ Agregar guía</button>
+      </div>
+
+      {hayANI && (
+        <div style={{marginTop:10,background:"#3A2000",border:"1px solid "+C.warning,borderRadius:8,padding:"10px 14px"}}>
+          <div style={{fontSize:12,color:C.warning,fontWeight:700,marginBottom:6}}>
+            ⚠ Al menos una guía quedó marcada como ANI. Se requiere respaldo de autorización
+            (idealmente correo de Daniel Cárdenas o Andrés Barrios) para poder guardar la solicitud.
+          </div>
+          {respaldoAni ? (
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:12,color:C.text}}>✓ Respaldo cargado</span>
+              <button type="button" style={{...S.btnSec,fontSize:12,padding:"6px 10px"}} onClick={()=>onChangeRespaldoAni(null)}>Quitar</button>
+            </div>
+          ) : (
+            <input type="file" accept="image/*,.pdf,application/pdf" disabled={subiendoRespaldo} onChange={subirRespaldo}
+              style={{fontSize:12,color:C.text}}/>
+          )}
+        </div>
+      )}
+      {error && <div style={{marginTop:6,fontSize:12,color:C.warning,fontWeight:600}}>{error}</div>}
+    </div>
+  );
+}
 const DESTINOS_CARGA_OL = ["Ruta Programada","Despacho Coordinado","Ruta/Despacho No Programada"];
 
 // Resuelve un valor del desplegable (cliente o "cliente — sucursal") a sus datos
@@ -97,6 +204,7 @@ const EMPTY_FORM = {
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
   destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[], devolucionUrgente:false, fotosManifiesto:[],
   destinoLat:null, destinoLng:null,
+  guiasNegocio:[], respaldoAni:null,
   items:[], // [{id,nombre,cantidad}] — opcional, se manda tal cual al array items[] de DispatchTrack
   trasladoEquipoMedico:false, // Servicio Traslado Equipos Médicos ($68.000) — solo aplica a Entrega/Retiro
 };
@@ -939,7 +1047,7 @@ const COLS_LISTA = [
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
   "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro","traslado_equipo_medico",
-  "dt_dispatch_id","dt_enviado_en","items","destino_lat","destino_lng",
+  "dt_dispatch_id","dt_enviado_en","items","destino_lat","destino_lng","guias_negocio",
   "updated_at","created_at"
 ].join(",");
 
@@ -968,10 +1076,11 @@ function _mapSolicitudLigera(s){
     dtEnviadoEn:s.dt_enviado_en||null,
     items:s.items||[],
     destinoLat:s.destino_lat??null, destinoLng:s.destino_lng??null,
+    guiasNegocio:s.guias_negocio||[],
     updatedAt:s.updated_at, createdAt:s.created_at,
     // Campos pesados vacíos hasta que se abra el detalle:
     fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
-    fotosManifiesto:[],
+    fotosManifiesto:[], respaldoAni:null,
     _fotosCargadas:false,
   };
 }
@@ -1002,7 +1111,7 @@ async function loadSolicitudLigera(id) {
 async function loadFotosSolicitud(id) {
   try {
     const data = await sbFetch("GET","solicitudes","",
-      `?id=eq.${id}&select=foto_entrega,fotos_entrega,firma_receptor,fotos_manifiesto`);
+      `?id=eq.${id}&select=foto_entrega,fotos_entrega,firma_receptor,fotos_manifiesto,respaldo_ani`);
     if(!data || !data[0]) return null;
     const s = data[0];
     return {
@@ -1010,6 +1119,7 @@ async function loadFotosSolicitud(id) {
       fotosEntrega:s.fotos_entrega||[],
       firmaReceptor:s.firma_receptor||null,
       fotosManifiesto:s.fotos_manifiesto||[],
+      respaldoAni:s.respaldo_ani||null,
       _fotosCargadas:true,
     };
   } catch(e) { console.error("loadFotosSolicitud error:",e); return null; }
@@ -1048,21 +1158,25 @@ async function saveSolicitud(s) {
       destino_lat:s.destinoLat??null, destino_lng:s.destinoLng??null,
       updated_at:new Date().toISOString(),
     };
-    // Campos pesados (foto/firma/manifiesto): SOLO se incluyen en el guardado si
-    // vienen de datos reales (ya cargados desde la BD, o con contenido efectivo
-    // capturado en este momento por el chofer). Si vienen vacíos por defecto
-    // (_fotosCargadas=false y sin ningún valor real), se omiten del payload para
-    // no pisar con null lo que ya existe guardado — esto evita que editar una
-    // solicitud antes de que sus fotos terminen de cargar borre foto/firma reales.
+    // Campos pesados (foto/firma/manifiesto/respaldo ANI): SOLO se incluyen en
+    // el guardado si vienen de datos reales (ya cargados desde la BD, o con
+    // contenido efectivo capturado en este momento). Si vienen vacíos por
+    // defecto (_fotosCargadas=false y sin ningún valor real), se omiten del
+    // payload para no pisar con null lo que ya existe guardado.
     const hayDatosPesadosReales = s._fotosCargadas ||
-      !!s.fotoEntrega || !!s.firmaReceptor ||
+      !!s.fotoEntrega || !!s.firmaReceptor || !!s.respaldoAni ||
       (s.fotosEntrega&&s.fotosEntrega.length>0) || (s.fotosManifiesto&&s.fotosManifiesto.length>0);
     if(hayDatosPesadosReales){
       row.foto_entrega = s.fotoEntrega||null;
       row.fotos_entrega = s.fotosEntrega||[];
       row.firma_receptor = s.firmaReceptor||null;
       row.fotos_manifiesto = s.fotosManifiesto||[];
+      row.respaldo_ani = s.respaldoAni||null;
     }
+    // Guías por unidad de negocio (frente 3, módulo Unidad de Negocio) — es
+    // liviano (solo números de guía + string de unidad, sin base64), así que
+    // siempre se incluye, igual que cualquier otro campo estructural.
+    row.guias_negocio = s.guiasNegocio||[];
     // UPSERT - insert o update si ya existe
     const doUpsert = async (payload) => fetch(`${SUPABASE_URL}/rest/v1/solicitudes?on_conflict=id`, {
       method: "POST",
@@ -1078,11 +1192,12 @@ async function saveSolicitud(s) {
     if(!res.ok) {
       const e = await res.text();
       // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
-      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|sin_cobro|devolucion_urgente/i.test(e)) {
+      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|sin_cobro|devolucion_urgente|destino_lat|destino_lng|guias_negocio|respaldo_ani/i.test(e)) {
         console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
         const fallback = {...row};
         delete fallback.fotos_manifiesto; delete fallback.fotos_entrega; delete fallback.observacion_chofer;
         delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.observacion_cobro; delete fallback.facturar_en_periodo; delete fallback.sin_cobro; delete fallback.devolucion_urgente;
+        delete fallback.destino_lat; delete fallback.destino_lng; delete fallback.guias_negocio; delete fallback.respaldo_ani;
         res = await doUpsert(fallback);
       }
       if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2);
@@ -1606,6 +1721,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   }
 
   const cobros = calcularCobros(solicitudes, tarifas, feriados);
+  const montoPorSolicitud = {}; // id -> monto extras (SPOT+OH+Regional+Traslado), reutilizado en el prorrateo por unidad
   const rows = solicitudes.map((s,i) => {
     const r = cobros.perId[s.id] || {esSpot:false,ohEarly:false,ohLate:false,nro:0};
     const esSpot = r.esSpot;
@@ -1624,6 +1740,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
     const cSpotRegional = regionSol&&regionSol.concepto ? tarifaVigente(tarifas, regionSol.concepto, s.fecha) : 0;
     const esSpotRegional = cSpotRegional > 0;
     const cTraslado = (s.trasladoEquipoMedico && (s.tipo==="entrega"||s.tipo==="li_retiro")) ? tarifaVigente(tarifas,"traslado_equipos_medicos",s.fecha) : 0;
+    montoPorSolicitud[s.id] = cSpot+cOH+cSpotRegional+cTraslado;
     return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
       s.documentos||"",
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
@@ -1723,6 +1840,49 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   const ws2=XLSX.utils.aoa_to_sheet(r2);
   ws2["!cols"]=[{wch:38},{wch:15},{wch:18}];
   XLSX.utils.book_append_sheet(wb, ws2, "Resumen Ejecutivo");
+
+  // ── Prorrateo por Unidad de Negocio (módulo 3) ───────────────────────────
+  // Reparte el monto de cobros EXTRA de cada solicitud (SPOT + Overnight +
+  // SPOT Regional + Traslado Equipos Médicos — lo realmente ejecutado, nunca
+  // el presupuesto del cliente) entre las unidades marcadas en sus guías, en
+  // proporción a cuántas guías de esa solicitud quedaron en cada unidad.
+  const montoPorUnidad={}; UNIDADES_NEGOCIO.forEach(u=>montoPorUnidad[u]=0);
+  let montoSinUnidad=0;
+  for(const s of solicitudes){
+    const monto=montoPorSolicitud[s.id]||0;
+    if(monto<=0) continue;
+    const guias=s.guiasNegocio||[];
+    const conteoPorUnidad={};
+    guias.forEach(g=>{ if(g.unidad) conteoPorUnidad[g.unidad]=(conteoPorUnidad[g.unidad]||0)+1; });
+    const guiasConUnidad=Object.values(conteoPorUnidad).reduce((a,b)=>a+b,0);
+    if(guiasConUnidad===0){ montoSinUnidad+=monto; continue; }
+    Object.entries(conteoPorUnidad).forEach(([u,cant])=>{
+      montoPorUnidad[u]=(montoPorUnidad[u]||0)+monto*(cant/guiasConUnidad);
+    });
+  }
+  const totalProrrateado=Object.values(montoPorUnidad).reduce((a,b)=>a+b,0);
+  const r3=[
+    ["QUANTREX — DISTRIBUCIÓN POR UNIDAD DE NEGOCIO"],
+    ["Período: "+periodoNombre],
+    ["Prorrateo sobre lo realmente ejecutado (SPOT + Overnight + SPOT Regional + Traslado Equipos Médicos), según las guías asignadas a cada unidad en cada solicitud."],
+    [],
+    ["Unidad","Monto","% del total ejecutado"],
+  ];
+  UNIDADES_NEGOCIO.forEach(u=>{
+    const m=montoPorUnidad[u]||0;
+    if(m<=0) return; // dinámico: solo unidades con movimiento real en el período
+    r3.push([u, Math.round(m), totalProrrateado>0?((m/totalProrrateado)*100).toFixed(1)+"%":"0%"]);
+  });
+  r3.push([]);
+  r3.push(["Total prorrateado",Math.round(totalProrrateado),"100%"]);
+  if(montoSinUnidad>0){
+    r3.push([]);
+    r3.push(["Con cobro extra pero sin guía/unidad asignada (no incluido arriba)",Math.round(montoSinUnidad),""]);
+  }
+  const ws3=XLSX.utils.aoa_to_sheet(r3);
+  ws3["!cols"]=[{wch:48},{wch:16},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, ws3, "Por Unidad de Negocio");
+
   XLSX.writeFile(wb, nombreArchivo);
 }
 
@@ -1848,10 +2008,17 @@ export default function QuantrexAbbott() {
     if(!form.fecha){setFormError("La fecha es obligatoria.");return;}
     if(!form.solicitante){setFormError("Debes seleccionar un solicitante.");return;}
     if(!form.canalSolicitud){setFormError("Debes seleccionar un canal de solicitud.");return;}
+    // Módulo 3 (Unidad de Negocio): si alguna guía quedó marcada ANI, no se
+    // puede guardar sin el respaldo de autorización adjunto.
+    if((form.guiasNegocio||[]).some(g=>g.unidad==="ANI") && !form.respaldoAni){
+      setFormError("Debes adjuntar el respaldo de autorización ANI antes de guardar.");
+      return;
+    }
     setFormError(""); setSaving(true);
     const autoTransito = form.ppuAsignada && form.usuarioDT ? "en_proceso" : "pendiente";
     let otGenerada = generarOT(solicitudes);
     let nueva={...form,id:Date.now().toString(),status:autoTransito,ot:form.ot||otGenerada,
+      guia:guiaTextoDesde(form.guiasNegocio)||form.guia,
       createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     let result = await saveSolicitud(nueva);
     // Si el N° OT choca con uno ya existente en la base (constraint UNIQUE),
@@ -1967,14 +2134,22 @@ export default function QuantrexAbbott() {
     "choferAsignado","documentos","solicitante","canalSolicitud","usuarioDT","ppuAsignada",
     "descripcion","notas","observacionChofer","observacionCobro","facturarEnPeriodo","sinCobro",
     "devolucionUrgente","noPresentacion","vehiculoNP","motivoNP","destinoLat","destinoLng",
+    "guiasNegocio","respaldoAni",
   ];
   async function handleEdit(updatedSol){
+    // Módulo 3 (Unidad de Negocio): mismo bloqueo que al crear — sin respaldo
+    // ANI no se guarda si alguna guía quedó marcada como esa unidad.
+    if((updatedSol.guiasNegocio||[]).some(g=>g.unidad==="ANI") && !updatedSol.respaldoAni){
+      showToast("⚠ Debes adjuntar el respaldo de autorización ANI antes de guardar.","danger");
+      return;
+    }
     // Confirmar contra la base el estado más reciente justo antes de guardar,
     // por si la gestión del chofer llegó mientras el operador tenía el formulario abierto.
     const sol = (await refrescarSolicitud(updatedSol.id)) || solicitudes.find(s=>s.id===updatedSol.id);
     if(!sol) return;
     const cambios={};
     for(const k of CAMPOS_EDITABLES_OPERADOR) cambios[k]=updatedSol[k];
+    cambios.guia = guiaTextoDesde(updatedSol.guiasNegocio) || sol.guia;
     let solActualizada={...sol,...cambios,updatedAt:new Date().toISOString()};
     // Auto En Tránsito si se asigna PPU y usuarioDT sobre una solicitud aún pendiente
     if(solActualizada.ppuAsignada && solActualizada.usuarioDT && sol.status==="pendiente"){
@@ -3901,6 +4076,12 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
           <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={editForm.ot||""} readOnly/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
           <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={editForm.documentos||""} onChange={fe("documentos")}/></div>
+        <GuiasNegocioEditor
+          guiasNegocio={editForm.guiasNegocio||[]}
+          onChangeGuias={g=>setEditForm(p=>({...p,guiasNegocio:g}))}
+          respaldoAni={editForm.respaldoAni}
+          onChangeRespaldoAni={v=>setEditForm(p=>({...p,respaldoAni:v}))}
+        />
         <div style={S.fGroup}><label style={S.label}>Solicitante *</label>
           <select style={S.input} value={editForm.solicitante} onChange={fe("solicitante")}>
             <option value="">-- Seleccionar --</option>
@@ -4032,6 +4213,23 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
         <div style={S.fieldValue}>{sol.motivoNP} <span style={{color:C.danger,fontWeight:700}}>· Descuento: ${Math.round(2840000/30).toLocaleString("es-CL")}</span></div>
       </div>}
       {sol.documentos&&<div style={S.detailBlock}><div style={S.fieldLabel}>N° Guías / Documentos Cliente</div><div style={S.fieldValue}>{sol.documentos}</div></div>}
+      {(sol.guiasNegocio||[]).length>0&&(
+        <div style={S.detailBlock}>
+          <div style={S.fieldLabel}>Guías por Unidad de Negocio</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:4}}>
+            {sol.guiasNegocio.map((g,i)=>(
+              <div key={g.id||i} style={{fontSize:13,color:C.text}}>
+                {g.guia||"(sin número)"} — <span style={{fontWeight:700,color:C.cyan}}>{g.unidad}</span>
+              </div>
+            ))}
+          </div>
+          {sol.guiasNegocio.some(g=>g.unidad==="ANI")&&(
+            <div style={{fontSize:12,marginTop:6,color:sol.respaldoAni?"#4CAF50":C.warning,fontWeight:600}}>
+              {sol.respaldoAni?"✓ Respaldo de autorización ANI cargado":(sol._fotosCargadas?"⚠ Falta respaldo de autorización ANI":"Cargando respaldo…")}
+            </div>
+          )}
+        </div>
+      )}
       {sol.descripcion&&<div style={S.detailBlock}><div style={S.fieldLabel}>Descripción</div><div style={S.fieldValue}>{sol.descripcion}</div></div>}
       {(sol.items||[]).length>0&&<div style={S.detailBlock}><div style={S.fieldLabel}>Ítems</div><div style={S.fieldValue}>{sol.items.map((it,i)=>(<div key={it.id||i}>{it.nombre} {it.cantidad>1?`× ${it.cantidad}`:""}</div>))}</div></div>}
       {sol.trasladoEquipoMedico&&(sol.tipo==="entrega"||sol.tipo==="li_retiro")&&<div style={{...S.detailBlock,border:`1px solid ${C.cyan}`,background:C.cyan+"11"}}><div style={{...S.fieldLabel,color:C.cyan}}>🩺 Servicio Traslado Equipos Médicos</div><div style={S.fieldValue}>Incluido</div></div>}
@@ -4371,6 +4569,13 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={form.ot||"Se genera automáticamente"} readOnly/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
           <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={form.documentos} onChange={f("documentos")}/></div>
+        <GuiasNegocioEditor
+          guiasNegocio={form.guiasNegocio||[]}
+          onChangeGuias={g=>setForm(p=>({...p,guiasNegocio:g}))}
+          respaldoAni={form.respaldoAni}
+          onChangeRespaldoAni={v=>setForm(p=>({...p,respaldoAni:v}))}
+          error={error && /ANI/.test(error) ? error : null}
+        />
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Descripción</label>
           <textarea style={{...S.input,minHeight:60,resize:"vertical"}} placeholder="Detalle de la carga..." value={form.descripcion} onChange={f("descripcion")}/></div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>Notas internas Quantrex</label>
