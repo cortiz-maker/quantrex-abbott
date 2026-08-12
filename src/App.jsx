@@ -120,23 +120,24 @@ function leerArchivoRespaldo(file, cb){
 }
 
 // ── Editor de "Guías por Unidad de Negocio" (módulo 3) ─────────────────────
-// Componente compartido entre FormNueva (crear) y Detalle (editar). Cada fila
-// es una guía de despacho con su unidad asociada (AV/CRM/EP/HF/ANI, siempre
-// las 5 visibles). Si alguna fila queda en ANI, exige respaldo de autorización
-// (PDF o captura) a nivel de la SOLICITUD completa (no por guía individual).
-function GuiasNegocioEditor({guiasNegocio, onChangeGuias, respaldoAni, onChangeRespaldoAni, error}){
+// Componente compartido entre FormNueva (crear) y Detalle (editar). Los N°
+// de guía/documento se escriben UNA sola vez, en "N° Guías / Documentos
+// Cliente" (documentos) — este editor solo lee esos mismos ítems (separados
+// por coma) y deja asignarle una unidad a cada uno, sin volver a tipearlos.
+// Ítems sin unidad asignada (ej. una factura o una OC, no una guía) se dejan
+// en blanco a propósito. Si algún ítem queda en ANI, exige respaldo de
+// autorización a nivel de la SOLICITUD completa (no por guía individual).
+function GuiasNegocioEditor({documentos, guiasNegocio, onChangeGuias, respaldoAni, onChangeRespaldoAni, error}){
+  const items = (documentos||"").split(",").map(d=>d.trim()).filter(Boolean);
+  const unidadPorItem = {};
+  (guiasNegocio||[]).forEach(g=>{ if(g.guia) unidadPorItem[g.guia]=g.unidad; });
   const hayANI = (guiasNegocio||[]).some(g=>g.unidad==="ANI");
   const [subiendoRespaldo,setSubiendoRespaldo]=useState(false);
 
-  function actualizarFila(i,campo,valor){
-    const nueva=[...guiasNegocio]; nueva[i]={...nueva[i],[campo]:valor};
+  function cambiarUnidad(item, unidad){
+    const nueva = (guiasNegocio||[]).filter(g=>g.guia!==item);
+    if(unidad) nueva.push({id:item, guia:item, unidad});
     onChangeGuias(nueva);
-  }
-  function agregarFila(){
-    onChangeGuias([...(guiasNegocio||[]),{id:Date.now().toString(),guia:"",unidad:"AV"}]);
-  }
-  function quitarFila(i){
-    onChangeGuias(guiasNegocio.filter((_,j)=>j!==i));
   }
   function subirRespaldo(e){
     const file=e.target.files?.[0]; if(!file) return;
@@ -146,24 +147,29 @@ function GuiasNegocioEditor({guiasNegocio, onChangeGuias, respaldoAni, onChangeR
 
   return (
     <div style={{...S.fGroup,gridColumn:"1/-1"}}>
-      <label style={S.label}>Guías por Unidad de Negocio</label>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {(guiasNegocio||[]).map((g,i)=>(
-          <div key={g.id||i} style={{display:"flex",gap:8,alignItems:"center"}}>
-            <input style={{...S.input,flex:1}} placeholder="N° de guía" value={g.guia||""} onChange={e=>actualizarFila(i,"guia",e.target.value)}/>
-            <select style={{...S.input,width:110}} value={g.unidad||"AV"} onChange={e=>actualizarFila(i,"unidad",e.target.value)}>
-              {UNIDADES_NEGOCIO.map(u=><option key={u} value={u}>{u}</option>)}
-            </select>
-            <button type="button" style={{...S.btnSec,padding:"8px 12px"}} onClick={()=>quitarFila(i)}>✕</button>
-          </div>
-        ))}
-        <button type="button" style={{...S.exportBtn,fontSize:12,alignSelf:"flex-start"}} onClick={agregarFila}>+ Agregar guía</button>
-      </div>
+      <label style={S.label}>Unidad de Negocio por Guía</label>
+      {items.length===0 ? (
+        <div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>
+          Escribe los números arriba, en "N° Guías / Documentos Cliente", para poder asignarles unidad aquí.
+        </div>
+      ) : (
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {items.map((item,i)=>(
+            <div key={item+i} style={{display:"flex",gap:8,alignItems:"center"}}>
+              <div style={{flex:1,fontSize:13,color:C.text,padding:"9px 12px",background:C.navy,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item}</div>
+              <select style={{...S.input,width:130}} value={unidadPorItem[item]||""} onChange={e=>cambiarUnidad(item,e.target.value)}>
+                <option value="">— Sin unidad —</option>
+                {UNIDADES_NEGOCIO.map(u=><option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
 
       {hayANI && (
         <div style={{marginTop:10,background:"#3A2000",border:"1px solid "+C.warning,borderRadius:8,padding:"10px 14px"}}>
           <div style={{fontSize:12,color:C.warning,fontWeight:700,marginBottom:6}}>
-            ⚠ Al menos una guía quedó marcada como ANI. Se requiere respaldo de autorización
+            ⚠ Al menos un ítem quedó marcado como ANI. Se requiere respaldo de autorización
             (idealmente correo de Daniel Cárdenas o Andrés Barrios) para poder guardar la solicitud.
           </div>
           {respaldoAni ? (
@@ -254,6 +260,27 @@ async function sbFetch(method, table, body=null, query="") {
   if (!res.ok) { const e=await res.text(); console.error("Supabase error:",e); return null; }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
+}
+
+// Igual que sbFetch, pero SIN tragarse el texto del error — lo necesitan
+// loadSolicitudes/loadSolicitudLigera para detectar que el SELECT falló por
+// una columna que aún no existe (falta correr una migración) y reintentar
+// con una lista de columnas segura, en vez de devolver "sin datos" y que el
+// dashboard muestre todo en cero como si no hubiera solicitudes.
+async function sbFetchConError(method, table, body=null, query="") {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`,
+      "Prefer": method==="POST"?"resolution=merge-duplicates,return=representation":"",
+    },
+    body: body ? JSON.stringify(body) : null,
+  });
+  if (!res.ok) { const e=await res.text(); return { data:null, error:e }; }
+  const text = await res.text();
+  return { data: text ? JSON.parse(text) : null, error:null };
 }
 
 // PostgREST (Supabase) por defecto no devuelve más de 1000 filas por
@@ -1050,6 +1077,13 @@ const COLS_LISTA = [
   "dt_dispatch_id","dt_enviado_en","items","destino_lat","destino_lng","guias_negocio",
   "updated_at","created_at"
 ].join(",");
+// Respaldo SIN las columnas más recientes (destino_lat/destino_lng/guias_negocio).
+// Si la migración SQL correspondiente todavía no se corrió en Supabase, el
+// SELECT con COLS_LISTA completo falla entero y (sin este respaldo) el
+// listado se vería vacío como si no hubiera solicitudes. Con esto, en cambio,
+// el listado sigue funcionando con datos reales mientras se corre la migración.
+const COLS_LISTA_SEGURA = COLS_LISTA
+  .split(",").filter(c=>!["destino_lat","destino_lng","guias_negocio"].includes(c)).join(",");
 
 function _mapSolicitudLigera(s){
   return {
@@ -1087,8 +1121,15 @@ function _mapSolicitudLigera(s){
 
 async function loadSolicitudes() {
   try {
-    const data = await sbFetch("GET","solicitudes","",
+    let {data,error} = await sbFetchConError("GET","solicitudes","",
       `?select=${COLS_LISTA}&order=created_at.desc`);
+    if(error){
+      console.warn("loadSolicitudes: reintentando sin columnas nuevas (falta correr migración SQL en Supabase).", error);
+      const r2 = await sbFetchConError("GET","solicitudes","",
+        `?select=${COLS_LISTA_SEGURA}&order=created_at.desc`);
+      data = r2.data;
+      if(r2.error){ console.error("loadSolicitudes error (incluso con columnas seguras):", r2.error); return []; }
+    }
     if(!data) return [];
     return data.map(_mapSolicitudLigera);
   } catch(e) { console.error(e); return []; }
@@ -1100,8 +1141,14 @@ async function loadSolicitudes() {
 // gestión que el chofer ya haya cerrado desde otra sesión/dispositivo.
 async function loadSolicitudLigera(id) {
   try {
-    const data = await sbFetch("GET","solicitudes","",
+    let {data,error} = await sbFetchConError("GET","solicitudes","",
       `?id=eq.${id}&select=${COLS_LISTA}`);
+    if(error){
+      const r2 = await sbFetchConError("GET","solicitudes","",
+        `?id=eq.${id}&select=${COLS_LISTA_SEGURA}`);
+      data = r2.data;
+      if(r2.error){ console.error("loadSolicitudLigera error:", r2.error); return null; }
+    }
     if(!data || !data[0]) return null;
     return _mapSolicitudLigera(data[0]);
   } catch(e) { console.error("loadSolicitudLigera error:",e); return null; }
@@ -3993,6 +4040,10 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
       }
     }
     if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){upd.direccion=sel.direccion;upd.notas=sel.notas;upd.contacto=sel.contacto||upd.contacto;upd.destinoLat=sel.lat??null;upd.destinoLng=sel.lng??null;}}
+    if(k==="documentos"){
+      const itemsVigentes=new Set(e.target.value.split(",").map(d=>d.trim()).filter(Boolean));
+      upd.guiasNegocio=(editForm.guiasNegocio||[]).filter(g=>itemsVigentes.has(g.guia));
+    }
     setEditForm(upd);
   };
 
@@ -4077,6 +4128,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
           <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={editForm.documentos||""} onChange={fe("documentos")}/></div>
         <GuiasNegocioEditor
+          documentos={editForm.documentos}
           guiasNegocio={editForm.guiasNegocio||[]}
           onChangeGuias={g=>setEditForm(p=>({...p,guiasNegocio:g}))}
           respaldoAni={editForm.respaldoAni}
@@ -4212,18 +4264,20 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
         <div style={{...S.fieldLabel,color:C.danger}}>No presentación · {sol.vehiculoNP}</div>
         <div style={S.fieldValue}>{sol.motivoNP} <span style={{color:C.danger,fontWeight:700}}>· Descuento: ${Math.round(2840000/30).toLocaleString("es-CL")}</span></div>
       </div>}
-      {sol.documentos&&<div style={S.detailBlock}><div style={S.fieldLabel}>N° Guías / Documentos Cliente</div><div style={S.fieldValue}>{sol.documentos}</div></div>}
-      {(sol.guiasNegocio||[]).length>0&&(
+      {sol.documentos&&(
         <div style={S.detailBlock}>
-          <div style={S.fieldLabel}>Guías por Unidad de Negocio</div>
+          <div style={S.fieldLabel}>N° Guías / Documentos Cliente</div>
           <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:4}}>
-            {sol.guiasNegocio.map((g,i)=>(
-              <div key={g.id||i} style={{fontSize:13,color:C.text}}>
-                {g.guia||"(sin número)"} — <span style={{fontWeight:700,color:C.cyan}}>{g.unidad}</span>
-              </div>
-            ))}
+            {sol.documentos.split(",").map(d=>d.trim()).filter(Boolean).map((item,i)=>{
+              const g=(sol.guiasNegocio||[]).find(x=>x.guia===item);
+              return (
+                <div key={item+i} style={{fontSize:13,color:C.text}}>
+                  {item}{g&&<> — <span style={{fontWeight:700,color:C.cyan}}>{g.unidad}</span></>}
+                </div>
+              );
+            })}
           </div>
-          {sol.guiasNegocio.some(g=>g.unidad==="ANI")&&(
+          {(sol.guiasNegocio||[]).some(g=>g.unidad==="ANI")&&(
             <div style={{fontSize:12,marginTop:6,color:sol.respaldoAni?"#4CAF50":C.warning,fontWeight:600}}>
               {sol.respaldoAni?"✓ Respaldo de autorización ANI cargado":(sol._fotosCargadas?"⚠ Falta respaldo de autorización ANI":"Cargando respaldo…")}
             </div>
@@ -4430,6 +4484,10 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
       }
     }
     if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){u.direccion=sel.direccion;u.notas=sel.notas;u.contacto=sel.contacto||u.contacto;u.destinoLat=sel.lat??null;u.destinoLng=sel.lng??null;if(u.tipo!=="carga_ol")u.destino="";}}
+    if(k==="documentos"){
+      const itemsVigentes=new Set(e.target.value.split(",").map(d=>d.trim()).filter(Boolean));
+      u.guiasNegocio=(p.guiasNegocio||[]).filter(g=>itemsVigentes.has(g.guia));
+    }
     return u;
   });
   return(
@@ -4570,6 +4628,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
           <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={form.documentos} onChange={f("documentos")}/></div>
         <GuiasNegocioEditor
+          documentos={form.documentos}
           guiasNegocio={form.guiasNegocio||[]}
           onChangeGuias={g=>setForm(p=>({...p,guiasNegocio:g}))}
           respaldoAni={form.respaldoAni}
