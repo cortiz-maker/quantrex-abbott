@@ -231,6 +231,49 @@ const DT_WIDGET_URL = "https://quantrex.dispatchtrack.com/widget/Ah-7HMAviKex7L2
 // PUENTE_TOKEN configurada en ese mismo servicio.
 const QUANTREX_DT_BRIDGE_URL = "https://quantrex-dt-bridge-production.up.railway.app";
 const QUANTREX_DT_BRIDGE_TOKEN = "FZME_PlgBDUvvC1pYiqYcleO7BI5Hv45YFDpyuG0yfk";
+// ── Geocodificación de destino (frente 4.2 — geocerca automática chofer) ───
+// Convierte la dirección de texto de una solicitud en lat/lng vía el puente
+// Railway (que a su vez llama a la Geocoding API de Google, key server-side).
+// Se llama en segundo plano al crear/editar una solicitud; si falla o no hay
+// dirección, simplemente no se guardan coordenadas — la app del chofer cae
+// de vuelta al botón manual "Llegué al punto de entrega".
+async function geocodificarDireccion(direccion){
+  if(!direccion || !direccion.trim()) return null;
+  try{
+    const res = await fetch(`${QUANTREX_DT_BRIDGE_URL}/api/maps/geocode?direccion=${encodeURIComponent(direccion)}`);
+    const data = await res.json();
+    if(data?.ok && typeof data.lat==="number" && typeof data.lng==="number") return { lat:data.lat, lng:data.lng };
+    return null;
+  }catch(e){ console.error("geocodificarDireccion error:", e); return null; }
+}
+
+// ── Notificación push al chofer (frente 4.3) ────────────────────────────────
+// Dispara vía el puente Railway (que usa Firebase Admin con el push_token
+// guardado por la app nativa). Nunca bloquea el guardado de la solicitud ni
+// lanza error visible al operador si falla — el chofer siempre puede ver la
+// asignación al refrescar la app, la notificación es solo un aviso extra.
+async function notificarPushChofer(choferNombre, titulo, cuerpo, data){
+  if(!choferNombre) return;
+  try{
+    await fetch(`${QUANTREX_DT_BRIDGE_URL}/api/notify/chofer`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "x-puente-token":QUANTREX_DT_BRIDGE_TOKEN },
+      body:JSON.stringify({ choferNombre, titulo, cuerpo, data:data||{} }),
+    });
+  }catch(e){ console.error("notificarPushChofer error:", e); }
+}
+
+// Resuelve a quién avisar: prioriza el nombre del chofer si ya viene asignado
+// directamente; si solo hay PPU, busca el chofer dueño de esa patente en el
+// mantenedor de choferes vigente.
+function resolverChoferParaNotificar(sol, choferesState){
+  if(sol?.choferAsignado) return sol.choferAsignado;
+  const ppu=(sol?.ppuAsignada||"").trim();
+  if(!ppu) return null;
+  const match=(choferesState||[]).find(c=>(c.ppu||"").trim()===ppu);
+  return match?.nombre || null;
+}
+
 async function enviarADispatchTrack(solicitud){
   try{
     const res = await fetch(`${QUANTREX_DT_BRIDGE_URL}/api/dispatches`, {
@@ -895,7 +938,7 @@ const COLS_LISTA = [
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
   "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro","traslado_equipo_medico",
-  "dt_dispatch_id","dt_enviado_en","items",
+  "dt_dispatch_id","dt_enviado_en","items","destino_lat","destino_lng",
   "updated_at","created_at"
 ].join(",");
 
@@ -923,6 +966,7 @@ function _mapSolicitudLigera(s){
     dtDispatchId:s.dt_dispatch_id||null,
     dtEnviadoEn:s.dt_enviado_en||null,
     items:s.items||[],
+    destinoLat:s.destino_lat??null, destinoLng:s.destino_lng??null,
     updatedAt:s.updated_at, createdAt:s.created_at,
     // Campos pesados vacíos hasta que se abra el detalle:
     fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
@@ -1000,6 +1044,7 @@ async function saveSolicitud(s) {
       dt_dispatch_id:s.dtDispatchId||null,
       dt_enviado_en:s.dtEnviadoEn||null,
       items:s.items||[],
+      destino_lat:s.destinoLat??null, destino_lng:s.destinoLng??null,
       updated_at:new Date().toISOString(),
     };
     // Campos pesados (foto/firma/manifiesto): SOLO se incluyen en el guardado si
@@ -1825,6 +1870,20 @@ export default function QuantrexAbbott() {
       fecha:new Date().toISOString().split("T")[0],
       hora:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false})});
     showToast("Solicitud creada correctamente."); setView("lista");
+
+    // Geocodificación en segundo plano (frente 4.2) — no bloquea el guardado.
+    if(nueva.direccion){
+      geocodificarDireccion(nueva.direccion).then(coords=>{
+        if(coords) saveSolicitud({...nueva, destinoLat:coords.lat, destinoLng:coords.lng});
+      });
+    }
+    // Aviso push al chofer si la solicitud ya nace asignada (frente 4.3).
+    const choferAAvisar = resolverChoferParaNotificar(nueva, choferes);
+    if(choferAAvisar){
+      notificarPushChofer(choferAAvisar, "Nueva entrega asignada",
+        `${nueva.titulo||"Cliente"} · OT ${nueva.ot} · ${nueva.direccion||"Sin dirección"}`,
+        { solicitudId:nueva.id, ot:nueva.ot||"" });
+    }
   }
 
   // Auto-cierra rutas cuyas paradas estén todas finalizadas. NUNCA reabre: una ruta cerrada
@@ -1928,6 +1987,24 @@ export default function QuantrexAbbott() {
     setSolicitudes(upd); await saveSolicitud(solActualizada); 
     await sincronizarRutas(upd);
     showToast("Solicitud actualizada.");
+
+    // Geocodificación en segundo plano (frente 4.2) — solo si cambió la
+    // dirección o si nunca se había geocodificado esta solicitud.
+    if(solActualizada.direccion && (solActualizada.direccion!==sol.direccion || solActualizada.destinoLat==null)){
+      geocodificarDireccion(solActualizada.direccion).then(coords=>{
+        if(coords) saveSolicitud({...solActualizada, destinoLat:coords.lat, destinoLng:coords.lng});
+      });
+    }
+    // Aviso push al chofer (frente 4.3) — solo si el chofer resuelto cambió
+    // respecto al que tenía la solicitud antes de este guardado (evita
+    // reenviar la misma notificación en cada edición sin reasignación).
+    const choferAntes = resolverChoferParaNotificar(sol, choferes);
+    const choferDespues = resolverChoferParaNotificar(solActualizada, choferes);
+    if(choferDespues && choferDespues!==choferAntes){
+      notificarPushChofer(choferDespues, "Nueva entrega asignada",
+        `${solActualizada.titulo||"Cliente"} · OT ${solActualizada.ot} · ${solActualizada.direccion||"Sin dirección"}`,
+        { solicitudId:solActualizada.id, ot:solActualizada.ot||"" });
+    }
   }
 
   async function handleEditLog(id,updatedLog){
