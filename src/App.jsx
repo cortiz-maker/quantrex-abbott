@@ -81,9 +81,9 @@ function resolverDestino(value, clientes){
   if(!value) return null;
   for(const c of (clientes||[])){
     const label = c.id?c.id+" - "+c.nombre:c.nombre;
-    if(label===value) return {direccion:c.direccion||"", notas:c.notas||"", contacto:c.contacto||"", nombre:c.nombre};
+    if(label===value) return {direccion:c.direccion||"", notas:c.notas||"", contacto:c.contacto||"", nombre:c.nombre, lat:c.lat??null, lng:c.lng??null};
     for(const su of (c.sucursales||[])){
-      if(label+" — "+su.nombre===value) return {direccion:su.direccion||c.direccion||"", notas:su.notas||c.notas||"", contacto:su.contacto||c.contacto||"", nombre:c.nombre+" — "+su.nombre};
+      if(label+" — "+su.nombre===value) return {direccion:su.direccion||c.direccion||"", notas:su.notas||c.notas||"", contacto:su.contacto||c.contacto||"", nombre:c.nombre+" — "+su.nombre, lat:su.lat??c.lat??null, lng:su.lng??c.lng??null};
     }
   }
   return null;
@@ -96,6 +96,7 @@ const EMPTY_FORM = {
   contacto:"", guia:"", prioridad:"urgente", notas:"",
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
   destino:"", noPresentacion:false, vehiculoNP:"", motivoNP:"", choferAsignado:"", statusLog:[], devolucionUrgente:false, fotosManifiesto:[],
+  destinoLat:null, destinoLng:null,
   items:[], // [{id,nombre,cantidad}] — opcional, se manda tal cual al array items[] de DispatchTrack
   trasladoEquipoMedico:false, // Servicio Traslado Equipos Médicos ($68.000) — solo aplica a Entrega/Retiro
 };
@@ -1871,8 +1872,12 @@ export default function QuantrexAbbott() {
       hora:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false})});
     showToast("Solicitud creada correctamente."); setView("lista");
 
-    // Geocodificación en segundo plano (frente 4.2) — no bloquea el guardado.
-    if(nueva.direccion){
+    // Geocodificación en segundo plano (frente 4.2) — SOLO como respaldo.
+    // Si el cliente elegido ya trae lat/lng (normalizado desde el mantenedor
+    // de clientes), nueva.destinoLat ya viene resuelto y no se llama a la API.
+    // Esto solo actúa para direcciones sueltas que no calzan con ningún
+    // cliente del mantenedor (ej. "Otro" o un domicilio ingresado a mano).
+    if(nueva.direccion && nueva.destinoLat==null){
       geocodificarDireccion(nueva.direccion).then(coords=>{
         if(coords) saveSolicitud({...nueva, destinoLat:coords.lat, destinoLng:coords.lng});
       });
@@ -1961,7 +1966,7 @@ export default function QuantrexAbbott() {
     "tipo","prioridad","titulo","destino","fecha","hora","direccion","contacto",
     "choferAsignado","documentos","solicitante","canalSolicitud","usuarioDT","ppuAsignada",
     "descripcion","notas","observacionChofer","observacionCobro","facturarEnPeriodo","sinCobro",
-    "devolucionUrgente","noPresentacion","vehiculoNP","motivoNP",
+    "devolucionUrgente","noPresentacion","vehiculoNP","motivoNP","destinoLat","destinoLng",
   ];
   async function handleEdit(updatedSol){
     // Confirmar contra la base el estado más reciente justo antes de guardar,
@@ -1988,9 +1993,11 @@ export default function QuantrexAbbott() {
     await sincronizarRutas(upd);
     showToast("Solicitud actualizada.");
 
-    // Geocodificación en segundo plano (frente 4.2) — solo si cambió la
-    // dirección o si nunca se había geocodificado esta solicitud.
-    if(solActualizada.direccion && (solActualizada.direccion!==sol.direccion || solActualizada.destinoLat==null)){
+    // Geocodificación en segundo plano (frente 4.2) — SOLO como respaldo,
+    // igual que en handleSave: si ya vino resuelta desde el cliente elegido,
+    // no se llama a la API. Solo se dispara si cambió la dirección a mano
+    // (sin volver a seleccionar cliente) y quedó sin coordenadas.
+    if(solActualizada.direccion && solActualizada.destinoLat==null && solActualizada.direccion!==sol.direccion){
       geocodificarDireccion(solActualizada.direccion).then(coords=>{
         if(coords) saveSolicitud({...solActualizada, destinoLat:coords.lat, destinoLng:coords.lng});
       });
@@ -3800,6 +3807,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
         const dhl=clientes.find(c=>(c.id?c.id+" - "+c.nombre:c.nombre)==="000-2 - Dhl Atlantis");
         upd.destino="000-2 - Dhl Atlantis";
         upd.direccion=dhl?.direccion||editForm.direccion;
+        upd.destinoLat=dhl?.lat??null; upd.destinoLng=dhl?.lng??null;
         if(!editForm.hora)upd.hora="16:30";
       } else if(e.target.value==="carga_ol"){
         upd.devolucionUrgente=false;
@@ -3809,7 +3817,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
         upd.devolucionUrgente=false;
       }
     }
-    if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){upd.direccion=sel.direccion;upd.notas=sel.notas;upd.contacto=sel.contacto||upd.contacto;}}
+    if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){upd.direccion=sel.direccion;upd.notas=sel.notas;upd.contacto=sel.contacto||upd.contacto;upd.destinoLat=sel.lat??null;upd.destinoLng=sel.lng??null;}}
     setEditForm(upd);
   };
 
@@ -4213,6 +4221,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         u.destino="000-2 - Dhl Atlantis";
         u.direccion=dhl?.direccion||p.direccion;
         u.notas=dhl?.notas||p.notas;
+        u.destinoLat=dhl?.lat??null; u.destinoLng=dhl?.lng??null;
         u.hora="16:30";
       } else if(e.target.value==="carga_ol"){
         u.devolucionUrgente=false;
@@ -4222,7 +4231,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         u.devolucionUrgente=false;
       }
     }
-    if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){u.direccion=sel.direccion;u.notas=sel.notas;u.contacto=sel.contacto||u.contacto;if(u.tipo!=="carga_ol")u.destino="";}}
+    if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){u.direccion=sel.direccion;u.notas=sel.notas;u.contacto=sel.contacto||u.contacto;u.destinoLat=sel.lat??null;u.destinoLng=sel.lng??null;if(u.tipo!=="carga_ol")u.destino="";}}
     return u;
   });
   return(
@@ -5261,8 +5270,48 @@ function AdminClientes({clientes,onSave,setView}){
   const [buscar,setBuscar]=useState("");
   const [mostrarNuevo,setMostrarNuevo]=useState(false);
   const [nuevoCliente,setNuevoCliente]=useState({id:"",nombre:"",direccion:"",notas:"",sucursales:[]});
+  const [geocodificando,setGeocodificando]=useState(false);
+  const [geocodProgreso,setGeocodProgreso]=useState(null);
 
   const filtrados=lista.filter(c=>c.nombre.toLowerCase().includes(buscar.toLowerCase())||c.id.includes(buscar));
+
+  // Normaliza las coordenadas de TODO el mantenedor de clientes (incluyendo
+  // sucursales) en un solo paso: geocodifica una sola vez cada dirección
+  // canónica y la deja guardada en el cliente. Desde ahí, crear una solicitud
+  // nueva copia esas coordenadas directamente (sin volver a llamar la API),
+  // así todas las solicitudes al mismo destino quedan siempre consistentes.
+  // Solo geocodifica lo que le falta — si vuelves a apretar el botón después
+  // de agregar un cliente nuevo, no repite trabajo ya hecho.
+  async function geocodificarTodos(){
+    const pendientes=[];
+    lista.forEach((c,i)=>{
+      if(c.direccion && c.direccion.trim() && (c.lat==null||c.lng==null)) pendientes.push({tipo:"cliente",i});
+      (c.sucursales||[]).forEach((su,j)=>{
+        if(su.direccion && su.direccion.trim() && (su.lat==null||su.lng==null)) pendientes.push({tipo:"sucursal",i,j});
+      });
+    });
+    if(pendientes.length===0){ alert("Todos los clientes ya tienen coordenadas."); return; }
+    setGeocodificando(true);
+    let nueva=[...lista.map(c=>({...c,sucursales:(c.sucursales||[]).map(su=>({...su}))}))];
+    let ok=0, fallidos=0;
+    for(let k=0;k<pendientes.length;k++){
+      const p=pendientes[k];
+      setGeocodProgreso(`${k+1} / ${pendientes.length}`);
+      const direccion = p.tipo==="cliente" ? nueva[p.i].direccion : nueva[p.i].sucursales[p.j].direccion;
+      const coords = await geocodificarDireccion(direccion);
+      if(coords){
+        if(p.tipo==="cliente") nueva[p.i]={...nueva[p.i],lat:coords.lat,lng:coords.lng};
+        else nueva[p.i].sucursales[p.j]={...nueva[p.i].sucursales[p.j],lat:coords.lat,lng:coords.lng};
+        ok++;
+      } else fallidos++;
+      // Pequeña pausa entre llamadas para no saturar la API de golpe con ~50+ direcciones.
+      await new Promise(r=>setTimeout(r,150));
+    }
+    setLista(nueva); setHayCambios(true); setGeocodificando(false); setGeocodProgreso(null);
+    await onSave(nueva);
+    setHayCambios(false);
+    alert(`Geocodificación terminada: ${ok} direcciones resueltas${fallidos?`, ${fallidos} no se pudieron ubicar (revisa que la dirección esté bien escrita)`:""}.`);
+  }
 
   function iniciarEdit(idx){
     setEditIdx(idx);
@@ -5312,6 +5361,9 @@ function AdminClientes({clientes,onSave,setView}){
         <div style={S.pageTitle}>Administrar Clientes</div>
         <div style={{display:"flex",gap:8}}>
           {hayambios&&<button style={{...S.btnPri,fontSize:13}} onClick={handleGuardar}>💾 Guardar cambios</button>}
+          <button style={{...S.exportBtn,fontSize:13}} disabled={geocodificando} onClick={geocodificarTodos}>
+            {geocodificando?`📍 Geocodificando… ${geocodProgreso||""}`:"📍 Geocodificar direcciones"}
+          </button>
           <button style={{...S.exportBtn,fontSize:13}} onClick={()=>setMostrarNuevo(true)}>+ Nuevo cliente</button>
         </div>
       </div>
