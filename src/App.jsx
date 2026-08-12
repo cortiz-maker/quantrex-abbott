@@ -1930,6 +1930,62 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   ws3["!cols"]=[{wch:48},{wch:16},{wch:20}];
   XLSX.utils.book_append_sheet(wb, ws3, "Por Unidad de Negocio");
 
+  // ── Global por Unidad de Negocio, para facturación (módulo 3) ───────────
+  // Junta dos criterios distintos, tal como los pidió César:
+  // - Fijo (M1+M2): no tiene guía propia con la que prorratearse solicitud
+  //   por solicitud, así que se reparte con el % GLOBAL de guías del período
+  //   (el mismo cálculo que alimenta la dona del dashboard: cuenta TODAS las
+  //   guías etiquetadas del período, sin importar a qué solicitud pertenecen).
+  // - Variable: se mantiene el prorrateo específico de arriba (por guía real
+  //   de cada solicitud) — el monto sin unidad asignada se deja APARTE, sin
+  //   repartir, hasta que esas solicitudes se etiqueten (decisión explícita
+  //   de César: no estimarlo con el % global para no inventar cifras).
+  const conteoGlobalGuias={}; UNIDADES_NEGOCIO.forEach(u=>conteoGlobalGuias[u]=0);
+  let itemsSinUnidadGlobal=0;
+  for(const s of solicitudes){
+    const taggedGuias=new Set();
+    (s.guiasNegocio||[]).forEach(g=>{
+      if(g.unidad && conteoGlobalGuias[g.unidad]!=null){ conteoGlobalGuias[g.unidad]++; taggedGuias.add(g.guia); }
+    });
+    (s.documentos||"").split(",").map(d=>d.trim()).filter(Boolean).forEach(item=>{
+      if(!taggedGuias.has(item)) itemsSinUnidadGlobal++;
+    });
+  }
+  const totalGuiasGlobal=Object.values(conteoGlobalGuias).reduce((a,b)=>a+b,0);
+  const totalFijo=COBRO_M1+COBRO_M2;
+  const r4=[
+    ["QUANTREX — GLOBAL POR UNIDAD DE NEGOCIO (para facturación)"],
+    ["Período: "+periodoNombre],
+    ["Fijo (M1+M2) repartido según el % global de guías del período. Variable, según el prorrateo específico de la hoja \"Por Unidad de Negocio\" (lo sin asignar queda aparte, sin estimar)."],
+    [],
+    ["","% global de guías","Fijo asignado","Variable asignado","GLOBAL A FACTURAR"],
+  ];
+  UNIDADES_NEGOCIO.forEach(u=>{
+    const cantGuias=conteoGlobalGuias[u]||0;
+    const pctGlobal=totalGuiasGlobal>0?cantGuias/totalGuiasGlobal:0;
+    const fijoAsignado=totalFijo*pctGlobal;
+    const varAsignado=montoPorUnidad[u]||0;
+    if(cantGuias<=0 && varAsignado<=0) return; // dinámico: solo unidades con movimiento real
+    r4.push([u, totalGuiasGlobal>0?(pctGlobal*100).toFixed(1)+"%":"0%",
+      Math.round(fijoAsignado), Math.round(varAsignado), Math.round(fijoAsignado+varAsignado)]);
+  });
+  const totalGlobalFacturar=UNIDADES_NEGOCIO.reduce((acc,u)=>{
+    const cantGuias=conteoGlobalGuias[u]||0;
+    const pctGlobal=totalGuiasGlobal>0?cantGuias/totalGuiasGlobal:0;
+    return acc+totalFijo*pctGlobal+(montoPorUnidad[u]||0);
+  },0);
+  r4.push([]);
+  r4.push(["TOTAL asignado a divisiones","",Math.round(totalFijo),Math.round(totalProrrateado),Math.round(totalGlobalFacturar)]);
+  r4.push([]);
+  r4.push(["Variable sin guía/unidad asignada (aparte, no facturable por división todavía)","","",Math.round(montoSinUnidad),""]);
+  if(totalDescNP>0){
+    r4.push(["Descuento por No Presentación (ya restado del Total Pre Cierre; no se resta de los montos por división arriba)","","","",-Math.round(totalDescNP)]);
+  }
+  r4.push(["Total Pre Cierre del período (para verificar que nada se perdió)","","","",Math.round(granTotal)]);
+  const ws4=XLSX.utils.aoa_to_sheet(r4);
+  ws4["!cols"]=[{wch:14},{wch:18},{wch:16},{wch:18},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, ws4, "Global Facturación");
+
   XLSX.writeFile(wb, nombreArchivo);
 }
 
