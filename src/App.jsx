@@ -156,7 +156,7 @@ function GuiasNegocioEditor({documentos, guiasNegocio, onChangeGuias, respaldoAn
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {items.map((item,i)=>(
             <div key={item+i} style={{display:"flex",gap:8,alignItems:"center"}}>
-              <div style={{flex:1,fontSize:13,color:C.text,padding:"9px 12px",background:C.navy,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item}</div>
+              <div style={{flex:1,fontSize:13,color:C.textPrimary,padding:"9px 12px",background:C.navy,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item}</div>
               <select style={{...S.input,width:130}} value={unidadPorItem[item]||""} onChange={e=>cambiarUnidad(item,e.target.value)}>
                 <option value="">— Sin unidad —</option>
                 {UNIDADES_NEGOCIO.map(u=><option key={u} value={u}>{u}</option>)}
@@ -174,12 +174,12 @@ function GuiasNegocioEditor({documentos, guiasNegocio, onChangeGuias, respaldoAn
           </div>
           {respaldoAni ? (
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontSize:12,color:C.text}}>✓ Respaldo cargado</span>
+              <span style={{fontSize:12,color:C.textPrimary}}>✓ Respaldo cargado</span>
               <button type="button" style={{...S.btnSec,fontSize:12,padding:"6px 10px"}} onClick={()=>onChangeRespaldoAni(null)}>Quitar</button>
             </div>
           ) : (
             <input type="file" accept="image/*,.pdf,application/pdf" disabled={subiendoRespaldo} onChange={subirRespaldo}
-              style={{fontSize:12,color:C.text}}/>
+              style={{fontSize:12,color:C.textPrimary}}/>
           )}
         </div>
       )}
@@ -3655,6 +3655,79 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
   );
 }
 
+// ── Donut de distribución por Unidad de Negocio (módulo 3) ─────────────────
+// Cuenta guías (no solicitudes) por unidad, dentro del período mostrado —
+// una solicitud con 2 guías AV y 1 CRM aporta 2 al segmento AV y 1 a CRM,
+// igual criterio que el prorrateo monetario del Excel de cierre. Solo
+// muestra unidades con movimiento real (dinámico); los ítems de "documentos"
+// que aún no tienen unidad asignada se informan aparte, sin ocultarlos.
+const COLORES_UNIDAD = { AV:C.cyan, CRM:C.success, EP:C.warning, HF:C.info, ANI:C.danger };
+function DonutUnidadNegocio({solicitudes}){
+  const conteo={}; UNIDADES_NEGOCIO.forEach(u=>conteo[u]=0);
+  let sinAsignar=0;
+  (solicitudes||[]).forEach(s=>{
+    const taggedGuias=new Set();
+    (s.guiasNegocio||[]).forEach(g=>{
+      if(g.unidad && conteo[g.unidad]!=null){ conteo[g.unidad]++; taggedGuias.add(g.guia); }
+    });
+    (s.documentos||"").split(",").map(d=>d.trim()).filter(Boolean).forEach(item=>{
+      if(!taggedGuias.has(item)) sinAsignar++;
+    });
+  });
+  const total=Object.values(conteo).reduce((a,b)=>a+b,0);
+  const R=50, STROKE=18, CIRC=2*Math.PI*R;
+  let acumulado=0;
+  const segmentos=UNIDADES_NEGOCIO.map(u=>{
+    const cant=conteo[u];
+    if(cant<=0||total===0) return null;
+    const frac=cant/total;
+    const seg={unidad:u,cant,frac,offset:acumulado};
+    acumulado+=frac;
+    return seg;
+  }).filter(Boolean);
+
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Distribución por Unidad de Negocio</div>
+      {total===0 ? (
+        <div style={{fontSize:12,color:C.muted}}>Aún no hay guías con unidad asignada en este período.</div>
+      ) : (
+        <div style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
+          <div style={{position:"relative",width:120,height:120,flexShrink:0}}>
+            <svg width={120} height={120} viewBox="0 0 120 120" style={{transform:"rotate(-90deg)"}}>
+              <circle cx={60} cy={60} r={R} fill="none" stroke={C.navy} strokeWidth={STROKE}/>
+              {segmentos.map(seg=>(
+                <circle key={seg.unidad} cx={60} cy={60} r={R} fill="none"
+                  stroke={COLORES_UNIDAD[seg.unidad]||C.muted} strokeWidth={STROKE}
+                  strokeDasharray={`${seg.frac*CIRC} ${CIRC}`}
+                  strokeDashoffset={-seg.offset*CIRC}/>
+              ))}
+            </svg>
+            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+              <div style={{fontSize:22,fontWeight:900,color:C.textPrimary,lineHeight:1}}>{total}</div>
+              <div style={{fontSize:9,color:C.muted,marginTop:2}}>guías</div>
+            </div>
+          </div>
+          <div style={{flex:1,minWidth:150,display:"flex",flexDirection:"column",gap:6}}>
+            {segmentos.map(seg=>(
+              <div key={seg.unidad} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
+                <span style={{width:10,height:10,borderRadius:"50%",background:COLORES_UNIDAD[seg.unidad]||C.muted,flexShrink:0}}/>
+                <span style={{color:C.textPrimary,fontWeight:700,width:34}}>{seg.unidad}</span>
+                <span style={{color:C.muted}}>{seg.cant} guía{seg.cant===1?"":"s"} · {Math.round(seg.frac*100)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {sinAsignar>0&&(
+        <div style={{fontSize:11.5,color:C.muted}}>
+          + {sinAsignar} ítem{sinAsignar===1?"":"s"} de "N° Guías / Documentos Cliente" sin unidad asignada en este período (no incluido{sinAsignar===1?"":"s"} arriba).
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,setFilterStatus,setFilterFecha,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
@@ -3850,6 +3923,8 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </div>
 
         <EvolucionAnual solicitudes={solicitudes}/>
+
+        <DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>
 
         <div style={S.sectionTitle}>Costos y flota</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
@@ -4271,7 +4346,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
             {sol.documentos.split(",").map(d=>d.trim()).filter(Boolean).map((item,i)=>{
               const g=(sol.guiasNegocio||[]).find(x=>x.guia===item);
               return (
-                <div key={item+i} style={{fontSize:13,color:C.text}}>
+                <div key={item+i} style={{fontSize:13,color:C.textPrimary}}>
                   {item}{g&&<> — <span style={{fontWeight:700,color:C.cyan}}>{g.unidad}</span></>}
                 </div>
               );
