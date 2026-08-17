@@ -879,9 +879,8 @@ function _ordenCierre(s){
   return u;
 }
 // Momento en que se marcó "Cancelada" (busca el último log con ese estado; si no
-// hay log usable, cae a updatedAt). Se usa para medir cuánto tiempo pasó desde
-// que se creó la solicitud hasta que se canceló.
-const MIN_CANCELACION_MS = 40*60*1000; // 40 minutos
+// hay log usable, cae a updatedAt). Se usa como sugerencia inicial del check
+// manual "¿cuenta como gestión?" al cancelar (ver componente Detalle).
 function _momentoCancelacion(s){
   const log = s.statusLog||[];
   for(let i=log.length-1;i>=0;i--){
@@ -892,6 +891,9 @@ function _momentoCancelacion(s){
 function calcularCobros(solicitudes, tarifas, feriados){
   tarifas = tarifas || _tarifasCache;
   feriados = feriados || _feriadosCache;
+  // "sinCobro" es la única bandera que excluye del cálculo completo (cobro Y
+  // conteo de gestión). Para canceladas se define manualmente con el check
+  // "¿Cuenta como gestión / corresponde cobro?" que se muestra al cancelar.
   const sols = (solicitudes || []).filter(s=>!s.sinCobro); // exentas de cobro: fuera de todo cálculo
   const perId = {};
   for(const s of sols){
@@ -914,20 +916,6 @@ function calcularCobros(solicitudes, tarifas, feriados){
     const f = s.fecha || "sin-fecha";
     contCargaOL[f] = (contCargaOL[f]||0) + 1;
     if(contCargaOL[f] > 2) perId[s.id]._cuenta = true;
-  }
-  // Canceladas: solo cuentan como gestión (y por lo tanto solo pueden aportar
-  // al contador de Extra SPOT) si la cancelación ocurre 40 minutos o más
-  // después de creada la solicitud. Si se cancela dentro de esa ventana, se
-  // considera un error de tipeo/duplicado y se excluye del conteo del día.
-  // Si no hay fecha de creación o de cancelación confiable, se mantiene el
-  // comportamiento por defecto (SÍ cuenta), para no perder gestiones reales
-  // por datos incompletos.
-  for(const s of sols){
-    if(s.status!=="cancelada") continue;
-    const creado = Date.parse(s.createdAt||"")||0;
-    const cancelado = _momentoCancelacion(s);
-    if(!creado || !cancelado) continue;
-    if((cancelado - creado) < MIN_CANCELACION_MS) perId[s.id]._cuenta = false;
   }
   // SPOT: contador global por día, numerado en ORDEN DE CIERRE ascendente
   const contN = {};
@@ -2210,7 +2198,7 @@ export default function QuantrexAbbott() {
     }
   }
 
-  async function handleStatusChange(id,newStatus,canceladoPor=null,motivoCancelacion=null){
+  async function handleStatusChange(id,newStatus,canceladoPor=null,motivoCancelacion=null,sinCobro=null){
     const now=new Date();
     const fechaHora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
     const upd=solicitudes.map(s=>{
@@ -2220,7 +2208,8 @@ export default function QuantrexAbbott() {
       return{...s,status:newStatus,updatedAt:now.toISOString(),
         statusLog:[...(s.statusLog||[]),entry],
         ...(canceladoPor?{canceladoPor}:{}),
-        ...(motivoCancelacion?{motivoCancelacion}:{})};
+        ...(motivoCancelacion?{motivoCancelacion}:{}),
+        ...(sinCobro!==null?{sinCobro}:{})};
     });
     const cambiada=upd.find(s=>s.id===id);
     setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada);
@@ -4167,6 +4156,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
   const [cancelando,setCancelando]=useState(false);
   const [canceladoPor,setCanceladoPor]=useState("");
   const [motivoCancelacion,setMotivoCancelacion]=useState("");
+  const [cuentaGestion,setCuentaGestion]=useState(true);
   const [editMode,setEditMode]=useState(false);
   const [editForm,setEditForm]=useState({...sol});
   const [enviandoDT,setEnviandoDT]=useState(false);
@@ -4457,6 +4447,9 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
       </div>}
       {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div>
         {sol.motivoCancelacion&&<div style={{fontSize:13,color:C.textPrimary,marginTop:6}}>{sol.motivoCancelacion}</div>}
+        <div style={{fontSize:11.5,marginTop:6,fontWeight:700,color:sol.sinCobro?C.muted:C.warning}}>
+          {sol.sinCobro?"🚫 No cuenta como gestión / sin cobro":"✅ Cuenta como gestión / puede generar cobro"}
+        </div>
       </div>}
       {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div>{sol.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Por {sol.observacionAutor}{sol.observacionFecha?" · "+new Date(sol.observacionFecha).toLocaleString("es-CL"):""}</div>}</div>}
       {(sol.firmaReceptor||sol.rechazoFirma)&&(
@@ -4518,7 +4511,16 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
       <div style={S.statusBtns}>
         {Object.entries(STATUS_META).map(([k,v])=>
           k==="cancelada"
-            ?<button key={k} onClick={()=>setCancelando(true)} style={{...S.statusBtn,background:sol.status===k?v.color:"transparent",color:sol.status===k?"#fff":v.color,border:`1px solid ${v.color}`}}>{v.label}</button>
+            ?<button key={k} onClick={()=>{
+                // Sugerencia inicial del check: si se cancela dentro de los 40
+                // minutos desde creada, se sugiere NO cobrar / NO contar como
+                // gestión (probable error de tipeo/duplicado); el admin puede
+                // cambiarlo igual antes de confirmar.
+                const creado=Date.parse(sol.createdAt||"")||0;
+                const minDesdeCreacion = creado ? (Date.now()-creado)/60000 : null;
+                setCuentaGestion(minDesdeCreacion===null ? true : minDesdeCreacion>=40);
+                setCancelando(true);
+              }} style={{...S.statusBtn,background:sol.status===k?v.color:"transparent",color:sol.status===k?"#fff":v.color,border:`1px solid ${v.color}`}}>{v.label}</button>
             :<button key={k} onClick={()=>onStatusChange(sol.id,k)} style={{...S.statusBtn,background:sol.status===k?v.color:"transparent",color:sol.status===k?"#fff":v.color,border:`1px solid ${v.color}`}}>{v.label}</button>
         )}
       </div>
@@ -4533,10 +4535,14 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
           </select>
           <div style={{fontSize:13,fontWeight:700,color:C.danger}}>Motivo de la cancelación</div>
           <textarea style={{...S.input,minHeight:70,resize:"vertical"}} placeholder="Describe el motivo de la cancelación..." value={motivoCancelacion} onChange={e=>setMotivoCancelacion(e.target.value)}/>
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.textPrimary,cursor:"pointer"}}>
+            <input type="checkbox" checked={cuentaGestion} onChange={e=>setCuentaGestion(e.target.checked)}/>
+            Cuenta como gestión / corresponde cobro
+          </label>
           <div style={{display:"flex",gap:8}}>
-            <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted}} onClick={()=>{setCancelando(false);setCanceladoPor("");setMotivoCancelacion("");}}>Cancelar</button>
+            <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted}} onClick={()=>{setCancelando(false);setCanceladoPor("");setMotivoCancelacion("");setCuentaGestion(true);}}>Cancelar</button>
             <button style={{...S.statusBtn,background:C.danger,color:"#fff",border:"none"}} disabled={!canceladoPor||!motivoCancelacion.trim()}
-              onClick={()=>{onStatusChange(sol.id,"cancelada",canceladoPor,motivoCancelacion.trim());setCancelando(false);setCanceladoPor("");setMotivoCancelacion("");}}>Confirmar</button>
+              onClick={()=>{onStatusChange(sol.id,"cancelada",canceladoPor,motivoCancelacion.trim(),!cuentaGestion);setCancelando(false);setCanceladoPor("");setMotivoCancelacion("");setCuentaGestion(true);}}>Confirmar</button>
           </div>
         </div>
       )}
