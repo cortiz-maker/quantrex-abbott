@@ -878,6 +878,17 @@ function _ordenCierre(s){
   const u = Date.parse(s.updatedAt||s.createdAt||"")||0;
   return u;
 }
+// Momento en que se marcó "Cancelada" (busca el último log con ese estado; si no
+// hay log usable, cae a updatedAt). Se usa para medir cuánto tiempo pasó desde
+// que se creó la solicitud hasta que se canceló.
+const MIN_CANCELACION_MS = 40*60*1000; // 40 minutos
+function _momentoCancelacion(s){
+  const log = s.statusLog||[];
+  for(let i=log.length-1;i>=0;i--){
+    if(log[i].a===STATUS_META.cancelada.label){ const t=_parseFH(log[i].fechaHora); if(t) return t; }
+  }
+  return Date.parse(s.updatedAt||"")||0;
+}
 function calcularCobros(solicitudes, tarifas, feriados){
   tarifas = tarifas || _tarifasCache;
   feriados = feriados || _feriadosCache;
@@ -903,6 +914,20 @@ function calcularCobros(solicitudes, tarifas, feriados){
     const f = s.fecha || "sin-fecha";
     contCargaOL[f] = (contCargaOL[f]||0) + 1;
     if(contCargaOL[f] > 2) perId[s.id]._cuenta = true;
+  }
+  // Canceladas: solo cuentan como gestión (y por lo tanto solo pueden aportar
+  // al contador de Extra SPOT) si la cancelación ocurre 40 minutos o más
+  // después de creada la solicitud. Si se cancela dentro de esa ventana, se
+  // considera un error de tipeo/duplicado y se excluye del conteo del día.
+  // Si no hay fecha de creación o de cancelación confiable, se mantiene el
+  // comportamiento por defecto (SÍ cuenta), para no perder gestiones reales
+  // por datos incompletos.
+  for(const s of sols){
+    if(s.status!=="cancelada") continue;
+    const creado = Date.parse(s.createdAt||"")||0;
+    const cancelado = _momentoCancelacion(s);
+    if(!creado || !cancelado) continue;
+    if((cancelado - creado) < MIN_CANCELACION_MS) perId[s.id]._cuenta = false;
   }
   // SPOT: contador global por día, numerado en ORDEN DE CIERRE ascendente
   const contN = {};
@@ -1072,18 +1097,19 @@ const COLS_LISTA = [
   "ppu_asignada","destino","chofer_asignado","documentos","status","status_log",
   "no_presentacion","vehiculo_np","motivo_np","geo_entrega","hora_entrega",
   "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
-  "rechazo_firma","cancelado_por","km_desde_pudahuel","devolucion_urgente",
+  "rechazo_firma","cancelado_por","motivo_cancelacion","km_desde_pudahuel","devolucion_urgente",
   "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro","traslado_equipo_medico",
   "dt_dispatch_id","dt_enviado_en","items","destino_lat","destino_lng","guias_negocio",
   "updated_at","created_at"
 ].join(",");
-// Respaldo SIN las columnas más recientes (destino_lat/destino_lng/guias_negocio).
-// Si la migración SQL correspondiente todavía no se corrió en Supabase, el
-// SELECT con COLS_LISTA completo falla entero y (sin este respaldo) el
-// listado se vería vacío como si no hubiera solicitudes. Con esto, en cambio,
-// el listado sigue funcionando con datos reales mientras se corre la migración.
+// Respaldo SIN las columnas más recientes (destino_lat/destino_lng/guias_negocio/
+// motivo_cancelacion). Si la migración SQL correspondiente todavía no se corrió
+// en Supabase, el SELECT con COLS_LISTA completo falla entero y (sin este
+// respaldo) el listado se vería vacío como si no hubiera solicitudes. Con esto,
+// en cambio, el listado sigue funcionando con datos reales mientras se corre
+// la migración (motivoCancelacion queda undefined hasta que se corra).
 const COLS_LISTA_SEGURA = COLS_LISTA
-  .split(",").filter(c=>!["destino_lat","destino_lng","guias_negocio"].includes(c)).join(",");
+  .split(",").filter(c=>!["destino_lat","destino_lng","guias_negocio","motivo_cancelacion"].includes(c)).join(",");
 
 function _mapSolicitudLigera(s){
   return {
@@ -1097,7 +1123,7 @@ function _mapSolicitudLigera(s){
     geoEntrega:s.geo_entrega, horaEntrega:s.hora_entrega, horaLlegada:s.hora_llegada,
     tiempoEnPunto:s.tiempo_en_punto, coordsEntrega:s.coords_entrega,
     nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
-    canceladoPor:s.cancelado_por, kmDesdePudahuel:s.km_desde_pudahuel,
+    canceladoPor:s.cancelado_por, motivoCancelacion:s.motivo_cancelacion, kmDesdePudahuel:s.km_desde_pudahuel,
     devolucionUrgente:s.devolucion_urgente||false,
     observacionChofer:s.observacion_chofer||"",
     observacionCobro:s.observacion_cobro||"",
@@ -1190,7 +1216,7 @@ async function saveSolicitud(s) {
       hora_entrega:s.horaEntrega||null, hora_llegada:s.horaLlegada||null,
       tiempo_en_punto:s.tiempoEnPunto||null, coords_entrega:s.coordsEntrega||null,
       nombre_receptor:s.nombreReceptor||null, rechazo_firma:s.rechazoFirma||false,
-      cancelado_por:s.canceladoPor||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
+      cancelado_por:s.canceladoPor||null, motivo_cancelacion:s.motivoCancelacion||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
       devolucion_urgente:s.devolucionUrgente||false,
       observacion_chofer:s.observacionChofer||null,
       observacion_autor:s.observacionAutor||null,
@@ -1239,12 +1265,12 @@ async function saveSolicitud(s) {
     if(!res.ok) {
       const e = await res.text();
       // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
-      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|sin_cobro|devolucion_urgente|destino_lat|destino_lng|guias_negocio|respaldo_ani/i.test(e)) {
+      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|sin_cobro|devolucion_urgente|destino_lat|destino_lng|guias_negocio|respaldo_ani|motivo_cancelacion/i.test(e)) {
         console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
         const fallback = {...row};
         delete fallback.fotos_manifiesto; delete fallback.fotos_entrega; delete fallback.observacion_chofer;
         delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.observacion_cobro; delete fallback.facturar_en_periodo; delete fallback.sin_cobro; delete fallback.devolucion_urgente;
-        delete fallback.destino_lat; delete fallback.destino_lng; delete fallback.guias_negocio; delete fallback.respaldo_ani;
+        delete fallback.destino_lat; delete fallback.destino_lng; delete fallback.guias_negocio; delete fallback.respaldo_ani; delete fallback.motivo_cancelacion;
         res = await doUpsert(fallback);
       }
       if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2);
@@ -1791,6 +1817,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
     return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
       s.documentos||"",
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
+      s.status==="cancelada"?(s.canceladoPor||""):"", s.status==="cancelada"?(s.motivoCancelacion||""):"",
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
       s.usuarioDT||"", s.ppuAsignada||"", nro,
       (() => { const log=s.statusLog||[]; if(!log.length) return ""; const ultima=log[log.length-1]; return (ultima.fechaHora||"").split(" ")[1]||""; })(),
@@ -1809,8 +1836,8 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   const COBRO_M1 = tarifaVigente(tarifas,"m1_fijo",fechaRefTot), COBRO_M2 = tarifaVigente(tarifas,"m2_fijo",fechaRefTot);
   const totalSpot=cobros.spotCount;
   const totalOH=cobros.ohCount;
-  const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[22])||0),0);
-  const cantSpotRegional=rows.filter(r=>(Number(r[22])||0)>0).length;
+  const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[24])||0),0);
+  const cantSpotRegional=rows.filter(r=>(Number(r[24])||0)>0).length;
   const totalTraslado=cobros.montoTraslado;
   const cantTraslado=cobros.trasladoCount;
   const totalCobro=cobros.montoSpot+cobros.montoOH+totalSpotRegional+totalTraslado;
@@ -1818,7 +1845,8 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   const totalDescNP=totalNP*DESCUENTO_DIA;
   const granTotal=totalCobro+COBRO_M1+COBRO_M2-totalDescNP;
 
-  const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","Tipo","Estado","Prioridad",
+  const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","Tipo","Estado",
+    "Responsable Cancelación","Motivo Cancelación","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
     "Traslado Equipo Médico","Costo Traslado Equipo Médico",
@@ -1826,7 +1854,8 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
-  ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:30},{wch:28},{wch:13},{wch:10},
+  ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:30},{wch:28},{wch:13},
+    {wch:20},{wch:35},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
     {wch:22},{wch:18},{wch:16},{wch:20},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45},{wch:45}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
@@ -2181,7 +2210,7 @@ export default function QuantrexAbbott() {
     }
   }
 
-  async function handleStatusChange(id,newStatus,canceladoPor=null){
+  async function handleStatusChange(id,newStatus,canceladoPor=null,motivoCancelacion=null){
     const now=new Date();
     const fechaHora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
     const upd=solicitudes.map(s=>{
@@ -2189,7 +2218,9 @@ export default function QuantrexAbbott() {
       const entry={de:STATUS_META[s.status]?.label||s.status,a:STATUS_META[newStatus]?.label||newStatus,
         fechaHora,canceladoPor:canceladoPor||null,usuario:sesion?.nombre||sesion?.email||"—",id:Date.now().toString()};
       return{...s,status:newStatus,updatedAt:now.toISOString(),
-        statusLog:[...(s.statusLog||[]),entry],...(canceladoPor?{canceladoPor}:{})};
+        statusLog:[...(s.statusLog||[]),entry],
+        ...(canceladoPor?{canceladoPor}:{}),
+        ...(motivoCancelacion?{motivoCancelacion}:{})};
     });
     const cambiada=upd.find(s=>s.id===id);
     setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada);
@@ -4135,6 +4166,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
   const [confirmDel,setConfirmDel]=useState(false);
   const [cancelando,setCancelando]=useState(false);
   const [canceladoPor,setCanceladoPor]=useState("");
+  const [motivoCancelacion,setMotivoCancelacion]=useState("");
   const [editMode,setEditMode]=useState(false);
   const [editForm,setEditForm]=useState({...sol});
   const [enviandoDT,setEnviandoDT]=useState(false);
@@ -4423,7 +4455,9 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
         {sol.sinCobro&&<div style={{fontSize:11.5,color:C.danger,marginTop:6,fontWeight:700}}>🚫 EXENTA DE COBRO — no genera cargo en ningún período</div>}
         {!sol.sinCobro&&sol.facturarEnPeriodo&&<div style={{fontSize:11.5,color:C.warning,marginTop:6,fontWeight:600}}>↻ Facturada en el período de {sol.facturarEnPeriodo} · fecha real de servicio: {sol.fecha}</div>}
       </div>}
-      {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div></div>}
+      {sol.canceladoPor&&<div style={{...S.detailBlock,border:`1px solid ${C.danger}44`}}><div style={{...S.fieldLabel,color:C.danger}}>Cancelada por</div><div style={S.fieldValue}>{sol.canceladoPor}</div>
+        {sol.motivoCancelacion&&<div style={{fontSize:13,color:C.textPrimary,marginTop:6}}>{sol.motivoCancelacion}</div>}
+      </div>}
       {sol.observacionChofer&&<div style={S.detailBlock}><div style={S.fieldLabel}>Observación</div><div style={S.fieldValue}>📝 {sol.observacionChofer}</div>{sol.observacionAutor&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Por {sol.observacionAutor}{sol.observacionFecha?" · "+new Date(sol.observacionFecha).toLocaleString("es-CL"):""}</div>}</div>}
       {(sol.firmaReceptor||sol.rechazoFirma)&&(
         <div style={S.detailBlock}>
@@ -4497,10 +4531,12 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
             <option value="Yeneidi Rodriguez">Yeneidi Rodriguez</option>
             <option value="Andres Barrios">Andres Barrios</option>
           </select>
+          <div style={{fontSize:13,fontWeight:700,color:C.danger}}>Motivo de la cancelación</div>
+          <textarea style={{...S.input,minHeight:70,resize:"vertical"}} placeholder="Describe el motivo de la cancelación..." value={motivoCancelacion} onChange={e=>setMotivoCancelacion(e.target.value)}/>
           <div style={{display:"flex",gap:8}}>
-            <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted}} onClick={()=>{setCancelando(false);setCanceladoPor("");}}>Cancelar</button>
-            <button style={{...S.statusBtn,background:C.danger,color:"#fff",border:"none"}} disabled={!canceladoPor}
-              onClick={()=>{onStatusChange(sol.id,"cancelada",canceladoPor);setCancelando(false);setCanceladoPor("");}}>Confirmar</button>
+            <button style={{...S.statusBtn,border:`1px solid ${C.muted}`,color:C.muted}} onClick={()=>{setCancelando(false);setCanceladoPor("");setMotivoCancelacion("");}}>Cancelar</button>
+            <button style={{...S.statusBtn,background:C.danger,color:"#fff",border:"none"}} disabled={!canceladoPor||!motivoCancelacion.trim()}
+              onClick={()=>{onStatusChange(sol.id,"cancelada",canceladoPor,motivoCancelacion.trim());setCancelando(false);setCanceladoPor("");setMotivoCancelacion("");}}>Confirmar</button>
           </div>
         </div>
       )}
