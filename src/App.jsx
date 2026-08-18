@@ -5053,10 +5053,6 @@ function PantallaLogin({onLogin,onCambiarPassword,usuarios=USUARIOS,choferes=CHO
             <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15}} onClick={handleLogin}>
               Ingresar
             </button>
-            <button style={{background:"transparent",border:"none",color:C.cyan,cursor:"pointer",fontSize:13,fontWeight:600,textAlign:"center"}}
-              onClick={()=>setModo("chofer")}>
-              🚗 Soy chofer — acceder aquí
-            </button>
           </>
         ):(
           <>
