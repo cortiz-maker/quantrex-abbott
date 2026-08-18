@@ -275,6 +275,13 @@ async function buscarDocumentoGsuite(termino) {
   return { data, error: null };
 }
 
+// Normaliza un RUT para comparar (sin puntos, sin espacios, mayuscula) --
+// usado para matchear el cliente que trae gSuite (r.cust_rut) contra la
+// base de clientes ya cargada en la app (clientes[].id).
+function normalizarRut(rut){
+  return (rut||"").replace(/\./g,"").trim().toUpperCase();
+}
+
 async function sbFetch(method, table, body=null, query="") {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {
     method,
@@ -4676,14 +4683,40 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
     setForm(p=>{
       const existentes=(p.documentos||"").split(",").map(d=>d.trim()).filter(Boolean);
       if(!existentes.includes(r.folio)) existentes.push(r.folio);
-      const refs=[
-        r.cust_name?`Cliente: ${r.cust_name}`:null,
-        r.orden_compra?`OC: ${r.orden_compra}`:null,
-        r.pedido_sap?`Pedido SAP: ${r.pedido_sap}`:null,
-        r.factura_corta?`Delivery: ${r.factura_corta}`:null,
-      ].filter(Boolean).join(" · ");
       const u={...p, documentos: existentes.join(", ")};
-      if(!p.descripcion && refs) u.descripcion=refs;
+
+      if(p.tipo==="carga_ol"){
+        // Carga Operador Logistico: el dato de gSuite se agrega como un
+        // item nuevo (puede haber varios destinos consolidados en un
+        // mismo despacho), no como Cliente.
+        const nombreItem=[r.cust_name,r.orden_compra,r.pedido_sap,r.factura_corta].filter(Boolean).join(" / ");
+        u.items=[...(p.items||[]), {id:`it_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, nombre:nombreItem, cantidad:1}];
+      } else {
+        // Resto de los tipos: se intenta matchear el cliente de gSuite
+        // contra la base de clientes ya cargada (por RUT), igual que si
+        // el usuario lo hubiera elegido a mano en el buscador de Cliente.
+        const rutBuscado=normalizarRut(r.cust_rut);
+        const match=(clientes||[]).find(c=>normalizarRut(c.id)===rutBuscado);
+        if(match){
+          const label=match.id?match.id+" - "+match.nombre:match.nombre;
+          u.titulo=label;
+          u.direccion=match.direccion||p.direccion;
+          u.notas=match.notas||p.notas;
+          u.contacto=match.contacto||p.contacto;
+          u.destinoLat=match.lat??null;
+          u.destinoLng=match.lng??null;
+        } else {
+          // Sin match en la base local de clientes: no se pierde el dato,
+          // queda de referencia en Descripcion (si esta vacia).
+          const refs=[
+            r.cust_name?`Cliente: ${r.cust_name}`:null,
+            r.orden_compra?`OC: ${r.orden_compra}`:null,
+            r.pedido_sap?`Pedido SAP: ${r.pedido_sap}`:null,
+            r.factura_corta?`Delivery: ${r.factura_corta}`:null,
+          ].filter(Boolean).join(" · ");
+          if(!p.descripcion && refs) u.descripcion=refs;
+        }
+      }
       return u;
     });
     setGResultados(null);
