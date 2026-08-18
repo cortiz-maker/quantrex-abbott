@@ -4680,6 +4680,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         r.cust_name?`Cliente: ${r.cust_name}`:null,
         r.orden_compra?`OC: ${r.orden_compra}`:null,
         r.pedido_sap?`Pedido SAP: ${r.pedido_sap}`:null,
+        r.factura_corta?`Delivery: ${r.factura_corta}`:null,
       ].filter(Boolean).join(" · ");
       const u={...p, documentos: existentes.join(", ")};
       if(!p.descripcion && refs) u.descripcion=refs;
@@ -4880,6 +4881,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
                     <div><b>Folio {r.folio}</b> · {r.doc_type==="52"?"Guía Despacho":r.doc_type==="33"?"Factura":"Doc. tipo "+r.doc_type}</div>
                     <div style={{color:C.muted}}>{r.cust_name}{r.cust_comuna?` — ${r.cust_comuna}`:""}</div>
                     <div style={{color:C.muted}}>{r.orden_compra?`OC: ${r.orden_compra}`:""}{r.pedido_sap?`  ·  Pedido SAP: ${r.pedido_sap}`:""}</div>
+                    {r.factura_corta&&<div style={{color:C.muted}}>Delivery: {r.factura_corta}</div>}
                   </div>
                   <button type="button" style={{...S.btnPri,fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={()=>usarResultadoGsuite(r)}>Usar</button>
                 </div>
