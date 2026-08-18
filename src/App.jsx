@@ -246,6 +246,35 @@ function ItemsEditor({items=[],onChange}){
 const SUPABASE_URL = "https://euvwfbnbmefqpakbbzni.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1dndmYm5ibWVmcXBha2Jiem5pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjY0ODksImV4cCI6MjA5NjAwMjQ4OX0.g4MZSgs7yF3fJljIbF-C582g-Bvbn0RSML1lYGGlIaQ";
 
+// Proyecto Supabase INTERMEDIO (espejo de gSuite, separado del de arriba).
+// Lo alimenta el bridge gsuite-abbott-bridge (Railway), que descarga TODOS
+// los documentos de venta de Abbott sin filtrar. Esta app nunca lee la
+// tabla cruda directo -- solo llama a la funcion buscar_documento_asignado,
+// que ya viene acotada a un folio/OC/pedido SAP puntual (maximo 20 filas),
+// asi nunca se navega el universo completo de documentos de otros
+// proveedores de Abbott.
+const GSUITE_SUPABASE_URL = "https://mcetdwgdeuizymhfrnem.supabase.co";
+const GSUITE_SUPABASE_KEY = "sb_publishable_Ha-vFxLalDXkJGlHSXEyWQ_RFnRJAJ1";
+
+// Busca un documento (guia, factura, nota de credito/debito) por folio,
+// Orden de Compra o N Pedido SAP en el espejo de gSuite. Devuelve
+// { data, error } -- data es un array (puede tener mas de un resultado si
+// el mismo numero calza con distintos documentos).
+async function buscarDocumentoGsuite(termino) {
+  const res = await fetch(`${GSUITE_SUPABASE_URL}/rest/v1/rpc/buscar_documento_asignado`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": GSUITE_SUPABASE_KEY,
+      "Authorization": `Bearer ${GSUITE_SUPABASE_KEY}`,
+    },
+    body: JSON.stringify({ termino }),
+  });
+  if (!res.ok) { const e = await res.text(); console.error("Error buscando documento en gSuite:", e); return { data: null, error: e }; }
+  const data = await res.json();
+  return { data, error: null };
+}
+
 async function sbFetch(method, table, body=null, query="") {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {
     method,
@@ -4627,6 +4656,39 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
   });
   const [clienteQ,setClienteQ]=useState("");
   const [clienteOpen,setClienteOpen]=useState(false);
+  // Estado del buscador de documentos en gSuite (autocompletar N° Guías /
+  // Documentos Cliente en vez de tipearlos a mano desde una foto/WhatsApp).
+  const [gBuscarTexto,setGBuscarTexto]=useState("");
+  const [gBuscando,setGBuscando]=useState(false);
+  const [gResultados,setGResultados]=useState(null);
+  const [gError,setGError]=useState(null);
+  const buscarEnGsuite=async()=>{
+    const termino=gBuscarTexto.trim();
+    if(!termino) return;
+    setGBuscando(true); setGError(null); setGResultados(null);
+    const {data,error}=await buscarDocumentoGsuite(termino);
+    setGBuscando(false);
+    if(error){ setGError("No se pudo buscar en gSuite. Intenta de nuevo."); return; }
+    if(!data || data.length===0){ setGError(`Sin resultados para "${termino}".`); return; }
+    setGResultados(data);
+  };
+  const usarResultadoGsuite=(r)=>{
+    setForm(p=>{
+      const existentes=(p.documentos||"").split(",").map(d=>d.trim()).filter(Boolean);
+      if(!existentes.includes(r.folio)) existentes.push(r.folio);
+      const refs=[
+        r.cust_name?`Cliente: ${r.cust_name}`:null,
+        r.orden_compra?`OC: ${r.orden_compra}`:null,
+        r.pedido_sap?`Pedido SAP: ${r.pedido_sap}`:null,
+      ].filter(Boolean).join(" · ");
+      const u={...p, documentos: existentes.join(", ")};
+      if(!p.descripcion && refs) u.descripcion=refs;
+      return u;
+    });
+    setGResultados(null);
+    setGBuscarTexto("");
+    setGError(null);
+  };
   // Opciones de cliente aplanadas (cliente + sucursales) para el buscador
   const opcionesCliente=clientes.flatMap(c=>{
     const label=c.id?c.id+" - "+c.nombre:c.nombre;
@@ -4798,6 +4860,33 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           </select></div>
         <div style={S.fGroup}><label style={S.label}>OT Quantrex</label>
           <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={form.ot||"Se genera automáticamente"} readOnly/></div>
+        <div style={{...S.fGroup,gridColumn:"1/-1"}}>
+          <label style={S.label}>Buscar documento en gSuite (folio, OC o N° Pedido SAP)</label>
+          <div style={{display:"flex",gap:8}}>
+            <input style={{...S.input,flex:1}} placeholder="Ej: 446505"
+              value={gBuscarTexto}
+              onChange={e=>setGBuscarTexto(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();buscarEnGsuite();}}}/>
+            <button type="button" style={{...S.exportBtn,whiteSpace:"nowrap"}} disabled={gBuscando} onClick={buscarEnGsuite}>
+              {gBuscando?"Buscando...":"🔍 Buscar"}
+            </button>
+          </div>
+          {gError&&<div style={{fontSize:12,color:C.warning,marginTop:6}}>{gError}</div>}
+          {gResultados&&(
+            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+              {gResultados.map((r,i)=>(
+                <div key={i} style={{border:"1px solid "+C.border,borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                  <div style={{fontSize:12,color:C.textPrimary,lineHeight:1.5}}>
+                    <div><b>Folio {r.folio}</b> · {r.doc_type==="52"?"Guía Despacho":r.doc_type==="33"?"Factura":"Doc. tipo "+r.doc_type}</div>
+                    <div style={{color:C.muted}}>{r.cust_name}{r.cust_comuna?` — ${r.cust_comuna}`:""}</div>
+                    <div style={{color:C.muted}}>{r.orden_compra?`OC: ${r.orden_compra}`:""}{r.pedido_sap?`  ·  Pedido SAP: ${r.pedido_sap}`:""}</div>
+                  </div>
+                  <button type="button" style={{...S.btnPri,fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={()=>usarResultadoGsuite(r)}>Usar</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
           <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={form.documentos} onChange={f("documentos")}/></div>
         <GuiasNegocioEditor
