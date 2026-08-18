@@ -4695,6 +4695,8 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         // Resto de los tipos: se intenta matchear el cliente de gSuite
         // contra la base de clientes ya cargada (por RUT), igual que si
         // el usuario lo hubiera elegido a mano en el buscador de Cliente.
+        // Ademas, se agrega un item con OC/Pedido SAP/Delivery (sin repetir
+        // el nombre del cliente, que ya queda en el campo Cliente aparte).
         const rutBuscado=normalizarRut(r.cust_rut);
         const match=(clientes||[]).find(c=>normalizarRut(c.id)===rutBuscado);
         if(match){
@@ -4708,13 +4710,16 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         } else {
           // Sin match en la base local de clientes: no se pierde el dato,
           // queda de referencia en Descripcion (si esta vacia).
-          const refs=[
-            r.cust_name?`Cliente: ${r.cust_name}`:null,
-            r.orden_compra?`OC: ${r.orden_compra}`:null,
-            r.pedido_sap?`Pedido SAP: ${r.pedido_sap}`:null,
-            r.factura_corta?`Delivery: ${r.factura_corta}`:null,
-          ].filter(Boolean).join(" · ");
-          if(!p.descripcion && refs) u.descripcion=refs;
+          const refCliente=r.cust_name?`Cliente: ${r.cust_name}`:null;
+          if(!p.descripcion && refCliente) u.descripcion=refCliente;
+        }
+        const nombreItem=[
+          r.orden_compra?`OC ${r.orden_compra}`:null,
+          r.pedido_sap?`Pedido SAP ${r.pedido_sap}`:null,
+          r.factura_corta?`Delivery ${r.factura_corta}`:null,
+        ].filter(Boolean).join(" / ");
+        if(nombreItem){
+          u.items=[...(p.items||[]), {id:`it_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, nombre:nombreItem, cantidad:1}];
         }
       }
       return u;
