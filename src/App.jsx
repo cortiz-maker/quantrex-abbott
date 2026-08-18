@@ -4768,6 +4768,34 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
     <div style={S.section}>
       <div style={S.pageTitle}>Nueva Solicitud</div>
       <div style={S.formGrid}>
+        <div style={{...S.fGroup,gridColumn:"1/-1",background:C.danger+"14",border:"2px solid "+C.danger,borderRadius:10,padding:"12px 14px"}}>
+          <label style={{...S.label,color:C.danger,fontWeight:800,fontSize:13}}>🔎 Buscar documento en gSuite (folio, OC, N° Pedido SAP o Delivery)</label>
+          <div style={{display:"flex",gap:8}}>
+            <input style={{...S.input,flex:1,border:"1px solid "+C.danger}} placeholder="Ej: 446505"
+              value={gBuscarTexto}
+              onChange={e=>setGBuscarTexto(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();buscarEnGsuite();}}}/>
+            <button type="button" style={{...S.btnPri,background:C.danger,borderColor:C.danger,whiteSpace:"nowrap"}} disabled={gBuscando} onClick={buscarEnGsuite}>
+              {gBuscando?"Buscando...":"🔍 Buscar"}
+            </button>
+          </div>
+          {gError&&<div style={{fontSize:12,color:C.warning,marginTop:6}}>{gError}</div>}
+          {gResultados&&(
+            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+              {gResultados.map((r,i)=>(
+                <div key={i} style={{border:"1px solid "+C.border,background:C.navy,borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                  <div style={{fontSize:12,color:C.textPrimary,lineHeight:1.5}}>
+                    <div><b>Folio {r.folio}</b> · {r.doc_type==="52"?"Guía Despacho":r.doc_type==="33"?"Factura":"Doc. tipo "+r.doc_type}</div>
+                    <div style={{color:C.muted}}>{r.cust_name}{r.cust_comuna?` — ${r.cust_comuna}`:""}</div>
+                    <div style={{color:C.muted}}>{r.orden_compra?`OC: ${r.orden_compra}`:""}{r.pedido_sap?`  ·  Pedido SAP: ${r.pedido_sap}`:""}</div>
+                    {r.factura_corta&&<div style={{color:C.muted}}>Delivery: {r.factura_corta}</div>}
+                  </div>
+                  <button type="button" style={{...S.btnPri,fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={()=>usarResultadoGsuite(r)}>Usar</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <div style={S.fGroup}><label style={S.label}>Tipo *</label>
           <select style={S.input} value={form.tipo} onChange={f("tipo")}>
             {Object.entries(TYPE_META).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}
@@ -4899,34 +4927,6 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           </select></div>
         <div style={S.fGroup}><label style={S.label}>OT Quantrex</label>
           <input style={{...S.input,background:C.navy,color:C.cyan,fontWeight:700}} value={form.ot||"Se genera automáticamente"} readOnly/></div>
-        <div style={{...S.fGroup,gridColumn:"1/-1"}}>
-          <label style={S.label}>Buscar documento en gSuite (folio, OC o N° Pedido SAP)</label>
-          <div style={{display:"flex",gap:8}}>
-            <input style={{...S.input,flex:1}} placeholder="Ej: 446505"
-              value={gBuscarTexto}
-              onChange={e=>setGBuscarTexto(e.target.value)}
-              onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();buscarEnGsuite();}}}/>
-            <button type="button" style={{...S.exportBtn,whiteSpace:"nowrap"}} disabled={gBuscando} onClick={buscarEnGsuite}>
-              {gBuscando?"Buscando...":"🔍 Buscar"}
-            </button>
-          </div>
-          {gError&&<div style={{fontSize:12,color:C.warning,marginTop:6}}>{gError}</div>}
-          {gResultados&&(
-            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
-              {gResultados.map((r,i)=>(
-                <div key={i} style={{border:"1px solid "+C.border,borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
-                  <div style={{fontSize:12,color:C.textPrimary,lineHeight:1.5}}>
-                    <div><b>Folio {r.folio}</b> · {r.doc_type==="52"?"Guía Despacho":r.doc_type==="33"?"Factura":"Doc. tipo "+r.doc_type}</div>
-                    <div style={{color:C.muted}}>{r.cust_name}{r.cust_comuna?` — ${r.cust_comuna}`:""}</div>
-                    <div style={{color:C.muted}}>{r.orden_compra?`OC: ${r.orden_compra}`:""}{r.pedido_sap?`  ·  Pedido SAP: ${r.pedido_sap}`:""}</div>
-                    {r.factura_corta&&<div style={{color:C.muted}}>Delivery: {r.factura_corta}</div>}
-                  </div>
-                  <button type="button" style={{...S.btnPri,fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={()=>usarResultadoGsuite(r)}>Usar</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
         <div style={{...S.fGroup,gridColumn:"1/-1"}}><label style={S.label}>N° Guías / Documentos Cliente (separar con coma)</label>
           <input style={S.input} placeholder="Ej: Factura 001, Guía 123, OC 456" value={form.documentos} onChange={f("documentos")}/></div>
         <GuiasNegocioEditor
