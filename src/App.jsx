@@ -75,6 +75,25 @@ const PRIORIDAD_DEFAULT = {
 // Clientes válidos y destinos para Carga Operador Logístico
 const CARGA_OL_CLIENTES = ["000-2 - Dhl Atlantis","81.378.300-2 - Abbott Laboratories De Chile"];
 
+// ── Tiempo de Gestión (módulo estadística) ──────────────────────────────────
+// s.tiempoEnPunto se guarda como texto ("1h 5m 20s", "12m 34s", "45s"),
+// generado automáticamente por el cronómetro de la app chofer entre
+// "Marcar llegada" y el cierre de la solicitud (VistaChofer.cerrar) — no es
+// una estimación manual. Estos helpers lo convierten de vuelta a segundos
+// para poder promediar/comparar, y formatean segundos a texto legible.
+function tiempoEnPuntoASegundos(str) {
+  if (!str) return null;
+  const h = /(\d+)h/.exec(str), m = /(\d+)m/.exec(str), s = /(\d+)s/.exec(str);
+  if (!h && !m && !s) return null;
+  return (h ? Number(h[1]) * 3600 : 0) + (m ? Number(m[1]) * 60 : 0) + (s ? Number(s[1]) : 0);
+}
+function fmtSegundos(seg) {
+  if (seg == null || isNaN(seg)) return "—";
+  const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 // ── Unidad de negocio por guía (módulo 3 — retomado tras standby) ──────────
 // Las 5 quedan siempre visibles e independientes entre sí — ANI no se oculta
 // bajo CRM aunque Quantrex no tenga contrato directo con esa división, por
@@ -3865,6 +3884,103 @@ function DonutUnidadNegocio({solicitudes}){
   );
 }
 
+// ── Tiempo de Gestión: Carga en Operador Logístico vs Entrega en Cliente ──
+// Usa s.tiempoEnPunto, el cronómetro real de la app chofer (arranca al
+// "Marcar llegada" y se detiene al cerrar la solicitud) — no es una
+// estimación manual, así que promedio/mediana reflejan tiempo real en punto.
+// "Cumplimiento" se mide contra un umbral en minutos que el admin define por
+// período (metasMap[periodo].tiempo_carga_max / tiempo_entrega_max, mismo
+// mecanismo que las metas de facturación/costos). Sin umbral definido, la
+// tarjeta solo informa el promedio, sin calificarlo de cumplido o no.
+const TIPOS_TIEMPO_GESTION = [
+  { tipo:"carga_ol", kpi:"tiempo_carga_max",   label:"Carga en Operador Logístico", color:C.cyan },
+  { tipo:"entrega",  kpi:"tiempo_entrega_max", label:"Entrega en Cliente",          color:C.success },
+];
+function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
+  const [editando,setEditando]=useState(false);
+  const [umbralCarga,setUmbralCarga]=useState("");
+  const [umbralEntrega,setUmbralEntrega]=useState("");
+  const [guardando,setGuardando]=useState(false);
+
+  const umbrales={
+    carga_ol: metasMap?.[nombrePeriodo]?.tiempo_carga_max || null,
+    entrega: metasMap?.[nombrePeriodo]?.tiempo_entrega_max || null,
+  };
+
+  const bloques=TIPOS_TIEMPO_GESTION.map(cfg=>{
+    const segs=(solicitudes||[])
+      .filter(s=>s.tipo===cfg.tipo)
+      .map(s=>tiempoEnPuntoASegundos(s.tiempoEnPunto))
+      .filter(v=>v!=null&&v>=0);
+    const n=segs.length;
+    if(n===0) return {...cfg,n:0};
+    const prom=segs.reduce((a,b)=>a+b,0)/n;
+    const ordenado=[...segs].sort((a,b)=>a-b);
+    const mediana=n%2===1?ordenado[(n-1)/2]:(ordenado[n/2-1]+ordenado[n/2])/2;
+    const umbralMin=umbrales[cfg.tipo];
+    const umbralSeg=umbralMin?umbralMin*60:null;
+    const pctCumpl=umbralSeg?Math.round((segs.filter(v=>v<=umbralSeg).length/n)*100):null;
+    return {...cfg,n,prom,mediana,umbralMin,pctCumpl};
+  });
+
+  async function guardarUmbrales(){
+    setGuardando(true);
+    if(umbralCarga!=="") await onSaveMeta?.(nombrePeriodo,"tiempo_carga_max",Number(umbralCarga));
+    if(umbralEntrega!=="") await onSaveMeta?.(nombrePeriodo,"tiempo_entrega_max",Number(umbralEntrega));
+    setGuardando(false);
+    setEditando(false);
+  }
+
+  return (
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Tiempo de Gestión · {nombrePeriodo}</div>
+        {esAdmin&&(
+          <button style={{...S.exportBtn,fontSize:11,padding:"5px 12px"}} onClick={()=>{
+            setUmbralCarga(umbrales.carga_ol||""); setUmbralEntrega(umbrales.entrega||""); setEditando(o=>!o);
+          }}>{editando?"Cerrar":"Definir umbral SLA"}</button>
+        )}
+      </div>
+
+      {editando&&(
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end",background:C.navy,border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <label style={{fontSize:11,color:C.muted}}>Máx. Carga OL (min)</label>
+            <input style={{...S.input,width:100}} type="number" min="1" value={umbralCarga} onChange={e=>setUmbralCarga(e.target.value)} placeholder="Ej: 30"/>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <label style={{fontSize:11,color:C.muted}}>Máx. Entrega Cliente (min)</label>
+            <input style={{...S.input,width:100}} type="number" min="1" value={umbralEntrega} onChange={e=>setUmbralEntrega(e.target.value)} placeholder="Ej: 20"/>
+          </div>
+          <button style={S.btnPri} disabled={guardando} onClick={guardarUmbrales}>{guardando?"Guardando...":"Guardar umbral"}</button>
+          <div style={{fontSize:11,color:C.muted,width:"100%"}}>Minutos en el punto que se consideran "dentro de norma". El % de cumplimiento se calcula contra este umbral, por período — ajústalo cuando quieras, no queda fijo en el código.</div>
+        </div>
+      )}
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
+        {bloques.map(b=>(
+          <div key={b.tipo} style={{background:C.navy,border:"1px solid "+C.border,borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:6}}>
+            <div style={{fontSize:11,fontWeight:700,color:b.color}}>{b.label}</div>
+            {b.n===0?(
+              <div style={{fontSize:12,color:C.muted}}>Sin datos en el período.</div>
+            ):(<>
+              <div style={{fontSize:24,fontWeight:900,color:C.textPrimary,lineHeight:1}}>{fmtSegundos(b.prom)}</div>
+              <div style={{fontSize:11,color:C.muted}}>promedio · mediana {fmtSegundos(b.mediana)} · {b.n} solicitud{b.n===1?"":"es"}</div>
+              {b.pctCumpl!=null?(
+                <div style={{marginTop:4,fontSize:12,fontWeight:700,color:b.pctCumpl>=80?C.success:b.pctCumpl>=50?C.warning:C.danger}}>
+                  {b.pctCumpl}% dentro de {b.umbralMin} min
+                </div>
+              ):(
+                <div style={{marginTop:4,fontSize:11,color:C.muted,fontStyle:"italic"}}>Sin umbral SLA definido</div>
+              )}
+            </>)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,setFilterStatus,setFilterFecha,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
@@ -4022,6 +4138,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       })()}
       {esAdmin&&<DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>}
       </div>
+      <TiempoGestion solicitudes={solicitudesPeriodo} metasMap={metasMap} nombrePeriodo={nombrePeriodo} onSaveMeta={onSaveMeta} esAdmin={esAdmin}/>
       {!esCliente&&(
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
