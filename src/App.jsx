@@ -4146,19 +4146,36 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
 // Logística Inversa - Devolución (li_devol, vuelve a bodega DHL, no a un
 // cliente) — deja "entrega" y "li_retiro" (retiro de carga EN el cliente),
 // que sí son visitas físicas a instalaciones del cliente.
-function ClientesVisitados({solicitudes}){
-  const relevantes=(solicitudes||[]).filter(s=>s.tipo!=="carga_ol"&&s.tipo!=="li_devol");
-  const conteo={};
-  relevantes.forEach(s=>{
-    const cliente=s.titulo||"(sin cliente)";
-    conteo[cliente]=(conteo[cliente]||0)+1;
-  });
-  const ranking=Object.entries(conteo).sort((a,b)=>b[1]-a[1]);
+// El podio (top 3) compara cada cliente contra su propio conteo del período
+// anterior (mismo rango de días, un mes calendario atrás — los períodos de
+// facturación son fijos, 26→25, así que restar un mes da exactamente el
+// período anterior real, no un mes calendario cualquiera).
+const MEDALLAS_VISITAS=["🥇","🥈","🥉"];
+function ClientesVisitados({solicitudes,inicio,fin}){
+  const esVisita=s=>s.tipo!=="carga_ol"&&s.tipo!=="li_devol";
+  const contarPorCliente=lista=>{
+    const conteo={};
+    lista.forEach(s=>{ const c=s.titulo||"(sin cliente)"; conteo[c]=(conteo[c]||0)+1; });
+    return conteo;
+  };
+
+  const actuales=(solicitudes||[]).filter(s=>inicio&&fin&&fechaEnPeriodo(s.facturarEnPeriodo||s.fecha,inicio,fin)&&esVisita(s));
+
+  const inicioAnt=inicio?new Date(inicio.getFullYear(),inicio.getMonth()-1,inicio.getDate(),12,0,0):null;
+  const finAnt=fin?new Date(fin.getFullYear(),fin.getMonth()-1,fin.getDate(),12,0,0):null;
+  const anteriores=(inicioAnt&&finAnt)?(solicitudes||[]).filter(s=>fechaEnPeriodo(s.facturarEnPeriodo||s.fecha,inicioAnt,finAnt)&&esVisita(s)):[];
+
+  const conteoActual=contarPorCliente(actuales);
+  const conteoAnterior=contarPorCliente(anteriores);
+  const ranking=Object.entries(conteoActual).sort((a,b)=>b[1]-a[1]);
   const totalClientes=ranking.length;
-  const totalVisitas=relevantes.length;
+  const totalVisitas=actuales.length;
+  const hayDatosAnterior=anteriores.length>0;
+  const top3=ranking.slice(0,3);
+  const resto=ranking.slice(3);
 
   return (
-    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
       <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Clientes Visitados</div>
       {totalClientes===0?(
         <div style={{fontSize:12,color:C.muted}}>Aún no hay entregas/retiros registrados en este período.</div>
@@ -4173,15 +4190,42 @@ function ClientesVisitados({solicitudes}){
             <div style={{fontSize:11,color:C.muted,marginTop:2}}>visitas totales (Entrega + Retiro)</div>
           </div>
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:220,overflowY:"auto"}}>
-          {ranking.slice(0,15).map(([cliente,n])=>(
-            <div key={cliente} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
-              <span style={{flex:1,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente}</span>
-              <span style={{color:C.muted,fontWeight:700}}>{n} visita{n===1?"":"s"}</span>
-            </div>
-          ))}
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10}}>
+          {top3.map(([cliente,n],i)=>{
+            const nAnt=conteoAnterior[cliente]||0;
+            const delta=n-nAnt;
+            const esNuevo=!hayDatosAnterior;
+            return (
+              <div key={cliente} style={{background:C.navy,border:`1px solid ${i===0?C.warning+"66":C.border}`,borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:4}}>
+                <div style={{fontSize:20,lineHeight:1}}>{MEDALLAS_VISITAS[i]}</div>
+                <div style={{fontSize:12.5,fontWeight:700,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={cliente}>{cliente}</div>
+                <div style={{fontSize:22,fontWeight:900,color:C.textPrimary,lineHeight:1}}>{n} <span style={{fontSize:11,fontWeight:600,color:C.muted}}>visita{n===1?"":"s"}</span></div>
+                {esNuevo?(
+                  <div style={{fontSize:11,color:C.muted}}>Sin datos del período anterior</div>
+                ):delta===0?(
+                  <div style={{fontSize:11,color:C.muted}}>= que el período anterior</div>
+                ):delta>0?(
+                  <div style={{fontSize:11,color:C.success,fontWeight:700}}>▲ +{delta} vs. período anterior ({nAnt})</div>
+                ):(
+                  <div style={{fontSize:11,color:C.danger,fontWeight:700}}>▼ {delta} vs. período anterior ({nAnt})</div>
+                )}
+              </div>
+            );
+          })}
         </div>
-        {ranking.length>15&&<div style={{fontSize:11,color:C.muted}}>+ {ranking.length-15} cliente{ranking.length-15===1?"":"s"} más en el período.</div>}
+
+        {resto.length>0&&(
+          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:180,overflowY:"auto"}}>
+            {resto.slice(0,12).map(([cliente,n])=>(
+              <div key={cliente} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
+                <span style={{flex:1,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente}</span>
+                <span style={{color:C.muted,fontWeight:700}}>{n} visita{n===1?"":"s"}</span>
+              </div>
+            ))}
+            {resto.length>12&&<div style={{fontSize:11,color:C.muted}}>+ {resto.length-12} cliente{resto.length-12===1?"":"s"} más en el período.</div>}
+          </div>
+        )}
       </>)}
     </div>
   );
@@ -4345,7 +4389,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&<DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>}
       </div>
       <TiempoGestion solicitudes={solicitudesPeriodo} metasMap={metasMap} nombrePeriodo={nombrePeriodo} onSaveMeta={onSaveMeta} esAdmin={esAdmin}/>
-      {esAdmin&&<ClientesVisitados solicitudes={solicitudesPeriodo}/>}
+      {esAdmin&&<ClientesVisitados solicitudes={solicitudes} inicio={inicio} fin={fin}/>}
       {!esCliente&&(
       <div style={S.statsGrid}>
         {[["Total","total",stats.total,C.cyan],["Pendientes","pendiente",stats.pendiente,C.warning],["En Tránsito","en_proceso",stats.en_proceso,C.info],["Completadas","completada",stats.completada+stats.devolucion,C.success],
