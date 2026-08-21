@@ -7813,7 +7813,70 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
   );
 }
 
-// ── Dashboard de Incidencias (resumen visual para gestión interna y cliente)
+// ── Dashboard de Incidencias (resumen visual estilo dona, para gestión
+// interna y cliente) — mismo patrón que el donut de Unidad de Negocio.
+const COLORES_CONTRAPARTE = {
+  "Abbott": C.cyan,
+  "DHL": C.warning,
+  "Abbott / DHL": C.info,
+  "Cliente Final": C.success,
+  "Sin especificar": C.muted,
+};
+// Consolida el texto libre del campo "contraparte" en categorías estables
+// (Abbott, DHL, Abbott / DHL, Cliente Final) en vez de agrupar por persona
+// o razón social exacta.
+function categorizarContraparte(texto){
+  const t=(texto||"").toLowerCase().trim();
+  if(!t) return "Sin especificar";
+  const esAbbott=t.includes("abbott");
+  const esDHL=t.includes("dhl");
+  if(esAbbott&&esDHL) return "Abbott / DHL";
+  if(esAbbott) return "Abbott";
+  if(esDHL) return "DHL";
+  return "Cliente Final";
+}
+
+function MiniDonut({segmentos=[],centerLabel,centerSub,size=120}){
+  const R=50, STROKE=18, CIRC=2*Math.PI*R;
+  const total=segmentos.reduce((a,s)=>a+s.n,0);
+  let acumulado=0;
+  const segs=segmentos.filter(s=>s.n>0).map(s=>{
+    const frac=total?s.n/total:0;
+    const seg={...s,frac,offset:acumulado};
+    acumulado+=frac;
+    return seg;
+  });
+  if(total===0) return <div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
+      <div style={{position:"relative",width:size,height:size,flexShrink:0}}>
+        <svg width={size} height={size} viewBox="0 0 120 120" style={{transform:"rotate(-90deg)"}}>
+          <circle cx={60} cy={60} r={R} fill="none" stroke={C.navy} strokeWidth={STROKE}/>
+          {segs.map((seg,i)=>(
+            <circle key={i} cx={60} cy={60} r={R} fill="none"
+              stroke={seg.color||C.muted} strokeWidth={STROKE}
+              strokeDasharray={`${seg.frac*CIRC} ${CIRC}`}
+              strokeDashoffset={-seg.offset*CIRC}/>
+          ))}
+        </svg>
+        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+          <div style={{fontSize:22,fontWeight:900,color:C.textPrimary,lineHeight:1}}>{centerLabel!=null?centerLabel:total}</div>
+          {centerSub&&<div style={{fontSize:9,color:C.muted,marginTop:2}}>{centerSub}</div>}
+        </div>
+      </div>
+      <div style={{flex:1,minWidth:150,display:"flex",flexDirection:"column",gap:6}}>
+        {segs.map((seg,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
+            <span style={{width:10,height:10,borderRadius:"50%",background:seg.color||C.muted,flexShrink:0}}/>
+            <span style={{color:C.textPrimary,fontWeight:700,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{seg.icon?seg.icon+" ":""}{seg.label}</span>
+            <span style={{color:C.muted,flexShrink:0}}>{seg.n} · {Math.round(seg.frac*100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function IncidenciasDashboard({incidencias=[],clientes=[]}){
   const total=incidencias.length;
   const porTipo=Object.entries(TIPO_INCIDENCIA).map(([k,m])=>({
@@ -7828,10 +7891,12 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
 
   const contraparteMap={};
   incidencias.forEach(i=>{
-    const key=(i.contraparte||"Sin contraparte asignada").trim()||"Sin contraparte asignada";
-    contraparteMap[key]=(contraparteMap[key]||0)+1;
+    const cat=categorizarContraparte(i.contraparte);
+    contraparteMap[cat]=(contraparteMap[cat]||0)+1;
   });
-  const porContraparte=Object.entries(contraparteMap).map(([label,n])=>({label,n})).sort((a,b)=>b.n-a.n).slice(0,6);
+  const porContraparte=Object.entries(contraparteMap)
+    .map(([label,n])=>({label,n,color:COLORES_CONTRAPARTE[label]||C.muted}))
+    .sort((a,b)=>b.n-a.n);
 
   const mesMap={};
   incidencias.forEach(i=>{
@@ -7845,20 +7910,7 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
   const notificadas=incidencias.filter(i=>i.notificado).length;
   const cerradas=incidencias.filter(i=>i.estado==="cerrada").length;
   const tasaCierre = total?Math.round((cerradas/total)*100):0;
-
-  const maxTipo=Math.max(1,...porTipo.map(t=>t.n));
   const maxMes=Math.max(1,...porMes.map(m=>m.n));
-  const maxContraparte=Math.max(1,...porContraparte.map(c=>c.n));
-
-  const barRow=(label,n,max,color,icon)=>(
-    <div key={label} style={{display:"flex",alignItems:"center",gap:10}}>
-      <div style={{width:150,fontSize:12,color:C.textSecondary,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{icon?icon+" ":""}{label}</div>
-      <div style={{flex:1,background:C.navy,borderRadius:6,height:16,overflow:"hidden",border:`1px solid ${C.border}`}}>
-        <div style={{width:`${Math.max(4,(n/max)*100)}%`,height:"100%",background:color,borderRadius:6,transition:"width .3s"}}/>
-      </div>
-      <div style={{width:26,textAlign:"right",fontSize:12,fontWeight:800,color,flexShrink:0}}>{n}</div>
-    </div>
-  );
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -7877,26 +7929,20 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
         </div>
       </div>
 
-      <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
-        <div style={S.sectionTitle}>Por tipo de incidencia</div>
-        {porTipo.length===0
-          ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
-          :porTipo.map(t=>barRow(t.label,t.n,maxTipo,t.color,t.icon))}
-      </div>
-
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16}}>
-        <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
-          <div style={S.sectionTitle}>Por estado</div>
-          {porEstado.every(e=>e.n===0)
-            ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
-            :porEstado.map(e=>barRow(e.label,e.n,Math.max(1,...porEstado.map(x=>x.n)),e.color))}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
+        <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>
+          <div style={S.sectionTitle}>Por tipo de incidencia</div>
+          <MiniDonut segmentos={porTipo} centerLabel={total} centerSub="incidencias"/>
         </div>
 
-        <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>
+          <div style={S.sectionTitle}>Por estado</div>
+          <MiniDonut segmentos={porEstado} centerLabel={total} centerSub="incidencias"/>
+        </div>
+
+        <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>
           <div style={S.sectionTitle}>Contraparte con más incidencias</div>
-          {porContraparte.length===0
-            ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
-            :porContraparte.map(c=>barRow(c.label,c.n,maxContraparte,C.cyan))}
+          <MiniDonut segmentos={porContraparte} centerLabel={total} centerSub="incidencias"/>
         </div>
       </div>
 
@@ -7917,6 +7963,7 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
     </div>
   );
 }
+
 
 // Exportador de resumen de incidencias — genera un Excel con hoja ejecutiva
 // (para compartir con el cliente/Abbott) y hoja de detalle completo.
