@@ -3905,30 +3905,73 @@ const UMBRAL_SLA_DEFAULT = { carga_ol:15, entrega:20 };
 // celdas y es más difícil de leer de un vistazo que ver la tendencia día a
 // día contra la línea de SLA — si más adelante el volumen diario crece,
 // vale la pena revisar un heatmap por franja horaria.
-function MiniEvolutivoTiempo({puntos,umbralMin,color}){
+// Mini gráfico evolutivo (área con degradado): promedio de tiempo en punto
+// por día, dentro del período mostrado. El área bajo la línea se pinta con
+// degradado en el color de la serie; el tramo que queda POR ENCIMA del
+// umbral SLA se resalta en rojo (vía clipPath, recortando la misma área
+// contra la franja superior a la línea de umbral) — mismo lenguaje visual
+// de "dos tonos" que un área Completo/Incompleto, aplicado a un umbral en
+// vez de una meta acumulada. Los puntos que superan el SLA son los únicos
+// interactivos: al pasar el cursor muestran qué solicitud(es) de ese día
+// causaron el exceso.
+function MiniEvolutivoTiempo({puntos,umbralMin,color,tipo}){
+  const [hoverIdx,setHoverIdx]=useState(null);
   if(!puntos.length) return null;
-  const HBAR=90;
+  const H=100;
+  const n=puntos.length;
   const maxMin=Math.max(umbralMin||0,...puntos.map(p=>p.min))*1.15||1;
-  const yUmbral=umbralMin?HBAR-6-((umbralMin/maxMin)*(HBAR-16)):null;
+  const yFor=min=>H-10-((min/maxMin)*(H-24));
+  const xFor=i=>n>1?(i/(n-1))*100:50;
+  const yUmbral=umbralMin!=null?yFor(umbralMin):null;
+  const pts=puntos.map((p,i)=>({...p,x:xFor(i),y:yFor(p.min),sobre:umbralMin!=null&&p.min>umbralMin}));
+  const linea=pts.map(p=>`${p.x},${p.y}`).join(" ");
+  const areaPath=`M${pts[0].x},${H} L ${pts.map(p=>`${p.x},${p.y}`).join(" L ")} L ${pts[pts.length-1].x},${H} Z`;
+  const gradId=`grad-tiempo-${tipo}`, clipId=`clip-sobre-${tipo}`;
+
   return (
-    <div style={{position:"relative",height:HBAR,marginTop:4}}>
-      <div style={{position:"absolute",inset:0,display:"flex",alignItems:"flex-end",gap:3}}>
-        {puntos.map((p,i)=>{
-          const h=Math.max(2,(p.min/maxMin)*(HBAR-16));
-          const sobre=umbralMin!=null&&p.min>umbralMin;
-          return (
-            <div key={i} style={{flex:1,minWidth:0,display:"flex",alignItems:"flex-end",height:"100%"}}
-              title={`${p.fechaLabel}: ${fmtSegundos(p.min*60)} promedio (${p.n} solicitud${p.n===1?"":"es"})${sobre?" · sobre SLA":""}`}>
-              <div style={{width:"100%",height:h,background:sobre?C.danger:color,borderRadius:"3px 3px 0 0",opacity:sobre?0.9:0.75}}/>
-            </div>
-          );
-        })}
+    <div style={{position:"relative",height:H+16,marginTop:6}}>
+      <svg viewBox={`0 0 100 ${H}`} preserveAspectRatio="none" style={{position:"absolute",inset:0,width:"100%",height:H,overflow:"visible"}}>
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.55"/>
+            <stop offset="100%" stopColor={color} stopOpacity="0.03"/>
+          </linearGradient>
+          {yUmbral!=null&&(
+            <clipPath id={clipId}><rect x="0" y="0" width="100" height={Math.max(0,yUmbral)}/></clipPath>
+          )}
+        </defs>
+        <path d={areaPath} fill={`url(#${gradId})`} stroke="none"/>
+        {yUmbral!=null&&<path d={areaPath} fill={C.danger} fillOpacity="0.38" stroke="none" clipPath={`url(#${clipId})`}/>}
+        <polyline points={linea} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+        {yUmbral!=null&&<line x1="0" y1={yUmbral} x2="100" y2={yUmbral} stroke={C.muted} strokeWidth="0.6" strokeDasharray="2,2" vectorEffect="non-scaling-stroke"/>}
+        {pts.map((p,i)=>(
+          <circle key={i} cx={p.x} cy={p.y} r={p.sobre?2.2:1.5} fill={p.sobre?C.danger:C.navySurface} stroke={p.sobre?C.danger:color} strokeWidth="1.4" vectorEffect="non-scaling-stroke"/>
+        ))}
+      </svg>
+      {yUmbral!=null&&<span style={{position:"absolute",right:0,top:Math.max(0,yUmbral-14),fontSize:9,color:C.muted}}>{umbralMin}m SLA</span>}
+      <div style={{position:"absolute",inset:0,display:"flex"}}>
+        {pts.map((p,i)=>(
+          <div key={i} style={{flex:1,position:"relative",cursor:p.sobre?"pointer":"default"}}
+            onMouseEnter={()=>p.sobre&&setHoverIdx(i)} onMouseLeave={()=>p.sobre&&setHoverIdx(null)}>
+            {!p.sobre&&(
+              <div style={{position:"absolute",inset:0}} title={`${p.fechaLabel}: ${fmtSegundos(p.min*60)} promedio (${p.n} solicitud${p.n===1?"":"es"})`}/>
+            )}
+            {p.sobre&&hoverIdx===i&&(
+              <div style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",marginBottom:6,zIndex:70,minWidth:200,maxWidth:280,background:C.navySurface,border:`1px solid ${C.danger}66`,borderRadius:10,boxShadow:"0 10px 28px #00000066",padding:"8px 10px",display:"flex",flexDirection:"column",gap:5}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.danger,letterSpacing:.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>{p.fechaLabel} · sobre los {umbralMin} min</div>
+                {p.excedidos.map(({s,seg})=>(
+                  <div key={s.id} style={{fontSize:11,color:C.textPrimary}}>
+                    <div style={{display:"flex",justifyContent:"space-between",gap:6}}>
+                      <span style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.titulo||"(sin cliente)"}</span>
+                      <span style={{color:C.danger,fontWeight:700,whiteSpace:"nowrap"}}>{fmtSegundos(seg)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
-      {yUmbral!=null&&(
-        <div style={{position:"absolute",left:0,right:0,top:yUmbral,borderTop:`1px dashed ${C.muted}`,pointerEvents:"none"}}>
-          <span style={{position:"absolute",right:0,top:-14,fontSize:9,color:C.muted}}>{umbralMin}m SLA</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -3938,7 +3981,6 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
   const [umbralCarga,setUmbralCarga]=useState("");
   const [umbralEntrega,setUmbralEntrega]=useState("");
   const [guardando,setGuardando]=useState(false);
-  const [hoverAlerta,setHoverAlerta]=useState(null); // tipo con el mouse encima del badge ⚠
 
   const umbrales={
     carga_ol: metasMap?.[nombrePeriodo]?.tiempo_carga_max || UMBRAL_SLA_DEFAULT.carga_ol,
@@ -3960,13 +4002,16 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
     const mediana=n%2===1?ordenado[(n-1)/2]:(ordenado[n/2-1]+ordenado[n/2])/2;
     const pctCumpl=umbralSeg?Math.round((segs.filter(v=>v<=umbralSeg).length/n)*100):null;
     const excedidos=umbralSeg?items.filter(x=>x.seg>umbralSeg).sort((a,b)=>b.seg-a.seg):[];
-    // Serie diaria (día del período con al menos un dato), ordenada por fecha.
+    // Serie diaria (día del período con al menos un dato), con el detalle de
+    // qué solicitudes de ese día superaron el SLA (para el popover del gráfico).
     const porDia={};
-    items.forEach(({s,seg})=>{ if(!s.fecha) return; (porDia[s.fecha]=porDia[s.fecha]||[]).push(seg); });
+    items.forEach(it=>{ if(!it.s.fecha) return; (porDia[it.s.fecha]=porDia[it.s.fecha]||[]).push(it); });
     const puntos=Object.keys(porDia).sort().map(f=>{
       const arr=porDia[f];
+      const segsDia=arr.map(x=>x.seg);
       const [y,m,d]=f.split("-");
-      return { fecha:f, fechaLabel:`${d}/${m}`, min:Math.round((arr.reduce((a,b)=>a+b,0)/arr.length)/60), n:arr.length };
+      const excedidosDia=umbralSeg?arr.filter(x=>x.seg>umbralSeg).sort((a,b)=>b.seg-a.seg):[];
+      return { fecha:f, fechaLabel:`${d}/${m}`, min:Math.round((segsDia.reduce((a,b)=>a+b,0)/segsDia.length)/60), n:segsDia.length, excedidos:excedidosDia };
     });
     return {...cfg,n,prom,mediana,umbralMin,pctCumpl,excedidos,puntos};
   });
@@ -4023,30 +4068,12 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
                   <div style={{marginTop:4,fontSize:11,color:C.muted,fontStyle:"italic"}}>Sin umbral SLA definido</div>
                 )}
                 {b.excedidos.length>0&&(
-                  <div style={{position:"relative",marginTop:4}}
-                    onMouseEnter={()=>setHoverAlerta(b.tipo)}
-                    onMouseLeave={()=>setHoverAlerta(null)}>
-                    <span style={{fontSize:11,fontWeight:700,color:C.danger,cursor:"default",borderBottom:`1px dotted ${C.danger}88`}}>
-                      ⚠ {b.excedidos.length} sobre el SLA
-                    </span>
-                    {hoverAlerta===b.tipo&&(
-                      <div style={{position:"absolute",top:"calc(100% + 8px)",left:0,zIndex:60,minWidth:260,maxWidth:340,maxHeight:280,overflowY:"auto",background:C.navySurface,border:`1px solid ${C.danger}66`,borderRadius:10,boxShadow:"0 10px 28px #00000066",padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
-                        <div style={{fontSize:11,fontWeight:700,color:C.danger,letterSpacing:.5,textTransform:"uppercase"}}>Sobre los {b.umbralMin} min de SLA</div>
-                        {b.excedidos.map(({s,seg})=>(
-                          <div key={s.id} style={{fontSize:12,color:C.textPrimary,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
-                            <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
-                              <span style={{fontWeight:600}}>{s.titulo||"(sin cliente)"}</span>
-                              <span style={{color:C.danger,fontWeight:700,whiteSpace:"nowrap"}}>{fmtSegundos(seg)}</span>
-                            </div>
-                            <div style={{fontSize:11,color:C.muted}}>{s.guia?`Guía ${s.guia}`:s.ot?`OT ${s.ot}`:"Sin N° de guía"}{s.fecha?` · ${s.fecha}`:""}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  <div style={{marginTop:4,fontSize:11,fontWeight:700,color:C.danger}} title="Pasa el cursor sobre los puntos rojos del gráfico para ver el detalle">
+                    ⚠ {b.excedidos.length} sobre el SLA
                   </div>
                 )}
               </div>
-              <MiniEvolutivoTiempo puntos={b.puntos} umbralMin={b.umbralMin} color={b.color}/>
+              <MiniEvolutivoTiempo puntos={b.puntos} umbralMin={b.umbralMin} color={b.color} tipo={b.tipo}/>
             </>)}
           </div>
         ))}
