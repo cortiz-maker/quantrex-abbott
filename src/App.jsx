@@ -7563,11 +7563,13 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
 function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],clientes=[]}){
   const puedeEditar = ["admin","operador"].includes(sesion?.perfil);
   const puedeEliminar = sesion?.perfil==="admin";
+  const puedeExportar = ["admin","operador"].includes(sesion?.perfil);
   const [nuevo,setNuevo]=useState(false);
   const [editId,setEditId]=useState(null);
   const [expandId,setExpandId]=useState(null);
   const [fEstado,setFEstado]=useState("todas");
   const [fTipo,setFTipo]=useState("todos");
+  const [vista,setVista]=useState("lista"); // "lista" | "dashboard"
   const EMPTY={fecha:new Date().toISOString().slice(0,10),tipo:"anden_incompatible",contraparte:"",ubicacion:"",descripcion:"",fotos:[],notificado:false,fechaNotificacion:"",estado:"abierta"};
   const [form,setForm]=useState(EMPTY);
   const [subiendo,setSubiendo]=useState(false);
@@ -7673,7 +7675,14 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
           <div style={S.pageTitle}>Incidencias</div>
           <div style={{fontSize:12,color:C.textSecondary,marginTop:2}}>No conformidades, cumplimiento NT147 y hallazgos operativos.</div>
         </div>
-        {puedeEditar&&!nuevo&&<button style={S.btnPri} onClick={iniciarNueva}>+ Nueva incidencia</button>}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <div style={{display:"flex",background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:8,padding:2}}>
+            <button style={{...S.navBtn,padding:"6px 12px",fontSize:12,...(vista==="lista"?S.navBtnActive:{})}} onClick={()=>setVista("lista")}>☰ Lista</button>
+            <button style={{...S.navBtn,padding:"6px 12px",fontSize:12,...(vista==="dashboard"?S.navBtnActive:{})}} onClick={()=>setVista("dashboard")}>📊 Dashboard</button>
+          </div>
+          {puedeExportar&&<button style={S.exportBtn} onClick={()=>exportarResumenIncidencias(incidencias)}>⬇ Exportar resumen</button>}
+          {puedeEditar&&!nuevo&&<button style={S.btnPri} onClick={iniciarNueva}>+ Nueva incidencia</button>}
+        </div>
       </div>
 
       <div style={S.statsGrid}>
@@ -7683,7 +7692,9 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
         <div style={{...S.statCard,borderTop:`3px solid ${C.cyan}`}}><div style={{...S.statNum,color:C.cyan}}>{incidencias.length}</div><div style={S.statLabel}>Total</div></div>
       </div>
 
-      {nuevo&&(
+      {vista==="dashboard"&&<IncidenciasDashboard incidencias={incidencias} clientes={clientes}/>}
+
+      {vista==="lista"&&nuevo&&(
         <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:12}}>
           <div style={{fontSize:13,fontWeight:800,color:C.cyan}}>{editId?"Editar incidencia":"Nueva incidencia"}</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}>
@@ -7736,7 +7747,7 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
         </div>
       )}
 
-      <div style={S.filters}>
+      {vista==="lista"&&(<div style={S.filters}>
         <select style={S.select} value={fEstado} onChange={e=>setFEstado(e.target.value)}>
           <option value="todas">Todos los estados</option>
           {Object.entries(ESTADO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.label}</option>)}
@@ -7745,9 +7756,9 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
           <option value="todos">Todos los tipos</option>
           {Object.entries(TIPO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.icon} {m.label}</option>)}
         </select>
-      </div>
+      </div>)}
 
-      {lista.length===0?(
+      {vista==="lista"&&(lista.length===0?(
         <EmptyState msg="Sin incidencias registradas para este filtro."/>
       ):lista.map(i=>{
         const tm=metaTipoIncidencia(i.tipo);
@@ -7797,10 +7808,171 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
             )}
           </div>
         );
-      })}
+      }))}
     </div>
   );
 }
+
+// ── Dashboard de Incidencias (resumen visual para gestión interna y cliente)
+function IncidenciasDashboard({incidencias=[],clientes=[]}){
+  const total=incidencias.length;
+  const porTipo=Object.entries(TIPO_INCIDENCIA).map(([k,m])=>({
+    key:k, label:m.label, icon:m.icon, color:m.color,
+    n:incidencias.filter(i=>i.tipo===k).length,
+  })).filter(t=>t.n>0).sort((a,b)=>b.n-a.n);
+
+  const porEstado=Object.entries(ESTADO_INCIDENCIA).map(([k,m])=>({
+    key:k, label:m.label, color:m.color,
+    n:incidencias.filter(i=>i.estado===k).length,
+  }));
+
+  const contraparteMap={};
+  incidencias.forEach(i=>{
+    const key=(i.contraparte||"Sin contraparte asignada").trim()||"Sin contraparte asignada";
+    contraparteMap[key]=(contraparteMap[key]||0)+1;
+  });
+  const porContraparte=Object.entries(contraparteMap).map(([label,n])=>({label,n})).sort((a,b)=>b.n-a.n).slice(0,6);
+
+  const mesMap={};
+  incidencias.forEach(i=>{
+    const mes=(i.fecha||"").slice(0,7); // YYYY-MM
+    if(!mes)return;
+    mesMap[mes]=(mesMap[mes]||0)+1;
+  });
+  const porMes=Object.entries(mesMap).sort((a,b)=>a[0].localeCompare(b[0])).slice(-6)
+    .map(([mes,n])=>({mes,n,label:new Date(mes+"-01T12:00:00").toLocaleDateString("es-CL",{month:"short",year:"2-digit"})}));
+
+  const notificadas=incidencias.filter(i=>i.notificado).length;
+  const cerradas=incidencias.filter(i=>i.estado==="cerrada").length;
+  const tasaCierre = total?Math.round((cerradas/total)*100):0;
+
+  const maxTipo=Math.max(1,...porTipo.map(t=>t.n));
+  const maxMes=Math.max(1,...porMes.map(m=>m.n));
+  const maxContraparte=Math.max(1,...porContraparte.map(c=>c.n));
+
+  const barRow=(label,n,max,color,icon)=>(
+    <div key={label} style={{display:"flex",alignItems:"center",gap:10}}>
+      <div style={{width:150,fontSize:12,color:C.textSecondary,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{icon?icon+" ":""}{label}</div>
+      <div style={{flex:1,background:C.navy,borderRadius:6,height:16,overflow:"hidden",border:`1px solid ${C.border}`}}>
+        <div style={{width:`${Math.max(4,(n/max)*100)}%`,height:"100%",background:color,borderRadius:6,transition:"width .3s"}}/>
+      </div>
+      <div style={{width:26,textAlign:"right",fontSize:12,fontWeight:800,color,flexShrink:0}}>{n}</div>
+    </div>
+  );
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}}>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.cyan}`}}>
+          <div style={{...S.statNum,fontSize:26,color:C.cyan}}>{tasaCierre}%</div>
+          <div style={S.statLabel}>Tasa de cierre</div>
+        </div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.success}`}}>
+          <div style={{...S.statNum,fontSize:26,color:C.success}}>{notificadas}</div>
+          <div style={S.statLabel}>Notificadas a la contraparte</div>
+        </div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.warning}`}}>
+          <div style={{...S.statNum,fontSize:26,color:C.warning}}>{total-notificadas}</div>
+          <div style={S.statLabel}>Sin notificar</div>
+        </div>
+      </div>
+
+      <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+        <div style={S.sectionTitle}>Por tipo de incidencia</div>
+        {porTipo.length===0
+          ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
+          :porTipo.map(t=>barRow(t.label,t.n,maxTipo,t.color,t.icon))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16}}>
+        <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+          <div style={S.sectionTitle}>Por estado</div>
+          {porEstado.every(e=>e.n===0)
+            ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
+            :porEstado.map(e=>barRow(e.label,e.n,Math.max(1,...porEstado.map(x=>x.n)),e.color))}
+        </div>
+
+        <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+          <div style={S.sectionTitle}>Contraparte con más incidencias</div>
+          {porContraparte.length===0
+            ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
+            :porContraparte.map(c=>barRow(c.label,c.n,maxContraparte,C.cyan))}
+        </div>
+      </div>
+
+      <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+        <div style={S.sectionTitle}>Tendencia mensual</div>
+        {porMes.length===0
+          ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
+          :<div style={{display:"flex",alignItems:"flex-end",gap:14,height:120,padding:"0 4px"}}>
+            {porMes.map(m=>(
+              <div key={m.mes} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,flex:1}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.cyan}}>{m.n}</div>
+                <div style={{width:"100%",maxWidth:34,height:Math.max(6,(m.n/maxMes)*84),background:`linear-gradient(180deg,${C.cyan},${C.blue})`,borderRadius:"6px 6px 0 0"}}/>
+                <div style={{fontSize:10,color:C.textSecondary,textTransform:"capitalize"}}>{m.label}</div>
+              </div>
+            ))}
+          </div>}
+      </div>
+    </div>
+  );
+}
+
+// Exportador de resumen de incidencias — genera un Excel con hoja ejecutiva
+// (para compartir con el cliente/Abbott) y hoja de detalle completo.
+function exportarResumenIncidencias(incidencias=[]){
+  const total=incidencias.length;
+  const abiertas=incidencias.filter(i=>i.estado==="abierta").length;
+  const enRevision=incidencias.filter(i=>i.estado==="en_revision").length;
+  const cerradas=incidencias.filter(i=>i.estado==="cerrada").length;
+  const notificadas=incidencias.filter(i=>i.notificado).length;
+
+  const porTipoMap={};
+  incidencias.forEach(i=>{
+    const label=metaTipoIncidencia(i.tipo).label;
+    porTipoMap[label]=(porTipoMap[label]||0)+1;
+  });
+
+  const resumen=[
+    ["QUANTREX · Resumen de Incidencias"],
+    [`Generado el ${new Date().toLocaleDateString("es-CL",{day:"2-digit",month:"long",year:"numeric"})}`],
+    [],
+    ["Indicador","Valor"],
+    ["Total de incidencias",total],
+    ["Abiertas",abiertas],
+    ["En revisión",enRevision],
+    ["Cerradas",cerradas],
+    ["Tasa de cierre", total?`${Math.round((cerradas/total)*100)}%`:"0%"],
+    ["Notificadas a la contraparte",notificadas],
+    ["Sin notificar",total-notificadas],
+    [],
+    ["Incidencias por tipo"],
+    ["Tipo","N°"],
+    ...Object.entries(porTipoMap).sort((a,b)=>b[1]-a[1]),
+  ];
+
+  const detalle=[
+    ["Folio","Fecha","Tipo","Estado","Contraparte","Ubicación","Notificado","Fecha notificación","Descripción","Registrado por"],
+    ...incidencias
+      .slice()
+      .sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""))
+      .map(i=>[
+        i.folio||"", i.fecha||"", metaTipoIncidencia(i.tipo).label, (ESTADO_INCIDENCIA[i.estado]||{}).label||i.estado,
+        i.contraparte||"", i.ubicacion||"", i.notificado?"Sí":"No", i.fechaNotificacion||"",
+        i.descripcion||"", i.autor||"",
+      ]),
+  ];
+
+  const wb=XLSX.utils.book_new();
+  const wsResumen=XLSX.utils.aoa_to_sheet(resumen);
+  wsResumen["!cols"]=[{wch:34},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,wsResumen,"Resumen Ejecutivo");
+  const wsDetalle=XLSX.utils.aoa_to_sheet(detalle);
+  wsDetalle["!cols"]=[{wch:12},{wch:12},{wch:26},{wch:14},{wch:22},{wch:22},{wch:10},{wch:16},{wch:50},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,wsDetalle,"Detalle");
+  XLSX.writeFile(wb,`Quantrex_Incidencias_Resumen_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
 function estadoVencimiento(fecha){
   if(!fecha) return null;
   const hoy=new Date(); hoy.setHours(0,0,0,0);
