@@ -3888,39 +3888,87 @@ function DonutUnidadNegocio({solicitudes}){
 // Usa s.tiempoEnPunto, el cronómetro real de la app chofer (arranca al
 // "Marcar llegada" y se detiene al cerrar la solicitud) — no es una
 // estimación manual, así que promedio/mediana reflejan tiempo real en punto.
-// "Cumplimiento" se mide contra un umbral en minutos que el admin define por
-// período (metasMap[periodo].tiempo_carga_max / tiempo_entrega_max, mismo
-// mecanismo que las metas de facturación/costos). Sin umbral definido, la
-// tarjeta solo informa el promedio, sin calificarlo de cumplido o no.
+// "Cumplimiento" se mide contra un umbral en minutos, con default 15 min
+// (Carga OL) y 20 min (Entrega Cliente) — ajustable por período desde
+// "Definir umbral SLA" (metasMap[periodo].tiempo_carga_max / tiempo_entrega_max,
+// mismo mecanismo que las metas de facturación/costos).
 const TIPOS_TIEMPO_GESTION = [
   { tipo:"carga_ol", kpi:"tiempo_carga_max",   label:"Carga en Operador Logístico", color:C.cyan },
   { tipo:"entrega",  kpi:"tiempo_entrega_max", label:"Entrega en Cliente",          color:C.success },
 ];
+const UMBRAL_SLA_DEFAULT = { carga_ol:15, entrega:20 };
+
+// Mini gráfico evolutivo: promedio de tiempo en punto por día, dentro del
+// período mostrado, con línea de referencia en el umbral SLA. Se eligió
+// evolutivo (barras por día) en vez de mapa de calor porque con un mes de
+// datos el mapa de calor (día × hora) queda casi vacío en la mayoría de
+// celdas y es más difícil de leer de un vistazo que ver la tendencia día a
+// día contra la línea de SLA — si más adelante el volumen diario crece,
+// vale la pena revisar un heatmap por franja horaria.
+function MiniEvolutivoTiempo({puntos,umbralMin,color}){
+  if(!puntos.length) return null;
+  const HBAR=90;
+  const maxMin=Math.max(umbralMin||0,...puntos.map(p=>p.min))*1.15||1;
+  const yUmbral=umbralMin?HBAR-6-((umbralMin/maxMin)*(HBAR-16)):null;
+  return (
+    <div style={{position:"relative",height:HBAR,marginTop:4}}>
+      <div style={{position:"absolute",inset:0,display:"flex",alignItems:"flex-end",gap:3}}>
+        {puntos.map((p,i)=>{
+          const h=Math.max(2,(p.min/maxMin)*(HBAR-16));
+          const sobre=umbralMin!=null&&p.min>umbralMin;
+          return (
+            <div key={i} style={{flex:1,minWidth:0,display:"flex",alignItems:"flex-end",height:"100%"}}
+              title={`${p.fechaLabel}: ${fmtSegundos(p.min*60)} promedio (${p.n} solicitud${p.n===1?"":"es"})${sobre?" · sobre SLA":""}`}>
+              <div style={{width:"100%",height:h,background:sobre?C.danger:color,borderRadius:"3px 3px 0 0",opacity:sobre?0.9:0.75}}/>
+            </div>
+          );
+        })}
+      </div>
+      {yUmbral!=null&&(
+        <div style={{position:"absolute",left:0,right:0,top:yUmbral,borderTop:`1px dashed ${C.muted}`,pointerEvents:"none"}}>
+          <span style={{position:"absolute",right:0,top:-14,fontSize:9,color:C.muted}}>{umbralMin}m SLA</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
   const [editando,setEditando]=useState(false);
   const [umbralCarga,setUmbralCarga]=useState("");
   const [umbralEntrega,setUmbralEntrega]=useState("");
   const [guardando,setGuardando]=useState(false);
+  const [hoverAlerta,setHoverAlerta]=useState(null); // tipo con el mouse encima del badge ⚠
 
   const umbrales={
-    carga_ol: metasMap?.[nombrePeriodo]?.tiempo_carga_max || null,
-    entrega: metasMap?.[nombrePeriodo]?.tiempo_entrega_max || null,
+    carga_ol: metasMap?.[nombrePeriodo]?.tiempo_carga_max || UMBRAL_SLA_DEFAULT.carga_ol,
+    entrega: metasMap?.[nombrePeriodo]?.tiempo_entrega_max || UMBRAL_SLA_DEFAULT.entrega,
   };
 
   const bloques=TIPOS_TIEMPO_GESTION.map(cfg=>{
-    const segs=(solicitudes||[])
+    const items=(solicitudes||[])
       .filter(s=>s.tipo===cfg.tipo)
-      .map(s=>tiempoEnPuntoASegundos(s.tiempoEnPunto))
-      .filter(v=>v!=null&&v>=0);
-    const n=segs.length;
-    if(n===0) return {...cfg,n:0};
+      .map(s=>({s,seg:tiempoEnPuntoASegundos(s.tiempoEnPunto)}))
+      .filter(x=>x.seg!=null&&x.seg>=0);
+    const n=items.length;
+    const umbralMin=umbrales[cfg.tipo];
+    const umbralSeg=umbralMin?umbralMin*60:null;
+    if(n===0) return {...cfg,n:0,umbralMin,puntos:[]};
+    const segs=items.map(x=>x.seg);
     const prom=segs.reduce((a,b)=>a+b,0)/n;
     const ordenado=[...segs].sort((a,b)=>a-b);
     const mediana=n%2===1?ordenado[(n-1)/2]:(ordenado[n/2-1]+ordenado[n/2])/2;
-    const umbralMin=umbrales[cfg.tipo];
-    const umbralSeg=umbralMin?umbralMin*60:null;
     const pctCumpl=umbralSeg?Math.round((segs.filter(v=>v<=umbralSeg).length/n)*100):null;
-    return {...cfg,n,prom,mediana,umbralMin,pctCumpl};
+    const excedidos=umbralSeg?items.filter(x=>x.seg>umbralSeg).sort((a,b)=>b.seg-a.seg):[];
+    // Serie diaria (día del período con al menos un dato), ordenada por fecha.
+    const porDia={};
+    items.forEach(({s,seg})=>{ if(!s.fecha) return; (porDia[s.fecha]=porDia[s.fecha]||[]).push(seg); });
+    const puntos=Object.keys(porDia).sort().map(f=>{
+      const arr=porDia[f];
+      const [y,m,d]=f.split("-");
+      return { fecha:f, fechaLabel:`${d}/${m}`, min:Math.round((arr.reduce((a,b)=>a+b,0)/arr.length)/60), n:arr.length };
+    });
+    return {...cfg,n,prom,mediana,umbralMin,pctCumpl,excedidos,puntos};
   });
 
   async function guardarUmbrales(){
@@ -3946,18 +3994,18 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
         <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end",background:C.navy,border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <label style={{fontSize:11,color:C.muted}}>Máx. Carga OL (min)</label>
-            <input style={{...S.input,width:100}} type="number" min="1" value={umbralCarga} onChange={e=>setUmbralCarga(e.target.value)} placeholder="Ej: 30"/>
+            <input style={{...S.input,width:100}} type="number" min="1" value={umbralCarga} onChange={e=>setUmbralCarga(e.target.value)} placeholder="Ej: 15"/>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <label style={{fontSize:11,color:C.muted}}>Máx. Entrega Cliente (min)</label>
             <input style={{...S.input,width:100}} type="number" min="1" value={umbralEntrega} onChange={e=>setUmbralEntrega(e.target.value)} placeholder="Ej: 20"/>
           </div>
           <button style={S.btnPri} disabled={guardando} onClick={guardarUmbrales}>{guardando?"Guardando...":"Guardar umbral"}</button>
-          <div style={{fontSize:11,color:C.muted,width:"100%"}}>Minutos en el punto que se consideran "dentro de norma". El % de cumplimiento se calcula contra este umbral, por período — ajústalo cuando quieras, no queda fijo en el código.</div>
+          <div style={{fontSize:11,color:C.muted,width:"100%"}}>Minutos en el punto que se consideran "dentro de norma" (default: 15 min Carga OL / 20 min Entrega Cliente). El % de cumplimiento se calcula contra este umbral, por período — ajústalo cuando quieras.</div>
         </div>
       )}
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
         {bloques.map(b=>(
           <div key={b.tipo} style={{background:C.navy,border:"1px solid "+C.border,borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:6}}>
             <div style={{fontSize:11,fontWeight:700,color:b.color}}>{b.label}</div>
@@ -3966,17 +4014,90 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
             ):(<>
               <div style={{fontSize:24,fontWeight:900,color:C.textPrimary,lineHeight:1}}>{fmtSegundos(b.prom)}</div>
               <div style={{fontSize:11,color:C.muted}}>promedio · mediana {fmtSegundos(b.mediana)} · {b.n} solicitud{b.n===1?"":"es"}</div>
-              {b.pctCumpl!=null?(
-                <div style={{marginTop:4,fontSize:12,fontWeight:700,color:b.pctCumpl>=80?C.success:b.pctCumpl>=50?C.warning:C.danger}}>
-                  {b.pctCumpl}% dentro de {b.umbralMin} min
-                </div>
-              ):(
-                <div style={{marginTop:4,fontSize:11,color:C.muted,fontStyle:"italic"}}>Sin umbral SLA definido</div>
-              )}
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                {b.pctCumpl!=null?(
+                  <div style={{marginTop:4,fontSize:12,fontWeight:700,color:b.pctCumpl>=80?C.success:b.pctCumpl>=50?C.warning:C.danger}}>
+                    {b.pctCumpl}% dentro de {b.umbralMin} min
+                  </div>
+                ):(
+                  <div style={{marginTop:4,fontSize:11,color:C.muted,fontStyle:"italic"}}>Sin umbral SLA definido</div>
+                )}
+                {b.excedidos.length>0&&(
+                  <div style={{position:"relative",marginTop:4}}
+                    onMouseEnter={()=>setHoverAlerta(b.tipo)}
+                    onMouseLeave={()=>setHoverAlerta(null)}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.danger,cursor:"default",borderBottom:`1px dotted ${C.danger}88`}}>
+                      ⚠ {b.excedidos.length} sobre el SLA
+                    </span>
+                    {hoverAlerta===b.tipo&&(
+                      <div style={{position:"absolute",top:"calc(100% + 8px)",left:0,zIndex:60,minWidth:260,maxWidth:340,maxHeight:280,overflowY:"auto",background:C.navySurface,border:`1px solid ${C.danger}66`,borderRadius:10,boxShadow:"0 10px 28px #00000066",padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
+                        <div style={{fontSize:11,fontWeight:700,color:C.danger,letterSpacing:.5,textTransform:"uppercase"}}>Sobre los {b.umbralMin} min de SLA</div>
+                        {b.excedidos.map(({s,seg})=>(
+                          <div key={s.id} style={{fontSize:12,color:C.textPrimary,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                            <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
+                              <span style={{fontWeight:600}}>{s.titulo||"(sin cliente)"}</span>
+                              <span style={{color:C.danger,fontWeight:700,whiteSpace:"nowrap"}}>{fmtSegundos(seg)}</span>
+                            </div>
+                            <div style={{fontSize:11,color:C.muted}}>{s.guia?`Guía ${s.guia}`:s.ot?`OT ${s.ot}`:"Sin N° de guía"}{s.fecha?` · ${s.fecha}`:""}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <MiniEvolutivoTiempo puntos={b.puntos} umbralMin={b.umbralMin} color={b.color}/>
             </>)}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── Clientes Visitados (módulo estadística) ─────────────────────────────────
+// Cuenta visitas reales a cliente: excluye Carga Operador Logístico (carga_ol,
+// no es una visita a cliente sino retiro en el operador logístico) y
+// Logística Inversa - Devolución (li_devol, vuelve a bodega DHL, no a un
+// cliente) — deja "entrega" y "li_retiro" (retiro de carga EN el cliente),
+// que sí son visitas físicas a instalaciones del cliente.
+function ClientesVisitados({solicitudes}){
+  const relevantes=(solicitudes||[]).filter(s=>s.tipo!=="carga_ol"&&s.tipo!=="li_devol");
+  const conteo={};
+  relevantes.forEach(s=>{
+    const cliente=s.titulo||"(sin cliente)";
+    conteo[cliente]=(conteo[cliente]||0)+1;
+  });
+  const ranking=Object.entries(conteo).sort((a,b)=>b[1]-a[1]);
+  const totalClientes=ranking.length;
+  const totalVisitas=relevantes.length;
+
+  return (
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Clientes Visitados</div>
+      {totalClientes===0?(
+        <div style={{fontSize:12,color:C.muted}}>Aún no hay entregas/retiros registrados en este período.</div>
+      ):(<>
+        <div style={{display:"flex",gap:20,flexWrap:"wrap"}}>
+          <div>
+            <div style={{fontSize:24,fontWeight:900,color:C.textPrimary,lineHeight:1}}>{totalClientes}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>clientes distintos</div>
+          </div>
+          <div>
+            <div style={{fontSize:24,fontWeight:900,color:C.textPrimary,lineHeight:1}}>{totalVisitas}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>visitas totales (Entrega + Retiro)</div>
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:220,overflowY:"auto"}}>
+          {ranking.slice(0,15).map(([cliente,n])=>(
+            <div key={cliente} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
+              <span style={{flex:1,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cliente}</span>
+              <span style={{color:C.muted,fontWeight:700}}>{n} visita{n===1?"":"s"}</span>
+            </div>
+          ))}
+        </div>
+        {ranking.length>15&&<div style={{fontSize:11,color:C.muted}}>+ {ranking.length-15} cliente{ranking.length-15===1?"":"s"} más en el período.</div>}
+      </>)}
     </div>
   );
 }
@@ -4139,16 +4260,35 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&<DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>}
       </div>
       <TiempoGestion solicitudes={solicitudesPeriodo} metasMap={metasMap} nombrePeriodo={nombrePeriodo} onSaveMeta={onSaveMeta} esAdmin={esAdmin}/>
+      {esAdmin&&<ClientesVisitados solicitudes={solicitudesPeriodo}/>}
       {!esCliente&&(
       <div style={S.statsGrid}>
-        {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
-          ...(stats.no_entregado>0?[["No Entregado",stats.no_entregado,"#F97316"]]:[]),
-          ...(stats.cancelada>0?[["Canceladas",stats.cancelada,C.danger]]:[])].map(([l,v,col])=>(
-          <div key={l} style={{...S.statCard,borderTop:`3px solid ${col}`}}>
-            <div style={{...S.statNum,color:col}}>{v}</div>
-            <div style={S.statLabel}>{l}</div>
-          </div>
-        ))}
+        {[["Total","total",stats.total,C.cyan],["Pendientes","pendiente",stats.pendiente,C.warning],["En Tránsito","en_proceso",stats.en_proceso,C.info],["Completadas","completada",stats.completada+stats.devolucion,C.success],
+          ...(stats.no_entregado>0?[["No Entregado","no_entregado",stats.no_entregado,"#F97316"]]:[]),
+          ...(stats.cancelada>0?[["Canceladas","cancelada",stats.cancelada,C.danger]]:[])].map(([l,k,v,col])=>{
+          const conPopover=k==="no_entregado"||k==="cancelada";
+          const enEstado=conPopover?solicitudesPeriodo.filter(s=>s.status===k):[];
+          return (
+            <div key={l} style={{...S.statCard,borderTop:`3px solid ${col}`,position:"relative",cursor:conPopover?"default":undefined}}
+              onMouseEnter={()=>conPopover&&setHoverEstadoChip(k)}
+              onMouseLeave={()=>conPopover&&setHoverEstadoChip(null)}
+            >
+              <div style={{...S.statNum,color:col}}>{v}</div>
+              <div style={S.statLabel}>{l}</div>
+              {conPopover&&hoverEstadoChip===k&&(
+                <div style={{position:"absolute",top:"calc(100% + 8px)",left:0,zIndex:60,minWidth:260,maxWidth:340,maxHeight:280,overflowY:"auto",background:C.navy,border:`1px solid ${col}66`,borderRadius:10,boxShadow:"0 10px 28px #00000066",padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
+                  <div style={{fontSize:11,fontWeight:700,color:col,letterSpacing:.5,textTransform:"uppercase"}}>{statusLabelConteo(k,v)}</div>
+                  {enEstado.map(s=>(
+                    <div key={s.id} style={{fontSize:12,color:C.textPrimary,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{fontWeight:600}}>{s.titulo||"(sin cliente)"}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{s.guia?`Guía ${s.guia}`:s.ot?`OT ${s.ot}`:"Sin N° de guía"}{s.fecha?` · ${s.fecha}`:""}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       )}
       {esCliente&&<MapaTrazabilidadHoy/>}
