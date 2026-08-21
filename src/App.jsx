@@ -128,7 +128,7 @@ function leerArchivoRespaldo(file, cb){
 // en blanco a propósito. Si algún ítem queda en ANI, exige respaldo de
 // autorización a nivel de la SOLICITUD completa (no por guía individual).
 function GuiasNegocioEditor({documentos, guiasNegocio, onChangeGuias, respaldoAni, onChangeRespaldoAni, error}){
-  const items = (documentos||"").split(",").map(d=>d.trim()).filter(Boolean);
+  const items = (documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
   const unidadPorItem = {};
   (guiasNegocio||[]).forEach(g=>{ if(g.guia) unidadPorItem[g.guia]=g.unidad; });
   const hayANI = (guiasNegocio||[]).some(g=>g.unidad==="ANI");
@@ -2000,7 +2000,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
     (s.guiasNegocio||[]).forEach(g=>{
       if(g.unidad && conteoGlobalGuias[g.unidad]!=null){ conteoGlobalGuias[g.unidad]++; taggedGuias.add(g.guia); }
     });
-    (s.documentos||"").split(",").map(d=>d.trim()).filter(Boolean).forEach(item=>{
+    (s.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean).forEach(item=>{
       if(!taggedGuias.has(item)) itemsSinUnidadGlobal++;
     });
   }
@@ -3782,7 +3782,7 @@ function DonutUnidadNegocio({solicitudes}){
     (s.guiasNegocio||[]).forEach(g=>{
       if(g.unidad && conteo[g.unidad]!=null){ conteo[g.unidad]++; taggedGuias.add(g.guia); }
     });
-    (s.documentos||"").split(",").map(d=>d.trim()).filter(Boolean).forEach(item=>{
+    (s.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean).forEach(item=>{
       if(!taggedGuias.has(item)) sinAsignar++;
     });
   });
@@ -4230,7 +4230,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
     }
     if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){upd.direccion=sel.direccion;upd.notas=sel.notas;upd.contacto=sel.contacto||upd.contacto;upd.destinoLat=sel.lat??null;upd.destinoLng=sel.lng??null;}}
     if(k==="documentos"){
-      const itemsVigentes=new Set(e.target.value.split(",").map(d=>d.trim()).filter(Boolean));
+      const itemsVigentes=new Set(e.target.value.split(/[,\s]+/).map(d=>d.trim()).filter(Boolean));
       upd.guiasNegocio=(editForm.guiasNegocio||[]).filter(g=>itemsVigentes.has(g.guia));
     }
     setEditForm(upd);
@@ -4457,7 +4457,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
         <div style={S.detailBlock}>
           <div style={S.fieldLabel}>N° Guías / Documentos Cliente</div>
           <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:4}}>
-            {sol.documentos.split(",").map(d=>d.trim()).filter(Boolean).map((item,i)=>{
+            {sol.documentos.split(/[,\s]+/).map(d=>d.trim()).filter(Boolean).map((item,i)=>{
               const g=(sol.guiasNegocio||[]).find(x=>x.guia===item);
               return (
                 <div key={item+i} style={{fontSize:13,color:C.textPrimary}}>
@@ -4681,7 +4681,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
   };
   const usarResultadoGsuite=(r)=>{
     setForm(p=>{
-      const existentes=(p.documentos||"").split(",").map(d=>d.trim()).filter(Boolean);
+      const existentes=(p.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
       if(!existentes.includes(r.folio)) existentes.push(r.folio);
       const u={...p, documentos: existentes.join(", ")};
 
@@ -4759,7 +4759,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
     }
     if(k==="titulo"){const sel=resolverDestino(e.target.value,clientes);if(sel){u.direccion=sel.direccion;u.notas=sel.notas;u.contacto=sel.contacto||u.contacto;u.destinoLat=sel.lat??null;u.destinoLng=sel.lng??null;if(u.tipo!=="carga_ol")u.destino="";}}
     if(k==="documentos"){
-      const itemsVigentes=new Set(e.target.value.split(",").map(d=>d.trim()).filter(Boolean));
+      const itemsVigentes=new Set(e.target.value.split(/[,\s]+/).map(d=>d.trim()).filter(Boolean));
       u.guiasNegocio=(p.guiasNegocio||[]).filter(g=>itemsVigentes.has(g.guia));
     }
     return u;
@@ -6518,7 +6518,7 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
                 Si la solicitud ya trae algo cargado (ej. editado por un operador), se precarga
                 mostrando solo un GD (prioriza el que mencione "maletas") y queda editable. */}
             {(()=>{
-              const lista=(s.documentos||"").split(",").map(d=>d.trim()).filter(Boolean);
+              const lista=(s.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
               const gdPrecargada=lista.find(d=>/maletas/i.test(d))||lista[0]||"";
               const valor=documentosGD[s.id]!==undefined?documentosGD[s.id]:gdPrecargada;
               return(
