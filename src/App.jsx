@@ -3914,7 +3914,7 @@ const UMBRAL_SLA_DEFAULT = { carga_ol:15, entrega:20 };
 // vez de una meta acumulada. Los puntos que superan el SLA son los únicos
 // interactivos: al pasar el cursor muestran qué solicitud(es) de ese día
 // causaron el exceso.
-function MiniEvolutivoTiempo({puntos,umbralMin,color,tipo}){
+function MiniEvolutivoTiempo({puntos,umbralMin,color,tipo,mostrarOT}){
   const [hoverIdx,setHoverIdx]=useState(null);
   if(!puntos.length) return null;
   const H=100;
@@ -3962,7 +3962,9 @@ function MiniEvolutivoTiempo({puntos,umbralMin,color,tipo}){
                 {p.excedidos.map(({s,seg})=>(
                   <div key={s.id} style={{fontSize:11,color:C.textPrimary}}>
                     <div style={{display:"flex",justifyContent:"space-between",gap:6}}>
-                      <span style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.titulo||"(sin cliente)"}</span>
+                      <span style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {mostrarOT ? (s.ot?`Solicitud ${s.ot}`:"(sin N° de solicitud)") : (s.titulo||"(sin cliente)")}
+                      </span>
                       <span style={{color:C.danger,fontWeight:700,whiteSpace:"nowrap"}}>{fmtSegundos(seg)}</span>
                     </div>
                   </div>
@@ -4002,6 +4004,13 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
     const mediana=n%2===1?ordenado[(n-1)/2]:(ordenado[n/2-1]+ordenado[n/2])/2;
     const pctCumpl=umbralSeg?Math.round((segs.filter(v=>v<=umbralSeg).length/n)*100):null;
     const excedidos=umbralSeg?items.filter(x=>x.seg>umbralSeg).sort((a,b)=>b.seg-a.seg):[];
+    // Suma de los minutos excedidos (tiempo real − umbral) de cada solicitud
+    // que se pasó del SLA — no es una cifra "bonita" de facturación, es una
+    // referencia acumulada del período para que, si corresponde, se evalúe
+    // un cobro o ajuste con el operador logístico/cliente responsable del
+    // atraso. Se muestra sutil porque perfiles operativos (sin poder de
+    // decisión sobre cobros) también ven esta tarjeta.
+    const excesoTotalSeg=excedidos.reduce((a,x)=>a+(x.seg-umbralSeg),0);
     // Serie diaria (día del período con al menos un dato), con el detalle de
     // qué solicitudes de ese día superaron el SLA (para el popover del gráfico).
     const porDia={};
@@ -4013,7 +4022,7 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
       const excedidosDia=umbralSeg?arr.filter(x=>x.seg>umbralSeg).sort((a,b)=>b.seg-a.seg):[];
       return { fecha:f, fechaLabel:`${d}/${m}`, min:Math.round((segsDia.reduce((a,b)=>a+b,0)/segsDia.length)/60), n:segsDia.length, excedidos:excedidosDia };
     });
-    return {...cfg,n,prom,mediana,umbralMin,pctCumpl,excedidos,puntos};
+    return {...cfg,n,prom,mediana,umbralMin,pctCumpl,excedidos,excesoTotalSeg,puntos};
   });
 
   async function guardarUmbrales(){
@@ -4052,7 +4061,7 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
         {bloques.map(b=>(
-          <div key={b.tipo} style={{background:C.navy,border:"1px solid "+C.border,borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:6}}>
+          <div key={b.tipo} style={{background:C.navy,border:"1px solid "+C.border,borderRadius:10,padding:"12px 14px 24px 14px",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
             <div style={{fontSize:11,fontWeight:700,color:b.color}}>{b.label}</div>
             {b.n===0?(
               <div style={{fontSize:12,color:C.muted}}>Sin datos en el período.</div>
@@ -4073,7 +4082,13 @@ function TiempoGestion({solicitudes,metasMap,nombrePeriodo,onSaveMeta,esAdmin}){
                   </div>
                 )}
               </div>
-              <MiniEvolutivoTiempo puntos={b.puntos} umbralMin={b.umbralMin} color={b.color} tipo={b.tipo}/>
+              <MiniEvolutivoTiempo puntos={b.puntos} umbralMin={b.umbralMin} color={b.color} tipo={b.tipo} mostrarOT={b.tipo==="carga_ol"}/>
+              {b.excesoTotalSeg>0&&(
+                <div style={{position:"absolute",right:12,bottom:8,fontSize:10,color:C.muted}}
+                  title="Suma de los minutos por sobre el SLA en el período — referencia para evaluar un eventual cobro/ajuste con el operador logístico o cliente responsable del atraso, no es un cargo automático.">
+                  Σ {fmtSegundos(b.excesoTotalSeg)} SLA
+                </div>
+              )}
             </>)}
           </div>
         ))}
