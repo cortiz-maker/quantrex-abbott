@@ -7877,6 +7877,70 @@ function MiniDonut({segmentos=[],centerLabel,centerSub,size=120}){
   );
 }
 
+// Tendencia mensual de incidencias, mismo lenguaje visual que el evolutivo
+// de SLA de tiempos (área con degradado + línea de referencia punteada).
+// Aquí la "línea SLA" es el promedio de incidencias de los meses que
+// registran incidencias (no una meta fija); los meses sobre el promedio
+// se destacan en rojo, igual que los puntos que exceden el umbral SLA.
+function MiniTendenciaIncidencias({puntos}){
+  const [hoverIdx,setHoverIdx]=useState(null);
+  if(!puntos.length) return <div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>;
+  const H=100;
+  const n=puntos.length;
+  const promedio = puntos.reduce((a,p)=>a+p.n,0)/n;
+  const maxVal=Math.max(promedio,...puntos.map(p=>p.n))*1.15||1;
+  const yFor=v=>H-10-((v/maxVal)*(H-24));
+  const xFor=i=>n>1?(i/(n-1))*100:50;
+  const yProm=yFor(promedio);
+  const pts=puntos.map((p,i)=>({...p,x:xFor(i),y:yFor(p.n),sobre:p.n>promedio}));
+  const linea=pts.map(p=>`${p.x},${p.y}`).join(" ");
+  const areaPath=`M${pts[0].x},${H} L ${pts.map(p=>`${p.x},${p.y}`).join(" L ")} L ${pts[pts.length-1].x},${H} Z`;
+  const gradId="grad-tendencia-inc", clipId="clip-sobre-inc";
+
+  return (
+    <div>
+      <div style={{position:"relative",height:H+16,marginTop:6}}>
+        <svg viewBox={`0 0 100 ${H}`} preserveAspectRatio="none" style={{position:"absolute",inset:0,width:"100%",height:H,overflow:"visible"}}>
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={C.cyan} stopOpacity="0.55"/>
+              <stop offset="100%" stopColor={C.cyan} stopOpacity="0.03"/>
+            </linearGradient>
+            <clipPath id={clipId}><rect x="0" y="0" width="100" height={Math.max(0,yProm)}/></clipPath>
+          </defs>
+          <path d={areaPath} fill={`url(#${gradId})`} stroke="none"/>
+          <path d={areaPath} fill={C.danger} fillOpacity="0.38" stroke="none" clipPath={`url(#${clipId})`}/>
+          <polyline points={linea} fill="none" stroke={C.cyan} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+          <line x1="0" y1={yProm} x2="100" y2={yProm} stroke={C.muted} strokeWidth="0.6" strokeDasharray="2,2" vectorEffect="non-scaling-stroke"/>
+          {pts.map((p,i)=>(
+            <circle key={i} cx={p.x} cy={p.y} r={p.sobre?2.2:1.5} fill={p.sobre?C.danger:C.navySurface} stroke={p.sobre?C.danger:C.cyan} strokeWidth="1.4" vectorEffect="non-scaling-stroke"/>
+          ))}
+        </svg>
+        <span style={{position:"absolute",right:0,top:Math.max(0,yProm-14),fontSize:9,color:C.muted}}>{promedio.toFixed(1)} prom.</span>
+        <div style={{position:"absolute",inset:0,display:"flex"}}>
+          {pts.map((p,i)=>(
+            <div key={i} style={{flex:1,position:"relative",cursor:"pointer"}}
+              onMouseEnter={()=>setHoverIdx(i)} onMouseLeave={()=>setHoverIdx(null)}>
+              <div style={{position:"absolute",inset:0}} title={`${p.label}: ${p.n} incidencia${p.n===1?"":"s"}`}/>
+              {hoverIdx===i&&(
+                <div style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",marginBottom:6,zIndex:70,minWidth:140,background:C.navySurface,border:`1px solid ${p.sobre?C.danger:C.cyan}66`,borderRadius:10,boxShadow:"0 10px 28px #00000066",padding:"8px 10px",display:"flex",flexDirection:"column",gap:2,whiteSpace:"nowrap"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:p.sobre?C.danger:C.cyan,letterSpacing:.5,textTransform:"uppercase"}}>{p.label}</div>
+                  <div style={{fontSize:13,color:C.textPrimary,fontWeight:700}}>{p.n} incidencia{p.n===1?"":"s"}</div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",padding:"0 4px"}}>
+        {pts.map((p,i)=>(
+          <div key={i} style={{flex:1,textAlign:"center",fontSize:10,color:C.textSecondary,textTransform:"capitalize"}}>{p.label}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function IncidenciasDashboard({incidencias=[],clientes=[]}){
   const total=incidencias.length;
   const porTipo=Object.entries(TIPO_INCIDENCIA).map(([k,m])=>({
@@ -7910,7 +7974,6 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
   const notificadas=incidencias.filter(i=>i.notificado).length;
   const cerradas=incidencias.filter(i=>i.estado==="cerrada").length;
   const tasaCierre = total?Math.round((cerradas/total)*100):0;
-  const maxMes=Math.max(1,...porMes.map(m=>m.n));
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -7948,17 +8011,7 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
 
       <div style={{background:C.navySurface,border:`1px solid ${C.border}`,borderRadius:12,padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
         <div style={S.sectionTitle}>Tendencia mensual</div>
-        {porMes.length===0
-          ?<div style={{fontSize:12,color:C.muted}}>Sin datos suficientes.</div>
-          :<div style={{display:"flex",alignItems:"flex-end",gap:14,height:120,padding:"0 4px"}}>
-            {porMes.map(m=>(
-              <div key={m.mes} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,flex:1}}>
-                <div style={{fontSize:11,fontWeight:800,color:C.cyan}}>{m.n}</div>
-                <div style={{width:"100%",maxWidth:34,height:Math.max(6,(m.n/maxMes)*84),background:`linear-gradient(180deg,${C.cyan},${C.blue})`,borderRadius:"6px 6px 0 0"}}/>
-                <div style={{fontSize:10,color:C.textSecondary,textTransform:"capitalize"}}>{m.label}</div>
-              </div>
-            ))}
-          </div>}
+        <MiniTendenciaIncidencias puntos={porMes}/>
       </div>
     </div>
   );
