@@ -794,6 +794,29 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 // Coordenadas conocidas de clientes Abbott en Santiago
+// ── Caché de geocodificación (tabla Supabase "geocache") ───────────────────
+// Evita el problema de raíz: sin esta caché, cada sesión (admin, cliente,
+// etc.) geocodificaba TODAS las direcciones desde cero contra Nominatim en
+// cada carga del dashboard, sin límite de velocidad entre llamadas.
+// Nominatim descarta ráfagas de peticiones (política ~1 req/seg); cuando eso
+// pasa, esas direcciones fallan silenciosamente y quedan fuera del cálculo
+// de km — el número de "entregas" no cambia, pero el total de km (y por lo
+// tanto el CO₂ estimado) sí, según cuántas direcciones alcanzaron a
+// responder en esa corrida puntual. Con esta tabla, una dirección se
+// geocodifica UNA sola vez para siempre y toda sesión futura lee el mismo
+// resultado guardado — el número deja de depender de la suerte de la red.
+let _ultimoNominatim = 0;
+async function geocacheGet(idNorm) {
+  try {
+    const data = await sbFetch("GET","geocache","","?id=eq."+encodeURIComponent(idNorm));
+    if (data && data[0]) return { lat:data[0].lat, lon:data[0].lon };
+    return null;
+  } catch { return null; }
+}
+async function geocacheSet(idNorm, lat, lon) {
+  try { await sbUpsert("geocache",[{ id:idNorm, lat, lon }]); } catch {}
+}
+
 const COORDS_CONOCIDAS = {
   "marathon": {lat:-33.4912, lon:-70.6234},
   "bicentenario": {lat:-33.4678, lon:-70.6934},
@@ -828,16 +851,36 @@ const COORDS_CONOCIDAS = {
 async function geocodificar(direccion) {
   try {
     const dir = direccion.toLowerCase();
-    // Buscar en coordenadas conocidas
+    // Buscar en coordenadas conocidas (instantáneo, sin red)
     for(const [key, coords] of Object.entries(COORDS_CONOCIDAS)) {
       if(dir.includes(key)) return coords;
     }
+    const idNorm = dir.trim();
+    // Buscar en la caché persistente (Supabase) antes de golpear Nominatim.
+    // Esto es lo que evita que el mismo cálculo (ej. "CO₂ Estimado") dé
+    // números distintos según qué sesión lo pidió primero: una dirección se
+    // resuelve UNA sola vez y de ahí en adelante todas las sesiones (admin,
+    // cliente, futuras) leen el mismo resultado guardado.
+    const cacheada = await geocacheGet(idNorm);
+    if (cacheada) return cacheada;
+    // Throttle: máximo ~1 llamada/seg a Nominatim (su política de uso). Sin
+    // esto, un período con muchas direcciones nuevas dispara todas las
+    // consultas en ráfaga, Nominatim bloquea parte de ellas, y esas
+    // direcciones quedan fuera del cálculo de km sin aviso — la causa real
+    // del número inconsistente reportado por César.
+    const espera = 1100 - (Date.now() - _ultimoNominatim);
+    if (espera > 0) await new Promise(r => setTimeout(r, espera));
+    _ultimoNominatim = Date.now();
     // Si no encuentra, intentar con Nominatim como fallback
     const query = encodeURIComponent(direccion + ", Chile");
     const url = `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1&countrycodes=cl`;
     const res = await fetch(url);
     const data = await res.json();
-    if(data && data[0]) return {lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon)};
+    if(data && data[0]) {
+      const coords = {lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon)};
+      geocacheSet(idNorm, coords.lat, coords.lon); // no se espera: no bloquea el cálculo en curso
+      return coords;
+    }
     return null;
   } catch { return null; }
 }
