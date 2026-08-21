@@ -3561,8 +3561,12 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     setDt({porNumero});
   };
 
-  // Búsqueda local en las solicitudes de Quantrex (ot, guía, documentos) —
-  // de cara a que a futuro Quantrex sea la fuente de verdad y no DispatchTrack.
+  // Búsqueda local en las solicitudes de Quantrex (ot, guía, documentos,
+  // ítems) — de cara a que a futuro Quantrex sea la fuente de verdad y no
+  // DispatchTrack. Los ítems se incluyen porque en solicitudes tipo Carga OL
+  // (o las que se completan con el buscador de gSuite) el N° de delivery/OC/
+  // Pedido SAP a veces queda digitado solo dentro del texto del ítem, no en
+  // "documentos" — sin este chequeo esa búsqueda siempre da "no encontrada".
   const buscarQuantrex=(numeros)=>{
     const porNumero={};
     for(const n of numeros){
@@ -3570,7 +3574,8 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
       porNumero[n]=(solicitudes||[]).filter(s=>
         (s.ot||"").toLowerCase()===nLower ||
         (s.guia||"").toLowerCase().includes(nLower) ||
-        (s.documentos||"").toLowerCase().includes(nLower)
+        (s.documentos||"").toLowerCase().includes(nLower) ||
+        (s.items||[]).some(it=>(it.nombre||"").toLowerCase().includes(nLower))
       );
     }
     return porNumero;
