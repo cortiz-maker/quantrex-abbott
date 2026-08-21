@@ -3121,9 +3121,15 @@ function EvolucionAnual({solicitudes=[]}){
 }
 
 // ── Cumplimiento del día (gauge circular animado + desglose interactivo) ──
-function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],hoyStr,setView,setFilterStatus,setFilterFecha}){
+function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],hoyStr,fecha,onChangeFecha,minFecha,maxFecha,setView,setFilterStatus,setFilterFecha}){
   const [animPct,setAnimPct]=useState(0);
   const R=52, STROKE=12, CIRC=2*Math.PI*R;
+  const esHoy = !fecha || fecha===hoyStr;
+  const fmtFechaCorta=(f)=>{
+    if(!f) return "";
+    try{ const [y,m,d]=f.split("-").map(Number); return new Date(y,m-1,d).toLocaleDateString("es-CL",{day:"numeric",month:"short"}); }
+    catch{ return f; }
+  };
 
   useEffect(()=>{
     if(pct===null) return;
@@ -3134,34 +3140,47 @@ function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],hoyStr,
 
   const offset=CIRC-(animPct/100)*CIRC;
 
-  // Navega a "Solicitudes" mostrando las filas reales de hoy (opcionalmente
-  // acotado a un estado puntual). "en_gestion" = cualquier estado distinto
-  // de "pendiente" (mismo criterio que el % de cumplimiento).
+  // Navega a "Solicitudes" mostrando las filas reales del día consultado
+  // (opcionalmente acotado a un estado puntual). "en_gestion" = cualquier
+  // estado distinto de "pendiente" (mismo criterio que el % de cumplimiento).
   function verSolicitudesHoy(status){
-    setFilterFecha?.(hoyStr);
+    setFilterFecha?.(fecha||hoyStr);
     setFilterStatus?.(status||"en_gestion");
     setView?.("lista");
   }
 
   return(
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:10}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>Cumplimiento del día</div>
-        {pct!==null&&totalHoy>0&&(
-          <button onClick={()=>verSolicitudesHoy()} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>
-            Detalle <span style={{display:"inline-block"}}>→</span>
-          </button>
-        )}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.cyan,letterSpacing:1.2,textTransform:"uppercase"}}>
+          Cumplimiento del día{!esHoy&&fecha?<span style={{color:C.muted,textTransform:"none",letterSpacing:0,fontWeight:600}}> · {fmtFechaCorta(fecha)}</span>:null}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {onChangeFecha&&(
+            <input type="date" value={fecha||hoyStr} min={minFecha} max={maxFecha||hoyStr}
+              onChange={e=>e.target.value&&onChangeFecha(e.target.value)}
+              title="Consultar otro día del mes en curso"
+              style={{background:C.navy,border:"1px solid "+C.border,borderRadius:6,color:C.textPrimary,fontSize:11,padding:"3px 6px"}}/>
+          )}
+          {!esHoy&&onChangeFecha&&(
+            <button onClick={()=>onChangeFecha(hoyStr)} style={{background:"none",border:"none",color:C.cyan,fontSize:11,fontWeight:700,cursor:"pointer",padding:0}}>Hoy</button>
+          )}
+          {pct!==null&&totalHoy>0&&(
+            <button onClick={()=>verSolicitudesHoy()} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>
+              Detalle <span style={{display:"inline-block"}}>→</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {pct===null?(
-        <div style={{fontSize:12,color:C.muted}}>Aún no se registran solicitudes ingresadas hoy.</div>
+        <div style={{fontSize:12,color:C.muted}}>{esHoy?"Aún no se registran solicitudes ingresadas hoy.":`No se registran solicitudes ingresadas el ${fmtFechaCorta(fecha)}.`}</div>
       ):(
         <div style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
           <div
             style={{position:"relative",width:120,height:120,cursor:totalHoy>0?"pointer":"default"}}
             onClick={()=>totalHoy>0&&verSolicitudesHoy()}
-            title={`${gestionadasHoy} de ${totalHoy} solicitudes gestionadas hoy — toca para verlas`}
+            title={`${gestionadasHoy} de ${totalHoy} solicitudes gestionadas ${esHoy?"hoy":`el ${fmtFechaCorta(fecha)}`} — toca para verlas`}
           >
             <svg width={120} height={120} viewBox="0 0 120 120" style={{transform:"rotate(-90deg)"}}>
               <circle cx={60} cy={60} r={R} fill="none" stroke={C.navy} strokeWidth={STROKE}/>
@@ -3175,7 +3194,7 @@ function CumplimientoDelDia({pct,totalHoy,gestionadasHoy,col,desglose=[],hoyStr,
             </div>
           </div>
           <div style={{flex:1,minWidth:140,display:"flex",flexDirection:"column",gap:4}}>
-            <div style={{fontSize:12,color:C.textSecondary}}>{totalHoy} solicitud{totalHoy===1?"":"es"} ingresada{totalHoy===1?"":"s"} hoy</div>
+            <div style={{fontSize:12,color:C.textSecondary}}>{totalHoy} solicitud{totalHoy===1?"":"es"} ingresada{totalHoy===1?"":"s"} {esHoy?"hoy":`el ${fmtFechaCorta(fecha)}`}</div>
           </div>
         </div>
       )}
@@ -3853,6 +3872,13 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
   const [showCostosDesglose,setShowCostosDesglose]=useState(false);
   const [showMetasTendencia,setShowMetasTendencia]=useState(false);
   const [hoverEstadoChip,setHoverEstadoChip]=useState(null); // key del status con el mouse encima (solo no_entregado/cancelada)
+  // "Cumplimiento del día" — por defecto hoy, pero se puede consultar
+  // cualquier otro día del mes en curso (nunca fuera de él: min/max del
+  // input date quedan acotados al mes calendario actual).
+  const hoyStr=new Date().toISOString().slice(0,10);
+  const hoyDate=new Date();
+  const primerDiaMesStr=new Date(hoyDate.getFullYear(),hoyDate.getMonth(),1).toISOString().slice(0,10);
+  const [fechaCumplimiento,setFechaCumplimiento]=useState(hoyStr);
 
   // ── Cálculo ejecutivo: serie de períodos (cierres + período actual) ──
   const metasMap={};
@@ -3970,12 +3996,14 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&showCostosDesglose&&<ModalCostosDesglose gastos={gastos} di={diAct} df={dfAct} onClose={()=>setShowCostosDesglose(false)}/>}
 
       <div style={S.sectionTitle}>Operación · {nombrePeriodo}</div>
+      <div style={{display:"grid",gridTemplateColumns:esAdmin?"repeat(auto-fit,minmax(340px,1fr))":"1fr",gap:12,alignItems:"stretch"}}>
       {(()=>{
         // Cumplimiento del día: promedio ponderado del avance por etapa de
-        // cada solicitud ingresada hoy (pendiente=25%, en tránsito=50%,
-        // cualquier estado final=100%). Se muestra para todos los perfiles.
-        const hoyStr=new Date().toISOString().slice(0,10);
-        const solHoy=(solicitudes||[]).filter(s=>s.fecha===hoyStr);
+        // cada solicitud ingresada en la fecha seleccionada (pendiente=25%,
+        // en tránsito=50%, cualquier estado final=100%). Por defecto hoy;
+        // fechaCumplimiento permite consultar cualquier otro día del mes en
+        // curso. Se muestra para todos los perfiles.
+        const solHoy=(solicitudes||[]).filter(s=>s.fecha===fechaCumplimiento);
         const totalHoy=solHoy.length;
         const gestionadasHoy=solHoy.filter(s=>s.status!=="pendiente").length;
         const pct=totalHoy>0?Math.round(solHoy.reduce((a,s)=>a+(AVANCE_STATUS[s.status]??0),0)/totalHoy*100):null;
@@ -3988,8 +4016,12 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           {k:"no_entregado",label:"No entregado",color:"#F97316"},
           {k:"cancelada",label:"Canceladas",color:C.danger},
         ].map(x=>({...x,n:solHoy.filter(s=>s.status===x.k).length})).filter(x=>x.n>0);
-        return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose} hoyStr={hoyStr} setView={setView} setFilterStatus={setFilterStatus} setFilterFecha={setFilterFecha}/>;
+        return <CumplimientoDelDia pct={pct} totalHoy={totalHoy} gestionadasHoy={gestionadasHoy} col={col} desglose={desglose}
+          hoyStr={hoyStr} fecha={fechaCumplimiento} onChangeFecha={setFechaCumplimiento} minFecha={primerDiaMesStr} maxFecha={hoyStr}
+          setView={setView} setFilterStatus={setFilterStatus} setFilterFecha={setFilterFecha}/>;
       })()}
+      {esAdmin&&<DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>}
+      </div>
       {!esCliente&&(
       <div style={S.statsGrid}>
         {[["Total",stats.total,C.cyan],["Pendientes",stats.pendiente,C.warning],["En Tránsito",stats.en_proceso,C.info],["Completadas",stats.completada+stats.devolucion,C.success],
@@ -4041,8 +4073,6 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </div>
 
         <EvolucionAnual solicitudes={solicitudes}/>
-
-        <DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>
 
         <div style={S.sectionTitle}>Costos y flota</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>
