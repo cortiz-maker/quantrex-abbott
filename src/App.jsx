@@ -1388,11 +1388,12 @@ async function saveUsuarios(data) {
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
     if(rows.length){
       const ok = await sbUpsert("usuarios",rows);
-      if(!ok){ console.error("saveUsuarios: upsert falló, se aborta para no perder datos."); return; }
+      if(!ok){ console.error("saveUsuarios: upsert falló, se aborta para no perder datos."); return false; }
     }
     // 2) Eliminar solo los IDs que ya no están en la lista.
     await sbDeleteFaltantes("usuarios", rows.map(r=>r.id));
-  } catch(e) { console.error(e); }
+    return true;
+  } catch(e) { console.error(e); return false; }
 }
 // ── Tarifas versionadas (Supabase) ──────────────────────────────────────────
 // Cada concepto puede tener varias filas con distinta vigente_desde — se usa
