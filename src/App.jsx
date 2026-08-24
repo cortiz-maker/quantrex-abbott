@@ -301,6 +301,25 @@ function normalizarRut(rut){
   return (rut||"").replace(/\./g,"").trim().toUpperCase();
 }
 
+// Formatea el campo TrackIDTstamp de gSuite (fecha en que el documento
+// quedo emitido/timbrado) como "dd-mm-aaaa hh:mm". Solo para mostrar --
+// no se usa en ningun payload que se guarde en la app. Tolera que venga
+// como timestamp ISO (lo normal) o ya como texto "dd-mm-aa hh:mm".
+function formatDocEmitido(raw){
+  if(!raw) return null;
+  const d=new Date(raw);
+  if(!isNaN(d.getTime())){
+    const p=n=>String(n).padStart(2,"0");
+    return `${p(d.getDate())}-${p(d.getMonth()+1)}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  const m=String(raw).match(/^(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+  if(m){
+    const [,dd,mm,yy,hh,mi]=m;
+    return `${dd}-${mm}-20${yy} ${hh}:${mi}`;
+  }
+  return String(raw);
+}
+
 async function sbFetch(method, table, body=null, query="") {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${query}`, {
     method,
@@ -5212,6 +5231,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
                     <div style={{color:C.muted}}>{r.cust_name}{r.cust_comuna?` — ${r.cust_comuna}`:""}</div>
                     <div style={{color:C.muted}}>{r.orden_compra?`OC: ${r.orden_compra}`:""}{r.pedido_sap?`  ·  Pedido SAP: ${r.pedido_sap}`:""}</div>
                     {r.factura_corta&&<div style={{color:C.muted}}>Delivery: {r.factura_corta}</div>}
+                    {formatDocEmitido(r.TrackIDTstamp)&&<div style={{color:"#fff"}}>Documento Emitido {formatDocEmitido(r.TrackIDTstamp)}</div>}
                   </div>
                   <button type="button" style={{...S.btnPri,fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={()=>usarResultadoGsuite(r)}>Usar</button>
                 </div>
