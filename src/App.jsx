@@ -2209,9 +2209,10 @@ export default function QuantrexAbbott() {
 
   async function handleAbrirPeriodo(){
     if(!nuevaFechaInicio){showToast("Selecciona la fecha de inicio.","danger");return;}
-    // Calcular fin = 30 días después como sugerencia (ajustable)
+    // Fin = día 25 del mes siguiente a la fecha de inicio, igual que el ciclo
+    // estándar de facturación (26→25) usado en getPeriodoActual.
     const ini = new Date(nuevaFechaInicio+"T12:00:00");
-    const fin2 = new Date(ini); fin2.setDate(fin2.getDate()+29);
+    const fin2 = new Date(ini.getFullYear(), ini.getMonth()+1, 25, 12, 0, 0);
     const nuevo = {
       inicio: nuevaFechaInicio,
       fin: fin2.toISOString().split("T")[0],
