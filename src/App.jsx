@@ -5119,8 +5119,6 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
     setGBuscando(false);
     if(error){ setGError("No se pudo buscar en gSuite. Intenta de nuevo."); return; }
     if(!data || data.length===0){ setGError(`Sin resultados para "${termino}".`); return; }
-    console.log("DEBUG campos gSuite:", Object.keys(data[0]||{}).join(", "));
-    console.log("DEBUG valores gSuite:", JSON.stringify(data[0]));
     setGResultados(data);
   };
   const usarResultadoGsuite=(r)=>{
@@ -5233,7 +5231,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
                     <div style={{color:C.muted}}>{r.cust_name}{r.cust_comuna?` — ${r.cust_comuna}`:""}</div>
                     <div style={{color:C.muted}}>{r.orden_compra?`OC: ${r.orden_compra}`:""}{r.pedido_sap?`  ·  Pedido SAP: ${r.pedido_sap}`:""}</div>
                     {r.factura_corta&&<div style={{color:C.muted}}>Delivery: {r.factura_corta}</div>}
-                    {formatDocEmitido(r.track_id_tstamp??r.TrackIDTstamp??r.trackIdTstamp??r.trackidtstamp)&&<div style={{color:"#fff"}}>Documento Emitido {formatDocEmitido(r.track_id_tstamp??r.TrackIDTstamp??r.trackIdTstamp??r.trackidtstamp)}</div>}
+                    {formatDocEmitido(r.track_id_tstamp)&&<div style={{color:"#fff"}}>Documento Emitido {formatDocEmitido(r.track_id_tstamp)}</div>}
                   </div>
                   <button type="button" style={{...S.btnPri,fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={()=>usarResultadoGsuite(r)}>Usar</button>
                 </div>
