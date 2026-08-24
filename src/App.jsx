@@ -5119,7 +5119,8 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
     setGBuscando(false);
     if(error){ setGError("No se pudo buscar en gSuite. Intenta de nuevo."); return; }
     if(!data || data.length===0){ setGError(`Sin resultados para "${termino}".`); return; }
-    console.log("DEBUG gSuite resultado:", data);
+    console.log("DEBUG campos gSuite:", Object.keys(data[0]||{}).join(", "));
+    console.log("DEBUG valores gSuite:", JSON.stringify(data[0]));
     setGResultados(data);
   };
   const usarResultadoGsuite=(r)=>{
