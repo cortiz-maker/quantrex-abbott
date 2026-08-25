@@ -275,6 +275,17 @@ const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const GSUITE_SUPABASE_URL = "https://mcetdwgdeuizymhfrnem.supabase.co";
 const GSUITE_SUPABASE_KEY = "sb_publishable_Ha-vFxLalDXkJGlHSXEyWQ_RFnRJAJ1";
 
+// Bridge gSuite (Railway) -- endpoint para forzar una corrida manual sin
+// esperar al proximo horario del cron (boton "Forzar actualización" en
+// Nueva Solicitud). REEMPLAZAR estos dos valores despues de:
+//   1) Exponer el servicio en Railway (Settings -> Networking -> Generate Domain)
+//   2) Configurar la variable BRIDGE_TRIGGER_TOKEN en Railway con el mismo
+//      valor que se pone aca abajo.
+// Mientras GSUITE_BRIDGE_URL quede con el placeholder, el boton muestra un
+// error claro en vez de fallar en silencio.
+const GSUITE_BRIDGE_URL = "https://TU-DOMINIO.up.railway.app";
+const GSUITE_BRIDGE_TOKEN = "TU_TOKEN_AQUI";
+
 // Busca un documento (guia, factura, nota de credito/debito) por folio,
 // Orden de Compra o N Pedido SAP en el espejo de gSuite. Devuelve
 // { data, error } -- data es un array (puede tener mas de un resultado si
@@ -292,6 +303,34 @@ async function buscarDocumentoGsuite(termino) {
   if (!res.ok) { const e = await res.text(); console.error("Error buscando documento en gSuite:", e); return { data: null, error: e }; }
   const data = await res.json();
   return { data, error: null };
+}
+
+// Fuerza una corrida manual del bridge gSuite->Supabase, sin esperar al
+// proximo horario del cron. Puede tardar 1-2 minutos en responder (el
+// endpoint espera a que la corrida termine antes de contestar) -- por eso
+// el boton que lo llama debe mostrar un estado "Procesando..." mientras
+// dura el fetch.
+async function forzarCorridaBridge() {
+  if (!GSUITE_BRIDGE_URL || GSUITE_BRIDGE_URL.includes("TU-DOMINIO")) {
+    return { ok: false, error: "Falta configurar GSUITE_BRIDGE_URL / GSUITE_BRIDGE_TOKEN en el código (ver comentario junto a su definición)." };
+  }
+  try {
+    const res = await fetch(`${GSUITE_BRIDGE_URL}/run?token=${encodeURIComponent(GSUITE_BRIDGE_TOKEN)}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { ok: false, error: (data && (data.error || data.reason)) || `El bridge respondió con error (HTTP ${res.status}).` };
+    }
+    if (data && data.skipped) {
+      return { ok: false, error: data.reason || "Ya hay una corrida en curso; espera a que termine." };
+    }
+    if (data && data.ok === false) {
+      return { ok: false, error: (data.error) || "La corrida del bridge terminó con error." };
+    }
+    const total = data?.result?.documentosTotales;
+    return { ok: true, documentosTotales: total };
+  } catch (err) {
+    return { ok: false, error: "No se pudo contactar al bridge. ¿Está expuesto el servicio en Railway?" };
+  }
 }
 
 // Normaliza un RUT para comparar (sin puntos, sin espacios, mayuscula) --
@@ -5111,6 +5150,22 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
   const [gBuscando,setGBuscando]=useState(false);
   const [gResultados,setGResultados]=useState(null);
   const [gError,setGError]=useState(null);
+  const [gBridgeEstado,setGBridgeEstado]=useState(null); // null | "procesando" | "listo" | "error"
+  const [gBridgeMsg,setGBridgeMsg]=useState("");
+  const forzarBridge=async()=>{
+    setGBridgeEstado("procesando"); setGBridgeMsg("");
+    const r=await forzarCorridaBridge();
+    if(r.ok){
+      setGBridgeEstado("listo");
+      setGBridgeMsg(r.documentosTotales!=null?`${r.documentosTotales} documentos sincronizados.`:"");
+    } else {
+      setGBridgeEstado("error");
+      setGBridgeMsg(r.error||"Error desconocido.");
+    }
+    // Vuelve al estado neutro despues de unos segundos, para que el boton
+    // quede disponible de nuevo sin tener que recargar la pantalla.
+    setTimeout(()=>{ setGBridgeEstado(null); setGBridgeMsg(""); }, 8000);
+  };
   const buscarEnGsuite=async()=>{
     const termino=gBuscarTexto.trim();
     if(!termino) return;
@@ -5222,6 +5277,17 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
             </button>
           </div>
           {gError&&<div style={{fontSize:12,color:C.warning,marginTop:6}}>{gError}</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
+            <button type="button"
+              style={{...S.btnPri,fontSize:11,padding:"5px 10px",whiteSpace:"nowrap",background:"transparent",border:"1px solid "+C.danger,color:C.danger,opacity:gBridgeEstado==="procesando"?0.6:1}}
+              disabled={gBridgeEstado==="procesando"}
+              onClick={forzarBridge}>
+              {gBridgeEstado==="procesando"?"⏳ Procesando...":"🔄 Forzar actualización gSuite"}
+            </button>
+            {gBridgeEstado==="procesando"&&<span style={{fontSize:11,color:C.muted}}>Puede tardar 1-2 minutos, no cierres esta pantalla.</span>}
+            {gBridgeEstado==="listo"&&<span style={{fontSize:11,color:C.success,fontWeight:700}}>✅ ¡Listo! {gBridgeMsg}</span>}
+            {gBridgeEstado==="error"&&<span style={{fontSize:11,color:C.warning,fontWeight:700}}>⚠️ {gBridgeMsg}</span>}
+          </div>
           {gResultados&&(
             <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
               {gResultados.map((r,i)=>(
