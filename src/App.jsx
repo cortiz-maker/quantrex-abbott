@@ -1727,25 +1727,42 @@ async function deleteRecordatorio(id) {
   } catch(e) { console.error("deleteRecordatorio:",e); return false; }
 }
 // ── Incidencias (no conformidades NT147 / cumplimiento de flota) ──────────
+// IMPORTANTE: la lista NO trae la columna "fotos" (evidencia en base64, hasta
+// ~4MB por incidencia). Con las 16+ incidencias acumuladas, un SELECT * traía
+// decenas de MB en una sola consulta y Supabase la cancelaba por timeout
+// (Postgres 57014 "canceling statement due to statement timeout"), lo que en
+// la app se veía como "0 incidencias" sin ningún error visible. Las fotos se
+// cargan aparte, solo para la incidencia que se expande o edita.
 async function loadIncidencias() {
   const mapear = data => data.map(i=>({
     id:i.id, folio:i.folio||"", fecha:i.fecha||"", tipo:i.tipo||"otro",
     contraparte:i.contraparte||"", ubicacion:i.ubicacion||"", descripcion:i.descripcion||"",
-    fotos:i.fotos||[], notificado:!!i.notificado, fechaNotificacion:i.fecha_notificacion||"",
+    fotos:[], // se carga bajo demanda — ver loadIncidenciaFotos
+    notificado:!!i.notificado, fechaNotificacion:i.fecha_notificacion||"",
     estado:i.estado||"abierta", autor:i.autor||"", origen:i.origen||"manual",
     createdAt:i.created_at||"", updatedAt:i.updated_at||"",
   }));
+  const COLUMNAS_LIGERAS="id,folio,fecha,tipo,contraparte,ubicacion,descripcion,notificado,fecha_notificacion,estado,autor,origen,created_at,updated_at";
   try {
-    let data = await sbFetch("GET","incidencias","","?order=fecha.desc");
+    let data = await sbFetch("GET","incidencias","",`?order=fecha.desc&select=${COLUMNAS_LIGERAS}`);
     if(!data){
       // Reintento único: un fallo puntual (cold start, blip de red) no debe
       // mostrarse como "0 incidencias" — se reintenta una vez antes de rendirse.
       await new Promise(r=>setTimeout(r,900));
-      data = await sbFetch("GET","incidencias","","?order=fecha.desc");
+      data = await sbFetch("GET","incidencias","",`?order=fecha.desc&select=${COLUMNAS_LIGERAS}`);
     }
     if(!data){ console.error("loadIncidencias: sin datos tras reintento"); return null; }
     return mapear(data);
   } catch(e) { console.error("loadIncidencias:",e); return null; }
+}
+// Carga la evidencia (fotos/PDF/Word/Excel en base64) de UNA incidencia puntual.
+// Se llama solo al expandir o editar una fila, nunca en el listado completo.
+async function loadIncidenciaFotos(id) {
+  try {
+    const data = await sbFetch("GET","incidencias","",`?id=eq.${encodeURIComponent(id)}&select=fotos`);
+    if(!data || !data[0]) return [];
+    return data[0].fotos || [];
+  } catch(e) { console.error("loadIncidenciaFotos:",e); return []; }
 }
 async function saveIncidencia(i) {
   try {
@@ -7657,6 +7674,8 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
   const [fEstado,setFEstado]=useState("todas");
   const [fTipo,setFTipo]=useState("todos");
   const [vista,setVista]=useState("lista"); // "lista" | "dashboard"
+  const [fotosCache,setFotosCache]=useState({}); // id -> fotos[], cargado bajo demanda
+  const [cargandoFotos,setCargandoFotos]=useState({}); // id -> bool
   const EMPTY={fecha:new Date().toISOString().slice(0,10),tipo:"anden_incompatible",contraparte:"",ubicacion:"",descripcion:"",fotos:[],notificado:false,fechaNotificacion:"",estado:"abierta"};
   const [form,setForm]=useState(EMPTY);
   const [subiendo,setSubiendo]=useState(false);
@@ -7725,7 +7744,22 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
   const abiertas=incidencias.filter(i=>i.estado==="abierta").length;
 
   function iniciarNueva(){ setForm(EMPTY); setEditId(null); setNuevo(true); setExpandId(null); }
-  function iniciarEdicion(i){ setForm({fecha:i.fecha,tipo:i.tipo,contraparte:i.contraparte,ubicacion:i.ubicacion,descripcion:i.descripcion,fotos:i.fotos||[],notificado:i.notificado,fechaNotificacion:i.fechaNotificacion,estado:i.estado}); setEditId(i.id); setNuevo(true); setExpandId(null); }
+  async function iniciarEdicion(i){
+    const fotos = fotosCache[i.id] || await loadIncidenciaFotos(i.id);
+    if(!fotosCache[i.id]) setFotosCache(p=>({...p,[i.id]:fotos}));
+    setForm({fecha:i.fecha,tipo:i.tipo,contraparte:i.contraparte,ubicacion:i.ubicacion,descripcion:i.descripcion,fotos,notificado:i.notificado,fechaNotificacion:i.fechaNotificacion,estado:i.estado});
+    setEditId(i.id); setNuevo(true); setExpandId(null);
+  }
+  async function alternarExpand(id){
+    if(expandId===id){ setExpandId(null); return; }
+    setExpandId(id);
+    if(!fotosCache[id]){
+      setCargandoFotos(p=>({...p,[id]:true}));
+      const fotos = await loadIncidenciaFotos(id);
+      setFotosCache(p=>({...p,[id]:fotos}));
+      setCargandoFotos(p=>({...p,[id]:false}));
+    }
+  }
 
   const FOTOS_MAX_MB=4; // margen bajo el límite real del gateway de Supabase
   function pesoFotosMB(fotos){
@@ -7852,7 +7886,7 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
         const em=ESTADO_INCIDENCIA[i.estado]||ESTADO_INCIDENCIA.abierta;
         const expandido=expandId===i.id;
         return (
-          <div key={i.id} style={{...S.row,flexDirection:"column",alignItems:"stretch",cursor:"pointer"}} onClick={()=>setExpandId(expandido?null:i.id)}>
+          <div key={i.id} style={{...S.row,flexDirection:"column",alignItems:"stretch",cursor:"pointer"}} onClick={()=>alternarExpand(i.id)}>
             <div style={{display:"flex",alignItems:"center",gap:14}}>
               <div style={{...S.rowIcon,background:tm.color+"22",color:tm.color}}>{tm.icon}</div>
               <div style={S.rowBody}>
@@ -7868,9 +7902,10 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
                   Registrado por {i.autor||"—"}{i.origen==="alerta"?" · generado desde alerta de flota":i.origen==="sistema"?" · generado automáticamente por el sistema":""}
                   {i.notificado?` · Notificado a la contraparte${i.fechaNotificacion?" el "+i.fechaNotificacion:""}`:" · Sin notificar a la contraparte"}
                 </div>
-                {(i.fotos||[]).length>0&&(
+                {cargandoFotos[i.id]&&<div style={{fontSize:11.5,color:C.muted}}>Cargando evidencia…</div>}
+                {(fotosCache[i.id]||[]).length>0&&(
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                    {i.fotos.map((ev,idx)=>(
+                    {fotosCache[i.id].map((ev,idx)=>(
                       <a key={idx} href={esImagen(ev)?ev:ev?.data} download={evNombre(ev,idx)} target="_blank" rel="noreferrer" title={evNombre(ev,idx)}>
                         {esImagen(ev)
                           ?<img src={typeof ev==="string"?ev:ev.data} alt={evNombre(ev,idx)} style={{width:88,height:88,borderRadius:8,objectFit:"cover",border:"1px solid "+C.border}}/>
