@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -4734,11 +4735,6 @@ function _hashSimple(str){
 }
 
 async function generarBitacoraPDF(sol){
-  if(!window.jspdf || !window.jspdf.jsPDF){
-    window.alert("Falta cargar la librería jsPDF (agregar el script de jsPDF en el index.html) para poder generar el PDF.");
-    return;
-  }
-  const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:"pt", format:"a4" });
   const PAGE_W = doc.internal.pageSize.getWidth();
   const PAGE_H = doc.internal.pageSize.getHeight();
