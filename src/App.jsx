@@ -3964,22 +3964,35 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
 }
 
 // ── Donut de distribución por Unidad de Negocio (módulo 3) ─────────────────
-// Cuenta guías (no solicitudes) por unidad, dentro del período mostrado —
-// una solicitud con 2 guías AV y 1 CRM aporta 2 al segmento AV y 1 a CRM,
-// igual criterio que el prorrateo monetario del Excel de cierre. Solo
-// muestra unidades con movimiento real (dinámico); los ítems de "documentos"
-// que aún no tienen unidad asignada se informan aparte, sin ocultarlos.
+// Cuenta guías (no solicitudes) por unidad, dentro del período mostrado.
+// Solo se consideran las solicitudes de CARGA/RETIRO (carga_ol, li_retiro):
+// una misma guía suele pasar también por una solicitud de "entrega" (y a
+// veces por "devolución"), y si se contaran todas esas gestiones la guía
+// quedaría duplicada 2, 3 o 4 veces. Por eso se filtra por tipo Y además se
+// deduplica de forma global (guiasContadas): si la misma guía aparece en más
+// de una solicitud de carga/retiro (ej. un reintento), igual cuenta una sola
+// vez. Los ítems de "documentos" que aún no tienen unidad asignada se
+// informan aparte, sin ocultarlos.
 const COLORES_UNIDAD = { AV:C.cyan, CRM:C.success, EP:C.warning, HF:C.info, ANI:C.danger };
+const TIPOS_CARGA_RETIRO = new Set(["carga_ol","li_retiro"]);
 function DonutUnidadNegocio({solicitudes}){
   const conteo={}; UNIDADES_NEGOCIO.forEach(u=>conteo[u]=0);
   let sinAsignar=0;
+  const guiasContadas=new Set();
   (solicitudes||[]).forEach(s=>{
-    const taggedGuias=new Set();
+    if(!TIPOS_CARGA_RETIRO.has(s.tipo)) return;
+    const mapaUnidad={};
     (s.guiasNegocio||[]).forEach(g=>{
-      if(g.unidad && conteo[g.unidad]!=null){ conteo[g.unidad]++; taggedGuias.add(g.guia); }
+      const campo=String(g.guia||"").trim();
+      if(!campo||!g.unidad) return;
+      campo.split(/[,\s]+/).map(t=>t.trim()).filter(Boolean).forEach(t=>{ mapaUnidad[t]=g.unidad; });
     });
     (s.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean).forEach(item=>{
-      if(!taggedGuias.has(item)) sinAsignar++;
+      if(guiasContadas.has(item)) return;
+      guiasContadas.add(item);
+      const u=mapaUnidad[item];
+      if(u && conteo[u]!=null) conteo[u]++;
+      else sinAsignar++;
     });
   });
   const total=Object.values(conteo).reduce((a,b)=>a+b,0);
