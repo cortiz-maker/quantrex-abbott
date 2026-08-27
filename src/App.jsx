@@ -107,6 +107,27 @@ const UNIDADES_NEGOCIO = ["AV","CRM","EP","HF","ANI"];
 function guiaTextoDesde(guiasNegocio){
   return (guiasNegocio||[]).map(g=>g.guia).filter(Boolean).join(", ");
 }
+// División por guía a partir de guiasNegocio, tolerante a items que vengan con
+// varios n° de guía pegados en un mismo campo "guia" (separados por espacio/coma).
+function divisionTextoFila(documentosTxt, guiasNegocio){
+  const items=(documentosTxt||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
+  if(!items.length) return "";
+  const mapa={};
+  (guiasNegocio||[]).forEach(g=>{
+    const campo=String(g.guia||"").trim();
+    if(!campo||!g.unidad) return;
+    campo.split(/[,\s]+/).map(t=>t.trim()).filter(Boolean).forEach(t=>{ mapa[t]=g.unidad; });
+  });
+  const unidadesPresentes=new Set();
+  const partes=items.map(it=>{
+    const u=mapa[it];
+    if(u) unidadesPresentes.add(u);
+    return u?`${it}:${u}`:`${it}:—`;
+  });
+  if(!Object.keys(mapa).length || items.every(it=>!mapa[it])) return "Sin asignar";
+  if(unidadesPresentes.size===1 && items.every(it=>mapa[it])) return [...unidadesPresentes][0];
+  return partes.join(" / ");
+}
 
 // Lee un archivo de respaldo (imagen o PDF) a base64. Si es imagen, la
 // comprime igual que el resto de la app (evita respaldos de varios MB por
@@ -1978,6 +1999,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
     montoPorSolicitud[s.id] = cSpot+cOH+cSpotRegional+cTraslado;
     return [i+1,s.ot||"",s.fecha||"",s.hora||"",s.titulo||"",s.titulo==="000-2 - Dhl Atlantis"?(s.destino||""):"",
       s.documentos||"",
+      divisionTextoFila(s.documentos, s.guiasNegocio),
       TYPE_META[s.tipo]?.label||s.tipo, STATUS_META[s.status]?.label||s.status,
       s.status==="cancelada"?(s.canceladoPor||""):"", s.status==="cancelada"?(s.motivoCancelacion||""):"",
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
@@ -2007,7 +2029,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   const totalDescNP=totalNP*DESCUENTO_DIA;
   const granTotal=totalCobro+COBRO_M1+COBRO_M2-totalDescNP;
 
-  const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","Tipo","Estado",
+  const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","División","Tipo","Estado",
     "Responsable Cancelación","Motivo Cancelación","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
     "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
@@ -2016,11 +2038,34 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.aoa_to_sheet([headers,...rows]);
-  ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:30},{wch:28},{wch:13},
+  ws1["!cols"]=[{wch:5},{wch:12},{wch:12},{wch:8},{wch:35},{wch:20},{wch:30},{wch:22},{wch:28},{wch:13},
     {wch:20},{wch:35},{wch:10},
     {wch:18},{wch:14},{wch:13},{wch:10},{wch:8},{wch:18},{wch:7},{wch:13},{wch:10},{wch:22},{wch:12},
     {wch:22},{wch:18},{wch:16},{wch:20},{wch:14},{wch:18},{wch:14},{wch:14},{wch:25},{wch:14},{wch:45},{wch:45}];
   XLSX.utils.book_append_sheet(wb, ws1, "Detalle Solicitudes");
+
+  // ── Prorrateo por Unidad de Negocio (módulo 3) ───────────────────────────
+  // Reparte el monto de cobros EXTRA de cada solicitud (SPOT + Overnight +
+  // SPOT Regional + Traslado Equipos Médicos — lo realmente ejecutado, nunca
+  // el presupuesto del cliente) entre las unidades marcadas en sus guías, en
+  // proporción a cuántas guías de esa solicitud quedaron en cada unidad.
+  // (Se calcula aquí, antes del Resumen Ejecutivo, para poder mostrar el
+  // desglose por división también en esa hoja.)
+  const montoPorUnidad={}; UNIDADES_NEGOCIO.forEach(u=>montoPorUnidad[u]=0);
+  let montoSinUnidad=0;
+  for(const s of solicitudes){
+    const monto=montoPorSolicitud[s.id]||0;
+    if(monto<=0) continue;
+    const guias=s.guiasNegocio||[];
+    const conteoPorUnidad={};
+    guias.forEach(g=>{ if(g.unidad) conteoPorUnidad[g.unidad]=(conteoPorUnidad[g.unidad]||0)+1; });
+    const guiasConUnidad=Object.values(conteoPorUnidad).reduce((a,b)=>a+b,0);
+    if(guiasConUnidad===0){ montoSinUnidad+=monto; continue; }
+    Object.entries(conteoPorUnidad).forEach(([u,cant])=>{
+      montoPorUnidad[u]=(montoPorUnidad[u]||0)+monto*(cant/guiasConUnidad);
+    });
+  }
+  const totalProrrateado=Object.values(montoPorUnidad).reduce((a,b)=>a+b,0);
 
   const periodoNombre=nombreArchivo.replace("Quantrex_Abbott_","").replace(".xlsx","").replace("_"," ");
   const r2=[
@@ -2042,6 +2087,12 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
     ["Servicio Traslado Equipos Médicos",cantTraslado,totalTraslado],
     ["SUBTOTAL VARIABLE","",totalCobro],
     [],
+    ["DISTRIBUCIÓN DEL VARIABLE POR UNIDAD DE NEGOCIO"],
+    ["Unidad","Monto","% del variable ejecutado"],
+    ...UNIDADES_NEGOCIO
+      .map(u=>[u, Math.round(montoPorUnidad[u]||0), totalProrrateado>0?(((montoPorUnidad[u]||0)/totalProrrateado)*100).toFixed(1)+"%":"0%"])
+      .filter(row=>row[1]>0),
+    ...(montoSinUnidad>0?[["Sin guía/unidad asignada (pendiente de etiquetar)",Math.round(montoSinUnidad),""]]:[]),
   ];
   if(totalDescNP>0){
     r2.push(["DESCUENTOS"]);
@@ -2079,26 +2130,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   ws2["!cols"]=[{wch:38},{wch:15},{wch:18}];
   XLSX.utils.book_append_sheet(wb, ws2, "Resumen Ejecutivo");
 
-  // ── Prorrateo por Unidad de Negocio (módulo 3) ───────────────────────────
-  // Reparte el monto de cobros EXTRA de cada solicitud (SPOT + Overnight +
-  // SPOT Regional + Traslado Equipos Médicos — lo realmente ejecutado, nunca
-  // el presupuesto del cliente) entre las unidades marcadas en sus guías, en
-  // proporción a cuántas guías de esa solicitud quedaron en cada unidad.
-  const montoPorUnidad={}; UNIDADES_NEGOCIO.forEach(u=>montoPorUnidad[u]=0);
-  let montoSinUnidad=0;
-  for(const s of solicitudes){
-    const monto=montoPorSolicitud[s.id]||0;
-    if(monto<=0) continue;
-    const guias=s.guiasNegocio||[];
-    const conteoPorUnidad={};
-    guias.forEach(g=>{ if(g.unidad) conteoPorUnidad[g.unidad]=(conteoPorUnidad[g.unidad]||0)+1; });
-    const guiasConUnidad=Object.values(conteoPorUnidad).reduce((a,b)=>a+b,0);
-    if(guiasConUnidad===0){ montoSinUnidad+=monto; continue; }
-    Object.entries(conteoPorUnidad).forEach(([u,cant])=>{
-      montoPorUnidad[u]=(montoPorUnidad[u]||0)+monto*(cant/guiasConUnidad);
-    });
-  }
-  const totalProrrateado=Object.values(montoPorUnidad).reduce((a,b)=>a+b,0);
+  // ── Distribución por Unidad de Negocio (módulo 3) ────────────────────────
   const r3=[
     ["QUANTREX — DISTRIBUCIÓN POR UNIDAD DE NEGOCIO"],
     ["Período: "+periodoNombre],
@@ -4677,6 +4709,194 @@ function SolicitudRow({sol,onSelect}){
 }
 
 // ── Detalle ────────────────────────────────────────────────────────────────
+// ── Bitácora PDF auditable de una solicitud ─────────────────────────────────
+// Genera un PDF de una sola solicitud con toda su trazabilidad (identificación,
+// guías/división, cronología de estados, registro de entrega/GPS, firma y
+// evidencia fotográfica), pensado como respaldo formal ante revisiones o
+// disputas de cobro con el cliente, sin tener que armar capturas de pantalla
+// a mano cada vez.
+//
+// IMPORTANTE sobre "no se pueda modificar": este PDF queda como documento
+// plano (texto e imágenes ya renderizados, sin campos editables ni tablas
+// vivas), lo que impide una edición casual como la de un Excel o Word. Pero
+// jsPDF no aplica cifrado ni permisos de PDF, así que alguien con Acrobat u
+// otra herramienta de edición de PDF sí podría alterarlo. Para bloquear la
+// edición a nivel de archivo (contraseña/permisos PDF) se necesitaría un paso
+// adicional con una librería que soporte cifrado (ej. pdf-lib) o procesarlo
+// en el servidor. Como mitigación, se imprime un código de verificación
+// (hash simple del contenido) en el pie de cada página: no es criptografía
+// fuerte, pero permite detectar a simple vista si el contenido fue alterado
+// después de generado.
+function _hashSimple(str){
+  let h=0;
+  for(let i=0;i<str.length;i++){ h=((h<<5)-h+str.charCodeAt(i))|0; }
+  return (h>>>0).toString(16).toUpperCase().padStart(8,"0");
+}
+
+async function generarBitacoraPDF(sol){
+  if(!window.jspdf || !window.jspdf.jsPDF){
+    window.alert("Falta cargar la librería jsPDF (agregar el script de jsPDF en el index.html) para poder generar el PDF.");
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:"pt", format:"a4" });
+  const PAGE_W = doc.internal.pageSize.getWidth();
+  const PAGE_H = doc.internal.pageSize.getHeight();
+  const MARGIN = 40;
+  let y = MARGIN;
+  const NAVY = [30,41,59], CYAN=[34,150,190], MUTED=[110,120,135], DANGER=[210,60,60];
+
+  function nuevaPagina(){ doc.addPage(); y = MARGIN; }
+  function espacio(alto){ if(y+alto > PAGE_H - 60){ nuevaPagina(); } }
+
+  function tituloSeccion(txt){
+    espacio(26);
+    doc.setFillColor(...NAVY); doc.rect(MARGIN, y, PAGE_W-2*MARGIN, 20, "F");
+    doc.setTextColor(255,255,255); doc.setFontSize(11); doc.setFont(undefined,"bold");
+    doc.text(txt, MARGIN+8, y+14);
+    y += 30;
+  }
+  function campo(label, valor){
+    if(valor===undefined||valor===null||valor==="") return;
+    const texto = String(valor);
+    doc.setFont(undefined,"bold"); doc.setFontSize(9); doc.setTextColor(...MUTED);
+    espacio(14);
+    doc.text(label.toUpperCase(), MARGIN, y);
+    doc.setFont(undefined,"normal"); doc.setFontSize(10.5); doc.setTextColor(20,20,20);
+    const lineas = doc.splitTextToSize(texto, PAGE_W-2*MARGIN-140);
+    doc.text(lineas, MARGIN+140, y);
+    y += Math.max(14, lineas.length*13);
+  }
+  function parrafo(txt){
+    doc.setFont(undefined,"normal"); doc.setFontSize(10); doc.setTextColor(20,20,20);
+    const lineas = doc.splitTextToSize(String(txt), PAGE_W-2*MARGIN);
+    espacio(lineas.length*13+4);
+    doc.text(lineas, MARGIN, y);
+    y += lineas.length*13+6;
+  }
+
+  // ── Encabezado ──
+  doc.setFillColor(...NAVY); doc.rect(0,0,PAGE_W,60,"F");
+  doc.setTextColor(255,255,255); doc.setFontSize(16); doc.setFont(undefined,"bold");
+  doc.text("QUANTREX", MARGIN, 28);
+  doc.setFontSize(9.5); doc.setFont(undefined,"normal");
+  doc.text("Bitácora Auditable de Solicitud — Gestión Logística", MARGIN, 44);
+  doc.setFontSize(9); doc.setTextColor(200,220,235);
+  doc.text(sol.ot||sol.id||"", PAGE_W-MARGIN, 28, {align:"right"});
+  doc.text(new Date().toLocaleString("es-CL"), PAGE_W-MARGIN, 44, {align:"right"});
+  y = 80;
+
+  // ── Identificación ──
+  tituloSeccion("1. Identificación de la solicitud");
+  campo("OT Quantrex", sol.ot);
+  campo("Título / Cliente", sol.titulo);
+  campo("Fecha / Hora solicitada", `${sol.fecha||""}${sol.hora?" · "+sol.hora:""}`);
+  campo("Tipo", TYPE_META[sol.tipo]?.label||sol.tipo);
+  campo("Estado actual", STATUS_META[sol.status]?.label||sol.status);
+  campo("Dirección", sol.direccion);
+  campo("Destino", sol.destino);
+  campo("Contacto", sol.contacto);
+  campo("Prioridad", sol.prioridad==="urgente"?"Urgente":"Normal");
+  campo("Solicitante", sol.solicitante);
+  campo("Canal de solicitud", sol.canalSolicitud);
+  campo("Usuario DT", sol.usuarioDT);
+  campo("PPU asignada", sol.ppuAsignada);
+  campo("Chofer asignado", sol.choferAsignado);
+
+  // ── Guías / División ──
+  const items=(sol.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
+  if(items.length){
+    tituloSeccion("2. Guías / Documentos Cliente y División");
+    items.forEach(it=>{
+      const g=(sol.guiasNegocio||[]).find(x=>String(x.guia||"").split(/[,\s]+/).includes(it));
+      campo(it, g?.unidad||"Sin asignar");
+    });
+  }
+
+  // ── Cronología ──
+  const log = sol.statusLog||[];
+  tituloSeccion("3. Cronología de estados");
+  if(!log.length){ parrafo("Sin cambios de estado registrados."); }
+  else log.forEach(e=>{
+    espacio(14);
+    doc.setFont(undefined,"normal"); doc.setFontSize(10); doc.setTextColor(20,20,20);
+    doc.text(`${e.de||""} → ${e.a||""}`, MARGIN, y);
+    doc.setTextColor(...MUTED); doc.setFontSize(9);
+    doc.text(`${e.fechaHora||""}${e.usuario?"  ·  "+e.usuario:""}${e.canceladoPor?"  ·  "+e.canceladoPor:""}`, MARGIN+220, y);
+    y += 14;
+  });
+
+  // ── Registro de entrega / GPS ──
+  if(sol.horaEntrega || sol.horaLlegada){
+    tituloSeccion("4. Registro de entrega y trazabilidad GPS");
+    campo("Llegada al punto", sol.horaLlegada);
+    campo("Entrega registrada", sol.horaEntrega);
+    campo("Tiempo en punto", sol.tiempoEnPunto);
+    campo("Geolocalización", sol.geoEntrega&&sol.geoEntrega!=="Sin geolocalización"?sol.geoEntrega:"Sin geolocalización disponible");
+  }
+
+  // ── Firma ──
+  if(sol.firmaReceptor||sol.rechazoFirma||sol.nombreReceptor){
+    tituloSeccion("5. Firma de recepción");
+    campo("Receptor", sol.nombreReceptor);
+    if(sol.rechazoFirma){
+      parrafo("Firma y timbre en papel — firma digital no fue necesaria.");
+    } else if(sol.firmaReceptor){
+      try{
+        espacio(90);
+        doc.addImage(sol.firmaReceptor, "PNG", MARGIN, y, 180, 80);
+        y += 96;
+      }catch(e){ parrafo("(No fue posible incrustar la imagen de firma.)"); }
+    }
+  }
+
+  // ── Observaciones / cancelación ──
+  if(sol.observacionChofer || sol.observacionCobro || sol.motivoCancelacion){
+    tituloSeccion("6. Observaciones");
+    campo("Observación operativa", sol.observacionChofer);
+    campo("Observación facturación / pre-cierre", sol.observacionCobro);
+    if(sol.canceladoPor){
+      campo("Cancelada por", sol.canceladoPor);
+      campo("Motivo de cancelación", sol.motivoCancelacion);
+    }
+  }
+
+  // ── Evidencia fotográfica ──
+  const fotosEntrega = (sol.fotosEntrega&&sol.fotosEntrega.length>0)?sol.fotosEntrega:(sol.fotoEntrega?[sol.fotoEntrega]:[]);
+  const fotosManif = sol.fotosManifiesto||[];
+  const todasFotos = [...fotosEntrega.map(f=>({src:f,label:"Documento de entrega"})), ...fotosManif.map(f=>({src:f,label:"Manifiesto DHL"}))];
+  if(todasFotos.length){
+    tituloSeccion("7. Evidencia fotográfica");
+    const ANCHO=150, ALTO=150, GAP=14;
+    let x = MARGIN;
+    for(const foto of todasFotos){
+      espacio(ALTO+22);
+      if(x + ANCHO > PAGE_W - MARGIN){ x = MARGIN; y += ALTO+22; espacio(ALTO+22); }
+      try{ doc.addImage(foto.src, x, y, ANCHO, ALTO); }catch(e){}
+      doc.setFontSize(8); doc.setTextColor(...MUTED);
+      doc.text(foto.label, x, y+ALTO+12);
+      x += ANCHO+GAP;
+    }
+    y += ALTO+30;
+  }
+
+  // ── Pie de página + código de verificación en todas las páginas ──
+  const contenidoParaHash = JSON.stringify({id:sol.id,ot:sol.ot,status:sol.status,statusLog:sol.statusLog,horaEntrega:sol.horaEntrega,firmaReceptor:!!sol.firmaReceptor});
+  const codigo = _hashSimple(contenidoParaHash);
+  const totalPaginas = doc.internal.getNumberOfPages();
+  for(let p=1;p<=totalPaginas;p++){
+    doc.setPage(p);
+    doc.setDrawColor(...MUTED); doc.setLineWidth(0.5);
+    doc.line(MARGIN, PAGE_H-42, PAGE_W-MARGIN, PAGE_H-42);
+    doc.setFontSize(7.5); doc.setTextColor(...MUTED); doc.setFont(undefined,"normal");
+    doc.text(`Documento generado automáticamente por Quantrex — Gestión Logística el ${new Date().toLocaleString("es-CL")}. Documento de respaldo operacional. Código de verificación: ${codigo}.`,
+      MARGIN, PAGE_H-30, {maxWidth:PAGE_W-2*MARGIN-90});
+    doc.text(`Página ${p} de ${totalPaginas}`, PAGE_W-MARGIN, PAGE_H-30, {align:"right"});
+  }
+
+  doc.save(`Bitacora_${sol.ot||sol.id}_${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
 function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnviarDT,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
   const opcionesPPU=(vehiculos||[]).filter(v=>v&&v.ppu).map(v=>{
     const ch=(choferes||[]).find(c=>c.ppu===v.ppu);
@@ -4691,6 +4911,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
   const [canceladoPor,setCanceladoPor]=useState("");
   const [motivoCancelacion,setMotivoCancelacion]=useState("");
   const [cuentaGestion,setCuentaGestion]=useState(true);
+  const [generandoPDF,setGenerandoPDF]=useState(false);
   const [editMode,setEditMode]=useState(false);
   const [editForm,setEditForm]=useState({...sol});
   const [enviandoDT,setEnviandoDT]=useState(false);
@@ -4936,6 +5157,10 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
                   if(!r?.ok) window.alert(`No se pudo enviar a DispatchTrack: ${r?.error||"error desconocido"}`);
                 }}>{enviandoDT?"Enviando...":"🚚 Enviar a DispatchTrack"}</button>
         )}
+        <button style={{...S.exportBtn,fontSize:12,opacity:generandoPDF?.6:1}} disabled={generandoPDF}
+          onClick={async()=>{ setGenerandoPDF(true); try{ await generarBitacoraPDF(sol); } finally { setGenerandoPDF(false); } }}>
+          {generandoPDF?"Generando PDF...":"📄 Generar Bitácora PDF"}
+        </button>
       </div>
       <div style={S.detailGrid}>
         {[["Dirección",sol.direccion],["Contacto",sol.contacto],["N° Guía",sol.guia],
