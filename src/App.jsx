@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
+import { PDFDocument } from "pdf-lib";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -3660,7 +3661,7 @@ async function buscarTerminoEnCarpetasDrive(carpetas, apiKey, term){
   const clause = `fullText contains '${termEsc}'`;
   await Promise.all(carpetas.map(async folderId=>{
     const query=`'${folderId}' in parents and (${clause}) and trashed = false`;
-    const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink)")}&pageSize=50&key=${apiKey}`;
+    const url=`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent("files(id,name,webViewLink,mimeType)")}&pageSize=50&key=${apiKey}`;
     try{
       const res=await fetch(url);
       const data=await res.json();
@@ -4842,6 +4843,18 @@ async function generarBitacoraPDF(sol){
     campo("Entrega registrada", sol.horaEntrega);
     campo("Tiempo en punto", sol.tiempoEnPunto);
     campo("Geolocalización", sol.geoEntrega&&sol.geoEntrega!=="Sin geolocalización"?sol.geoEntrega:"Sin geolocalización disponible");
+    if(sol.geoEntrega && sol.geoEntrega!=="Sin geolocalización"){
+      const [lat,lng] = sol.geoEntrega.split(",").map(s=>parseFloat(s.trim()));
+      if(!isNaN(lat) && !isNaN(lng)){
+        const mapaB64 = await urlAImagenBase64(getMapaPuntoUrl(lat,lng));
+        if(mapaB64){
+          espacio(160);
+          try{ doc.addImage(mapaB64, MARGIN, y, 300, 150); y += 166; }catch(e){}
+        }
+        // Si el mapa no se pudo obtener (ej. bloqueo de red/CORS puntual),
+        // la bitácora sigue igual con el texto de coordenadas de arriba.
+      }
+    }
   }
 
   // ── Firma ──
@@ -4889,6 +4902,21 @@ async function generarBitacoraPDF(sol){
     y += ALTO+30;
   }
 
+  // ── 8. Documentos escaneados (Drive) — fusión real de páginas ──
+  // Busca en Drive (mismo buscador del dashboard) los documentos escaneados
+  // asociados a las guías de esta solicitud. Si encuentra algo, agrega una
+  // página separadora con el listado y luego fusiona esos documentos como
+  // páginas reales al final de la bitácora (no como capturas de pantalla).
+  // Si Drive no encuentra nada, o algún archivo falla al descargar/leer, se
+  // omite sin interrumpir la descarga de la bitácora ya generada.
+  const anexos = await buscarDocumentosEscaneados(sol);
+  if(anexos.length){
+    nuevaPagina();
+    tituloSeccion("8. Documentos escaneados (Drive)");
+    parrafo(`Se anexan a continuación ${anexos.length} documento(s) encontrado(s) en Drive asociados a las guías de esta solicitud:`);
+    anexos.forEach(a=>{ campo("Archivo", a.name); });
+  }
+
   // ── Pie de página + código de verificación en todas las páginas ──
   const contenidoParaHash = JSON.stringify({id:sol.id,ot:sol.ot,status:sol.status,statusLog:sol.statusLog,horaEntrega:sol.horaEntrega,firmaReceptor:!!sol.firmaReceptor});
   const codigo = _hashSimple(contenidoParaHash);
@@ -4903,7 +4931,109 @@ async function generarBitacoraPDF(sol){
     doc.text(`Página ${p} de ${totalPaginas}`, PAGE_W-MARGIN, PAGE_H-30, {align:"right"});
   }
 
-  doc.save(`Bitacora_${sol.ot||sol.id}_${new Date().toISOString().slice(0,10)}.pdf`);
+  const nombreArchivo = `Bitacora_${sol.ot||sol.id}_${new Date().toISOString().slice(0,10)}.pdf`;
+  if(!anexos.length){
+    doc.save(nombreArchivo);
+    return;
+  }
+  try{
+    const merged = await PDFDocument.load(doc.output("arraybuffer"));
+    for(const anexo of anexos){
+      try{
+        if(anexo.mimeType === "application/pdf"){
+          const src = await PDFDocument.load(anexo.bytes);
+          const paginas = await merged.copyPages(src, src.getPageIndices());
+          paginas.forEach(p=>merged.addPage(p));
+        } else if(/^image\/(jpe?g|png)$/i.test(anexo.mimeType||"")){
+          const img = /png/i.test(anexo.mimeType) ? await merged.embedPng(anexo.bytes) : await merged.embedJpg(anexo.bytes);
+          const pagina = merged.addPage([img.width, img.height]);
+          pagina.drawImage(img, {x:0,y:0,width:img.width,height:img.height});
+        }
+        // otros mimeType (Word, Excel, etc.) no se pueden fusionar como
+        // páginas de PDF y se omiten aquí sin detener el resto del proceso.
+      }catch(e){ console.error("No se pudo fusionar anexo de Drive:", anexo.name, e); }
+    }
+    const bytesFinal = await merged.save();
+    const blob = new Blob([bytesFinal], {type:"application/pdf"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombreArchivo;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 10000);
+  }catch(e){
+    console.error("Fusión de documentos escaneados falló, se descarga la bitácora sin anexos:", e);
+    doc.save(nombreArchivo);
+  }
+}
+
+// Caché de subcarpetas de Drive a nivel de módulo, compartido entre el
+// buscador de documentos y la bitácora PDF (evita re-escanear ~60 carpetas
+// cada vez que se genera una bitácora en la misma sesión del navegador).
+let _carpetasDriveCache = null;
+async function obtenerSubcarpetasDriveCacheadas(){
+  if(!_carpetasDriveCache){
+    _carpetasDriveCache = await obtenerSubcarpetasDrive(GOOGLE_DRIVE_FOLDER_ID, GOOGLE_DRIVE_API_KEY);
+  }
+  return _carpetasDriveCache;
+}
+
+// Mapa estático de un solo punto (para la bitácora PDF) — mismo patrón y misma
+// API key que ya usan getMapaTramoUrl / getMapaTrazabilidadUrl.
+function getMapaPuntoUrl(lat, lng){
+  const params = new URLSearchParams({
+    size: "600x300", maptype: "roadmap", language: "es", region: "CL",
+    zoom: "16", markers: `color:red|${lat},${lng}`, key: GOOGLE_MAPS_API_KEY,
+  });
+  return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
+}
+
+// Descarga una URL de imagen y la convierte a data URL base64, para poder
+// incrustarla en el PDF (jsPDF necesita base64, no una URL). Si el servidor
+// no permite la lectura cross-origin o falla la red, devuelve null en vez de
+// lanzar una excepción — la bitácora debe seguir generándose igual, solo sin
+// el mapa.
+async function urlAImagenBase64(url){
+  try{
+    const res = await fetch(url);
+    if(!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise(resolve=>{
+      const reader = new FileReader();
+      reader.onload = ()=>resolve(reader.result);
+      reader.onerror = ()=>resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  }catch{ return null; }
+}
+
+// Busca en Drive los documentos escaneados asociados a una solicitud (uno o
+// varios N° de guía) y descarga sus bytes. Reutiliza exactamente la misma
+// búsqueda del "🔍 Buscar documento" del dashboard, así que encuentra lo
+// mismo que aparecería ahí bajo "Documento escaneado".
+async function buscarDocumentosEscaneados(sol){
+  const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
+  if(!driveConfigurado) return [];
+  const numeros = (sol.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
+  if(!numeros.length) return [];
+  try{
+    const carpetas = await obtenerSubcarpetasDriveCacheadas();
+    const encontrados = new Map(); // id -> archivo (dedup si varias guías caen en el mismo PDF)
+    await Promise.all(numeros.map(async n=>{
+      const {resultados} = await buscarTerminoEnCarpetasDrive(carpetas, GOOGLE_DRIVE_API_KEY, n);
+      resultados.forEach(f=>{ if(!encontrados.has(f.id)) encontrados.set(f.id, f); });
+    }));
+    const archivos = [...encontrados.values()];
+    const conBytes = await Promise.all(archivos.map(async f=>{
+      try{
+        const url = `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${GOOGLE_DRIVE_API_KEY}`;
+        const res = await fetch(url);
+        if(!res.ok) return null;
+        const bytes = await res.arrayBuffer();
+        return { ...f, bytes };
+      }catch{ return null; }
+    }));
+    return conBytes.filter(Boolean);
+  }catch{ return []; } // si Drive falla completo, la bitácora se genera igual sin anexos
 }
 
 function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnviarDT,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
