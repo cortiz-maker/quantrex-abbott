@@ -14,7 +14,8 @@
     "react-dom": "^19.2.6",
     "xlsx": "^0.18.5",
     "leaflet": "^1.9.4",
-    "jspdf": "^2.5.2"
+    "jspdf": "^2.5.2",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
