@@ -5068,15 +5068,51 @@ async function registrarBitacoraGenerada({sol, sesion, codigo, incluyeMapa, nAne
   }catch(e){ console.error("No se pudo registrar la bitácora generada (tabla bitacoras_generadas):", e); }
 }
 
+// Verificación de un código de bitácora — sola lectura, sin sesión requerida.
+// Se reutiliza tanto en el login (acceso público, para que un tercero como
+// Abbott pueda verificar sin tener cuenta de Quantrex) como dentro del panel
+// de admin/operador (ver VerificacionBitacoras más abajo).
+function VerificarCodigo(){
+  const [codigo,setCodigo]=useState("");
+  const [resultado,setResultado]=useState(undefined); // undefined=no buscado, null=no encontrado, obj=encontrado
+  const [buscando,setBuscando]=useState(false);
+
+  async function verificar(){
+    const c=codigo.trim().toUpperCase();
+    if(!c) return;
+    setBuscando(true); setResultado(undefined);
+    const data = await sbFetch("GET","bitacoras_generadas","",`?codigo=eq.${encodeURIComponent(c)}&select=*&limit=1`);
+    setResultado(data&&data[0]?data[0]:null);
+    setBuscando(false);
+  }
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <input value={codigo} onChange={e=>setCodigo(e.target.value)} placeholder="Código de verificación (ej. 9A562438)"
+          style={{...S.input,flex:1,minWidth:200}} onKeyDown={e=>e.key==="Enter"&&verificar()}/>
+        <button style={{...S.exportBtn}} disabled={buscando||!codigo.trim()} onClick={verificar}>{buscando?"Verificando...":"Verificar"}</button>
+      </div>
+      {resultado===null&&(
+        <div style={{fontSize:12.5,color:C.danger}}>⚠ No se encontró ninguna bitácora con ese código. No fue emitida por este sistema.</div>
+      )}
+      {resultado&&(
+        <div style={{fontSize:12.5,color:C.success,display:"flex",flexDirection:"column",gap:2}}>
+          <div>✓ Código válido — coincide con un registro emitido por Quantrex.</div>
+          <div style={{color:C.textSecondary}}>OT: <strong style={{color:C.textPrimary}}>{resultado.ot||"—"}</strong> · Generado por: <strong style={{color:C.textPrimary}}>{resultado.generado_por}</strong> ({resultado.perfil||"—"}) · {new Date(resultado.created_at).toLocaleString("es-CL")}</div>
+          <div style={{color:C.textSecondary}}>Incluyó mapa: {resultado.incluye_mapa?"Sí":"No"} · Documentos de Drive anexados: {resultado.n_anexos_drive||0}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Verificación de bitácoras + tráfico de generación (solo admin/operador) ──
 // Consulta la tabla bitacoras_generadas para (a) confirmar si un código
 // puntual realmente salió del sistema, y (b) mostrar un resumen de cuánto se
 // está generando y por quién — pensado para escalar cuando existan más
 // perfiles de cliente generando sus propias bitácoras.
 function VerificacionBitacoras({sesion}){
-  const [codigo,setCodigo]=useState("");
-  const [resultado,setResultado]=useState(null); // undefined=no buscado, null=no encontrado, obj=encontrado
-  const [buscando,setBuscando]=useState(false);
   const [resumen,setResumen]=useState(null); // {total, porUsuario:[{nombre,cantidad}]}
   const [cargandoResumen,setCargandoResumen]=useState(true);
 
@@ -5093,35 +5129,11 @@ function VerificacionBitacoras({sesion}){
     })();
   },[]);
 
-  async function verificar(){
-    const c=codigo.trim().toUpperCase();
-    if(!c) return;
-    setBuscando(true); setResultado(undefined);
-    const data = await sbFetch("GET","bitacoras_generadas","",`?codigo=eq.${encodeURIComponent(c)}&select=*&limit=1`);
-    setResultado(data&&data[0]?data[0]:null);
-    setBuscando(false);
-  }
-
   return(
     <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:16,display:"flex",flexDirection:"column",gap:14}}>
       <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔒 Verificación de bitácoras</div>
 
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <input value={codigo} onChange={e=>setCodigo(e.target.value)} placeholder="Código de verificación (ej. 9A562438)"
-          style={{...S.input,maxWidth:280}} onKeyDown={e=>e.key==="Enter"&&verificar()}/>
-        <button style={{...S.exportBtn}} disabled={buscando||!codigo.trim()} onClick={verificar}>{buscando?"Verificando...":"Verificar"}</button>
-      </div>
-
-      {resultado===null&&(
-        <div style={{fontSize:12.5,color:C.danger}}>⚠ No se encontró ninguna bitácora con ese código. No fue emitida por este sistema, o el registro aún no existe (tabla bitacoras_generadas por crear).</div>
-      )}
-      {resultado&&(
-        <div style={{fontSize:12.5,color:C.success,display:"flex",flexDirection:"column",gap:2}}>
-          <div>✓ Código válido — coincide con un registro emitido por Quantrex.</div>
-          <div style={{color:C.textSecondary}}>OT: <strong style={{color:C.textPrimary}}>{resultado.ot||"—"}</strong> · Generado por: <strong style={{color:C.textPrimary}}>{resultado.generado_por}</strong> ({resultado.perfil||"—"}) · {new Date(resultado.created_at).toLocaleString("es-CL")}</div>
-          <div style={{color:C.textSecondary}}>Incluyó mapa: {resultado.incluye_mapa?"Sí":"No"} · Documentos de Drive anexados: {resultado.n_anexos_drive||0}</div>
-        </div>
-      )}
+      <VerificarCodigo/>
 
       <div style={{borderTop:"1px solid "+C.border,paddingTop:12}}>
         <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Tráfico de generación (últimas 500)</div>
@@ -6056,6 +6068,21 @@ function PantallaLogin({onLogin,onCambiarPassword,usuarios=USUARIOS,choferes=CHO
             {error&&<div style={{color:C.danger,fontSize:13,fontWeight:600,textAlign:"center"}}>{error}</div>}
             <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15}} onClick={handleLogin}>
               Ingresar
+            </button>
+            <button style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:12.5,textAlign:"center"}}
+              onClick={()=>{setModo("verificar");setError("");}}>
+              🔒 Verificar bitácora
+            </button>
+          </>
+        ):modo==="verificar"?(
+          <>
+            <div style={{textAlign:"center",fontSize:13,color:C.textSecondary,marginBottom:4}}>
+              Ingresa el código impreso al pie de una bitácora Quantrex para confirmar que es un documento auténtico.
+            </div>
+            <VerificarCodigo/>
+            <button style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:13,textAlign:"center",marginTop:4}}
+              onClick={()=>setModo("login")}>
+              ← Volver al login
             </button>
           </>
         ):(
