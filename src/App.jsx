@@ -4465,6 +4465,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         {solicitudes.length>0&&!esCliente&&<button title="Exporta solo las solicitudes del período activo" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte del período</span></button>}
       </div>
       <BuscadorDocumento solicitudes={solicitudes} setView={setView} setSelectedId={setSelectedId}/>
+      {["admin","operador"].includes(sesion?.perfil)&&<VerificacionBitacoras sesion={sesion}/>}
       {abrirPeriodo && (
         <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
           <div style={{fontSize:13,fontWeight:800,color:C.cyan}}>Abrir nuevo período de facturación</div>
@@ -4748,8 +4749,9 @@ function _hashSimple(str){
   return (h>>>0).toString(16).toUpperCase().padStart(8,"0");
 }
 
-async function generarBitacoraPDF(sol){
+async function generarBitacoraPDF(sol, sesion){
   const doc = new jsPDF({ unit:"pt", format:"a4" });
+  let mapaIncluido = false;
   const PAGE_W = doc.internal.pageSize.getWidth();
   const PAGE_H = doc.internal.pageSize.getHeight();
   const MARGIN = 40;
@@ -4849,7 +4851,7 @@ async function generarBitacoraPDF(sol){
         const mapaB64 = await urlAImagenBase64(getMapaPuntoUrl(lat,lng));
         if(mapaB64){
           espacio(160);
-          try{ doc.addImage(mapaB64, MARGIN, y, 300, 150); y += 166; }catch(e){}
+          try{ doc.addImage(mapaB64, MARGIN, y, 300, 150); y += 166; mapaIncluido = true; }catch(e){}
         }
         // Si el mapa no se pudo obtener (ej. bloqueo de red/CORS puntual),
         // la bitácora sigue igual con el texto de coordenadas de arriba.
@@ -4934,6 +4936,7 @@ async function generarBitacoraPDF(sol){
   const nombreArchivo = `Bitacora_${sol.ot||sol.id}_${new Date().toISOString().slice(0,10)}.pdf`;
   if(!anexos.length){
     doc.save(nombreArchivo);
+    await registrarBitacoraGenerada({sol, sesion, codigo, incluyeMapa:mapaIncluido, nAnexosDrive:0});
     return;
   }
   try{
@@ -4960,9 +4963,11 @@ async function generarBitacoraPDF(sol){
     a.href = url; a.download = nombreArchivo;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url), 10000);
+    await registrarBitacoraGenerada({sol, sesion, codigo, incluyeMapa:mapaIncluido, nAnexosDrive:anexos.length});
   }catch(e){
     console.error("Fusión de documentos escaneados falló, se descarga la bitácora sin anexos:", e);
     doc.save(nombreArchivo);
+    await registrarBitacoraGenerada({sol, sesion, codigo, incluyeMapa:mapaIncluido, nAnexosDrive:0});
   }
 }
 
@@ -5034,6 +5039,108 @@ async function buscarDocumentosEscaneados(sol){
     }));
     return conBytes.filter(Boolean);
   }catch{ return []; } // si Drive falla completo, la bitácora se genera igual sin anexos
+}
+
+// Registra en Supabase cada bitácora PDF generada (tabla bitacoras_generadas),
+// para poder verificar después "¿este código realmente salió de nuestro
+// sistema?" y, a futuro, ver tráfico de generación por usuario/perfil en el
+// dashboard de admin. Se llama SIEMPRE después de que el PDF ya se generó
+// (nunca antes) y en un try/catch aparte: si el registro falla (red, tabla
+// aún no creada, etc.) la bitácora igual se descarga con normalidad — este
+// log es un respaldo adicional, no un requisito para poder generar el PDF.
+async function registrarBitacoraGenerada({sol, sesion, codigo, incluyeMapa, nAnexosDrive}){
+  try{
+    await sbFetch("POST","bitacoras_generadas",{
+      id: `bit_${Date.now()}`,
+      solicitud_id: sol.id, ot: sol.ot||null, codigo,
+      generado_por: sesion?.nombre||sesion?.email||"—",
+      perfil: sesion?.perfil||null,
+      incluye_mapa: !!incluyeMapa, n_anexos_drive: nAnexosDrive||0,
+      created_at: new Date().toISOString(),
+    });
+  }catch(e){ console.error("No se pudo registrar la bitácora generada (tabla bitacoras_generadas):", e); }
+}
+
+// ── Verificación de bitácoras + tráfico de generación (solo admin/operador) ──
+// Consulta la tabla bitacoras_generadas para (a) confirmar si un código
+// puntual realmente salió del sistema, y (b) mostrar un resumen de cuánto se
+// está generando y por quién — pensado para escalar cuando existan más
+// perfiles de cliente generando sus propias bitácoras.
+function VerificacionBitacoras({sesion}){
+  const [codigo,setCodigo]=useState("");
+  const [resultado,setResultado]=useState(null); // undefined=no buscado, null=no encontrado, obj=encontrado
+  const [buscando,setBuscando]=useState(false);
+  const [resumen,setResumen]=useState(null); // {total, porUsuario:[{nombre,cantidad}]}
+  const [cargandoResumen,setCargandoResumen]=useState(true);
+
+  useEffect(()=>{
+    (async()=>{
+      setCargandoResumen(true);
+      const data = await sbFetch("GET","bitacoras_generadas","","?select=generado_por,created_at&order=created_at.desc&limit=500");
+      if(!data){ setResumen(null); setCargandoResumen(false); return; }
+      const conteo={};
+      data.forEach(r=>{ const n=r.generado_por||"—"; conteo[n]=(conteo[n]||0)+1; });
+      const porUsuario=Object.entries(conteo).map(([nombre,cantidad])=>({nombre,cantidad})).sort((a,b)=>b.cantidad-a.cantidad).slice(0,8);
+      setResumen({total:data.length, porUsuario});
+      setCargandoResumen(false);
+    })();
+  },[]);
+
+  async function verificar(){
+    const c=codigo.trim().toUpperCase();
+    if(!c) return;
+    setBuscando(true); setResultado(undefined);
+    const data = await sbFetch("GET","bitacoras_generadas","",`?codigo=eq.${encodeURIComponent(c)}&select=*&limit=1`);
+    setResultado(data&&data[0]?data[0]:null);
+    setBuscando(false);
+  }
+
+  return(
+    <div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:16,display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{fontWeight:800,color:C.cyan,fontSize:14}}>🔒 Verificación de bitácoras</div>
+
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <input value={codigo} onChange={e=>setCodigo(e.target.value)} placeholder="Código de verificación (ej. 9A562438)"
+          style={{...S.input,maxWidth:280}} onKeyDown={e=>e.key==="Enter"&&verificar()}/>
+        <button style={{...S.exportBtn}} disabled={buscando||!codigo.trim()} onClick={verificar}>{buscando?"Verificando...":"Verificar"}</button>
+      </div>
+
+      {resultado===null&&(
+        <div style={{fontSize:12.5,color:C.danger}}>⚠ No se encontró ninguna bitácora con ese código. No fue emitida por este sistema, o el registro aún no existe (tabla bitacoras_generadas por crear).</div>
+      )}
+      {resultado&&(
+        <div style={{fontSize:12.5,color:C.success,display:"flex",flexDirection:"column",gap:2}}>
+          <div>✓ Código válido — coincide con un registro emitido por Quantrex.</div>
+          <div style={{color:C.textSecondary}}>OT: <strong style={{color:C.textPrimary}}>{resultado.ot||"—"}</strong> · Generado por: <strong style={{color:C.textPrimary}}>{resultado.generado_por}</strong> ({resultado.perfil||"—"}) · {new Date(resultado.created_at).toLocaleString("es-CL")}</div>
+          <div style={{color:C.textSecondary}}>Incluyó mapa: {resultado.incluye_mapa?"Sí":"No"} · Documentos de Drive anexados: {resultado.n_anexos_drive||0}</div>
+        </div>
+      )}
+
+      <div style={{borderTop:"1px solid "+C.border,paddingTop:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Tráfico de generación (últimas 500)</div>
+        {cargandoResumen?(
+          <div style={{fontSize:12,color:C.muted}}>Cargando…</div>
+        ):!resumen?(
+          <div style={{fontSize:12,color:C.warning}}>Aún no hay datos — la tabla bitacoras_generadas puede no existir todavía.</div>
+        ):resumen.total===0?(
+          <div style={{fontSize:12,color:C.muted}}>No se ha generado ninguna bitácora todavía.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            <div style={{fontSize:12,color:C.textSecondary,marginBottom:4}}>Total registradas: <strong style={{color:C.textPrimary}}>{resumen.total}</strong></div>
+            {resumen.porUsuario.map(u=>(
+              <div key={u.nombre} style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:120,fontSize:11.5,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.nombre}</div>
+                <div style={{flex:1,background:C.navy,borderRadius:4,height:8,overflow:"hidden"}}>
+                  <div style={{width:`${Math.max(4,(u.cantidad/resumen.porUsuario[0].cantidad)*100)}%`,height:"100%",background:C.cyan}}/>
+                </div>
+                <div style={{width:24,fontSize:11.5,color:C.muted,textAlign:"right"}}>{u.cantidad}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnviarDT,setView,clientes=CLIENTES_DEFAULT,sesion,solicitudes=[],choferes=CHOFERES,vehiculos=[]}){
@@ -5297,7 +5404,7 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
                 }}>{enviandoDT?"Enviando...":"🚚 Enviar a DispatchTrack"}</button>
         )}
         <button style={{...S.exportBtn,fontSize:12,opacity:generandoPDF?.6:1}} disabled={generandoPDF}
-          onClick={async()=>{ setGenerandoPDF(true); try{ await generarBitacoraPDF(sol); } finally { setGenerandoPDF(false); } }}>
+          onClick={async()=>{ setGenerandoPDF(true); try{ await generarBitacoraPDF(sol, sesion); } finally { setGenerandoPDF(false); } }}>
           {generandoPDF?"Generando PDF...":"📄 Generar Bitácora PDF"}
         </button>
       </div>
