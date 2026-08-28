@@ -4756,7 +4756,7 @@ async function generarBitacoraPDF(sol, sesion){
   const PAGE_H = doc.internal.pageSize.getHeight();
   const MARGIN = 40;
   let y = MARGIN;
-  const NAVY = [30,41,59], CYAN=[34,150,190], MUTED=[110,120,135], DANGER=[210,60,60];
+  const NAVY = [66,9,147], BLUE=[101,148,219], MUTED=[110,120,135], DANGER=[210,60,60];
 
   function nuevaPagina(){ doc.addPage(); y = MARGIN; }
   function espacio(alto){ if(y+alto > PAGE_H - 60){ nuevaPagina(); } }
@@ -4788,15 +4788,22 @@ async function generarBitacoraPDF(sol, sesion){
   }
 
   // ── Encabezado ──
-  doc.setFillColor(...NAVY); doc.rect(0,0,PAGE_W,60,"F");
-  doc.setTextColor(255,255,255); doc.setFontSize(16); doc.setFont(undefined,"bold");
-  doc.text("QUANTREX", MARGIN, 28);
-  doc.setFontSize(9.5); doc.setFont(undefined,"normal");
-  doc.text("Bitácora Auditable de Solicitud — Gestión Logística", MARGIN, 44);
-  doc.setFontSize(9); doc.setTextColor(200,220,235);
+  doc.setFillColor(255,255,255); doc.rect(0,0,PAGE_W,70,"F");
+  const logoB64 = await urlAImagenBase64("/quantrex-logo.png");
+  if(logoB64){
+    try{ doc.addImage(logoB64, MARGIN, 14, 130, 31); }catch(e){}
+  } else {
+    doc.setTextColor(...NAVY); doc.setFontSize(16); doc.setFont(undefined,"bold");
+    doc.text("QUANTREX", MARGIN, 30);
+  }
+  doc.setDrawColor(...BLUE); doc.setLineWidth(2); doc.line(0,70,PAGE_W,70);
+  doc.setTextColor(...MUTED); doc.setFontSize(9.5); doc.setFont(undefined,"normal");
+  doc.text("Bitácora Auditable de Solicitud — Gestión Logística", MARGIN, 58);
+  doc.setFontSize(9); doc.setTextColor(...NAVY); doc.setFont(undefined,"bold");
   doc.text(sol.ot||sol.id||"", PAGE_W-MARGIN, 28, {align:"right"});
-  doc.text(new Date().toLocaleString("es-CL"), PAGE_W-MARGIN, 44, {align:"right"});
-  y = 80;
+  doc.setFont(undefined,"normal"); doc.setTextColor(...MUTED);
+  doc.text(new Date().toLocaleString("es-CL"), PAGE_W-MARGIN, 42, {align:"right"});
+  y = 90;
 
   // ── Identificación ──
   tituloSeccion("1. Identificación de la solicitud");
