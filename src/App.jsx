@@ -1089,9 +1089,15 @@ function calcularCobros(solicitudes, tarifas, feriados){
   // Carga Operador Logístico: las primeras 2 del día son libres de cobro; la
   // 3ª en adelante SÍ entra al contador global de gestiones (y por lo tanto
   // puede contribuir al Extra SPOT si el total del día supera las 6).
+  // Excepción puntual por OT (decisión comercial, no altera reglas generales):
+  // esta(s) solicitud(es) nunca cuentan para el contador SPOT de carga_ol,
+  // pero SÍ mantienen el resto de cobros (Regional, Traslado, etc.) — a
+  // diferencia de "sinCobro", que excluye todo el cálculo.
+  const EXCLUIR_CONTADOR_CARGA_OL = ["QX-448"];
   const ordenCargaOL = [...sols].filter(s=>s.tipo==="carga_ol").sort((a,b)=>_ordenCierre(a)-_ordenCierre(b));
   const contCargaOL = {};
   for(const s of ordenCargaOL){
+    if(EXCLUIR_CONTADOR_CARGA_OL.includes((s.ot||"").trim())) continue;
     const f = s.fecha || "sin-fecha";
     contCargaOL[f] = (contCargaOL[f]||0) + 1;
     if(contCargaOL[f] > 2) perId[s.id]._cuenta = true;
