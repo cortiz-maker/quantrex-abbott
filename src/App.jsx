@@ -3222,8 +3222,20 @@ function ModalCostosDesglose({gastos,di,df,onClose}){
 
 // ── Evolución de facturación del año (barras = base, línea = extras) ──────
 function EvolucionAnual({solicitudes=[]}){
-  const anioActual=new Date().getFullYear();
-  const mesActual=new Date().getMonth();
+  // El "mes" que corresponde mostrar es el mes de CIERRE del período de
+  // facturación en curso (26→25, mismo criterio que getPeriodoActual/
+  // getNombrePeriodo), no el mes calendario crudo. Si ya pasamos el día 25,
+  // el período vigente cierra el mes siguiente — por eso se suma 1. Sin este
+  // ajuste, apenas se abre el nuevo período (ej. 26-ago) la columna del mes
+  // que factura (sep) no se crea hasta que el calendario cruza a septiembre,
+  // quedando el gráfico siempre un mes atrasado respecto al período real.
+  const hoyRef=new Date();
+  let anioActual=hoyRef.getFullYear();
+  let mesActual=hoyRef.getMonth();
+  if(hoyRef.getDate()>25){
+    mesActual+=1;
+    if(mesActual>11){ mesActual=0; anioActual+=1; }
+  }
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const data=[];
   for(let m=0;m<=mesActual;m++){
