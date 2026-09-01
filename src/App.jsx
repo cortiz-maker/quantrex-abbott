@@ -4380,6 +4380,10 @@ function ClientesVisitados({solicitudes,inicio,fin}){
 function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fin,yaCerrado,setView,setSelectedId,setFilterStatus,setFilterFecha,confirmCierre,setConfirmCierre,onCerrarMes,abrirPeriodo,setAbrirPeriodo,nuevaFechaInicio,setNuevaFechaInicio,onAbrirPeriodo,sesion,rutas=[],onExport,gastos=[],vehiculos=[],recordatorios=[],onSaveRecordatorio,onDeleteRecordatorio,cierres=[],metas=[],onSaveMeta}){
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
+  const esOperador=sesion?.perfil==="operador";
+  // Distribución por Unidad de Negocio (donut AV/CRM/EP/HF/ANI): visible
+  // para admin, operador y cliente — no para chofer (que no llega a esta vista).
+  const verDonutUnidad=esAdmin||esOperador||esCliente;
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
   const [showCostosDesglose,setShowCostosDesglose]=useState(false);
   const [showMetasTendencia,setShowMetasTendencia]=useState(false);
@@ -4509,7 +4513,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       {esAdmin&&showCostosDesglose&&<ModalCostosDesglose gastos={gastos} di={diAct} df={dfAct} onClose={()=>setShowCostosDesglose(false)}/>}
 
       <div style={S.sectionTitle}>Operación · {nombrePeriodo}</div>
-      <div style={{display:"grid",gridTemplateColumns:esAdmin?"repeat(auto-fit,minmax(340px,1fr))":"1fr",gap:12,alignItems:"stretch"}}>
+      <div style={{display:"grid",gridTemplateColumns:verDonutUnidad?"repeat(auto-fit,minmax(340px,1fr))":"1fr",gap:12,alignItems:"stretch"}}>
       {(()=>{
         // Cumplimiento del día: promedio ponderado del avance por etapa de
         // cada solicitud ingresada en la fecha seleccionada (pendiente=25%,
@@ -4533,7 +4537,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
           hoyStr={hoyStr} fecha={fechaCumplimiento} onChangeFecha={setFechaCumplimiento} minFecha={primerDiaMesStr} maxFecha={hoyStr}
           setView={setView} setFilterStatus={setFilterStatus} setFilterFecha={setFilterFecha}/>;
       })()}
-      {esAdmin&&<DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>}
+      {verDonutUnidad&&<DonutUnidadNegocio solicitudes={solicitudesPeriodo}/>}
       </div>
       <TiempoGestion solicitudes={solicitudesPeriodo} metasMap={metasMap} nombrePeriodo={nombrePeriodo} onSaveMeta={onSaveMeta} esAdmin={esAdmin}/>
       {esAdmin&&<ClientesVisitados solicitudes={solicitudes} inicio={inicio} fin={fin}/>}
