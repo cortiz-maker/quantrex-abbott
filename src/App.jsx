@@ -306,8 +306,8 @@ const GSUITE_SUPABASE_KEY = "sb_publishable_Ha-vFxLalDXkJGlHSXEyWQ_RFnRJAJ1";
 //      valor que se pone aca abajo.
 // Mientras GSUITE_BRIDGE_URL quede con el placeholder, el boton muestra un
 // error claro en vez de fallar en silencio.
-const GSUITE_BRIDGE_URL = "https://TU-DOMINIO.up.railway.app";
-const GSUITE_BRIDGE_TOKEN = "TU_TOKEN_AQUI";
+const GSUITE_BRIDGE_URL = "https://gsuite-abbott-bridge-production.up.railway.app";
+const GSUITE_BRIDGE_TOKEN = "301fb351018871a3f3ffead8bdcf89b0f3b9131d2e103fbc";
 
 // Busca un documento (guia, factura, nota de credito/debito) por folio,
 // Orden de Compra o N Pedido SAP en el espejo de gSuite. Devuelve
@@ -334,7 +334,7 @@ async function buscarDocumentoGsuite(termino) {
 // el boton que lo llama debe mostrar un estado "Procesando..." mientras
 // dura el fetch.
 async function forzarCorridaBridge() {
-  if (!GSUITE_BRIDGE_URL || GSUITE_BRIDGE_URL.includes("TU-DOMINIO")) {
+  if (!GSUITE_BRIDGE_URL || GSUITE_BRIDGE_URL.includes("gsuite-abbott-bridge-production.up.railway.app")) {
     return { ok: false, error: "Falta configurar GSUITE_BRIDGE_URL / GSUITE_BRIDGE_TOKEN en el código (ver comentario junto a su definición)." };
   }
   try {
@@ -5204,7 +5204,75 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
   const [editForm,setEditForm]=useState({...sol});
   const [enviandoDT,setEnviandoDT]=useState(false);
   const [refrescando,setRefrescando]=useState(false);
-  async function abrirEdicion(){
+  // Estado del buscador de documentos en gSuite dentro de "Editar Solicitud"
+  // (mismo mecanismo que en "Nueva Solicitud" -- ver FormNueva).
+  const [gBuscarTexto,setGBuscarTexto]=useState("");
+  const [gBuscando,setGBuscando]=useState(false);
+  const [gResultados,setGResultados]=useState(null);
+  const [gError,setGError]=useState(null);
+  const [gBridgeEstado,setGBridgeEstado]=useState(null);
+  const [gBridgeMsg,setGBridgeMsg]=useState("");
+  const forzarBridge=async()=>{
+    setGBridgeEstado("procesando"); setGBridgeMsg("");
+    const r=await forzarCorridaBridge();
+    if(r.ok){
+      setGBridgeEstado("listo");
+      setGBridgeMsg(r.documentosTotales!=null?`${r.documentosTotales} documentos sincronizados.`:"");
+    } else {
+      setGBridgeEstado("error");
+      setGBridgeMsg(r.error||"Error desconocido.");
+    }
+    setTimeout(()=>{ setGBridgeEstado(null); setGBridgeMsg(""); }, 8000);
+  };
+  const buscarEnGsuite=async()=>{
+    const termino=gBuscarTexto.trim();
+    if(!termino) return;
+    setGBuscando(true); setGError(null); setGResultados(null);
+    const {data,error}=await buscarDocumentoGsuite(termino);
+    setGBuscando(false);
+    if(error){ setGError("No se pudo buscar en gSuite. Intenta de nuevo."); return; }
+    if(!data || data.length===0){ setGError(`Sin resultados para "${termino}".`); return; }
+    setGResultados(data);
+  };
+  const usarResultadoGsuite=(r)=>{
+    setEditForm(p=>{
+      const existentes=(p.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
+      if(!existentes.includes(r.folio)) existentes.push(r.folio);
+      const u={...p, documentos: existentes.join(", ")};
+      if(p.tipo==="carga_ol"){
+        const nombreItem=[r.cust_name,r.orden_compra,r.pedido_sap,r.factura_corta].filter(Boolean).join(" / ");
+        u.items=[...(p.items||[]), {id:`it_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, nombre:nombreItem, cantidad:1}];
+      } else {
+        const rutBuscado=normalizarRut(r.cust_rut);
+        const match=(clientes||[]).find(c=>normalizarRut(c.id)===rutBuscado);
+        if(match){
+          const label=match.id?match.id+" - "+match.nombre:match.nombre;
+          u.titulo=label;
+          u.direccion=match.direccion||p.direccion;
+          u.notas=match.notas||p.notas;
+          u.contacto=match.contacto||p.contacto;
+          u.destinoLat=match.lat??null;
+          u.destinoLng=match.lng??null;
+        } else {
+          const refCliente=r.cust_name?`Cliente: ${r.cust_name}`:null;
+          if(!p.descripcion && refCliente) u.descripcion=refCliente;
+        }
+        const nombreItem=[
+          r.orden_compra?`OC ${r.orden_compra}`:null,
+          r.pedido_sap?`Pedido SAP ${r.pedido_sap}`:null,
+          r.factura_corta?`Delivery ${r.factura_corta}`:null,
+        ].filter(Boolean).join(" / ");
+        if(nombreItem){
+          u.items=[...(p.items||[]), {id:`it_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, nombre:nombreItem, cantidad:1}];
+        }
+      }
+      return u;
+    });
+    setGResultados(null);
+    setGBuscarTexto("");
+    setGError(null);
+  };
+async function abrirEdicion(){
     // Antes de editar, se confirma contra la base el estado más reciente (status,
     // log, gestión del chofer) por si cambió mientras se estaba viendo el detalle.
     if(onRefrescar){
@@ -5248,6 +5316,47 @@ function Detalle({sol,onStatusChange,onDelete,onEdit,onEditLog,onRefrescar,onEnv
       <button style={S.backBtn} onClick={()=>setEditMode(false)}>← Cancelar edición</button>
       <div style={S.pageTitle}>Editar Solicitud</div>
       <div style={S.formGrid}>
+                <div style={{...S.fGroup,gridColumn:"1/-1",background:C.danger+"14",border:"2px solid "+C.danger,borderRadius:10,padding:"12px 14px"}}>
+          <label style={{...S.label,color:C.danger,fontWeight:800,fontSize:13}}>Buscar documento en gSuite (folio, OC, N Pedido SAP o Delivery)</label>
+          <div style={{display:"flex",gap:8}}>
+            <input style={{...S.input,flex:1,border:"1px solid "+C.danger}} placeholder="Ej: 446505"
+              value={gBuscarTexto}
+              onChange={e=>setGBuscarTexto(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();buscarEnGsuite();}}}/>
+            <button type="button" style={{...S.btnPri,background:C.danger,borderColor:C.danger,whiteSpace:"nowrap"}} disabled={gBuscando} onClick={buscarEnGsuite}>
+              {gBuscando?"Buscando...":"Buscar"}
+            </button>
+          </div>
+          {gError&&<div style={{fontSize:12,color:C.warning,marginTop:6}}>{gError}</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
+            <button type="button"
+              style={{...S.btnPri,fontSize:11,padding:"5px 10px",whiteSpace:"nowrap",background:"transparent",border:"1px solid "+C.danger,color:C.danger,opacity:gBridgeEstado==="procesando"?0.6:1}}
+              disabled={gBridgeEstado==="procesando"}
+              onClick={forzarBridge}>
+              {gBridgeEstado==="procesando"?"Procesando...":"Forzar actualizacion gSuite"}
+            </button>
+            {gBridgeEstado==="procesando"&&<span style={{fontSize:11,color:C.muted}}>Puede tardar 1-2 minutos, no cierres esta pantalla.</span>}
+            {gBridgeEstado==="listo"&&<span style={{fontSize:11,color:C.success,fontWeight:700}}>Listo! {gBridgeMsg}</span>}
+            {gBridgeEstado==="error"&&<span style={{fontSize:11,color:C.warning,fontWeight:700}}>{gBridgeMsg}</span>}
+          </div>
+          {gResultados&&(
+            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+              {gResultados.map((r,i)=>(
+                <div key={i} style={{border:"1px solid "+C.border,background:C.navy,borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                  <div style={{fontSize:12,color:C.textPrimary,lineHeight:1.5}}>
+                    <div><b>Folio {r.folio}</b> - {r.doc_type==="52"?"Guia Despacho":r.doc_type==="33"?"Factura":"Doc. tipo "+r.doc_type}</div>
+                    <div style={{color:C.muted}}>{r.cust_name}{r.cust_comuna?` - ${r.cust_comuna}`:""}</div>
+                    <div style={{color:C.muted}}>{r.orden_compra?`OC: ${r.orden_compra}`:""}{r.pedido_sap?`  -  Pedido SAP: ${r.pedido_sap}`:""}</div>
+                    {r.factura_corta&&<div style={{color:C.muted}}>Delivery: {r.factura_corta}</div>}
+                    {formatDocEmitido(r.track_id_tstamp)&&<div style={{color:"#fff"}}>Documento Emitido {formatDocEmitido(r.track_id_tstamp)}</div>}
+                  </div>
+                  <button type="button" style={{...S.btnPri,fontSize:12,padding:"6px 12px",whiteSpace:"nowrap"}} onClick={()=>usarResultadoGsuite(r)}>Usar</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div style={S.fGroup}><label style={S.label}>Tipo *</label>
           <select style={S.input} value={editForm.tipo} onChange={fe("tipo")}>
             {Object.entries(TYPE_META).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}
