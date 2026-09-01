@@ -2789,7 +2789,7 @@ export default function QuantrexAbbott() {
           <div><div style={S.logoTitle}>QUANTREX</div><div style={S.logoSub}>GESTIÓN LOGÍSTICA · Abbott Laboratories de Chile</div></div>
         </div>
         <nav style={S.nav}>
-          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"],["trazabilidad","Trazabilidad"],["incidencias","Incidencias"]]:[]),...(sesion?.perfil!=="cliente"?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
+          {[...( sesion?.perfil==="chofer"?[["lista","Solicitudes"]]:[["dashboard","Panel"],["lista","Solicitudes"],...(["admin","operador"].includes(sesion?.perfil)?[["rutas","Rutas"],["trazabilidad","Trazabilidad"],["incidencias","Incidencias"]]:[]),...(sesion?.perfil==="financiero"?[["cierres","Cierres"]]:[]),...(!["cliente","financiero"].includes(sesion?.perfil)?[["nueva","+ Nueva"]]:[]) ])].map(([v,l])=>(
             <button key={v} style={{...S.navBtn,...(view===v||(view==="detalle"&&v==="lista")||(view==="cierre_detalle"&&v==="cierres")?S.navBtnActive:{})}}
               onClick={()=>{if(v==="lista"){setFilterFecha("");setFilterStatus("todos");}setView(v);}}>{l}</button>
           ))}
@@ -4381,9 +4381,15 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
   const esAdmin=sesion?.perfil==="admin";
   const esCliente=sesion?.perfil==="cliente";
   const esOperador=sesion?.perfil==="operador";
+  const esFinanciero=sesion?.perfil==="financiero";
+  // Financiero se arma sobre la base del panel cliente: mismo Dashboard
+  // simplificado, más acceso aparte a "Cierres" (trazabilidad anual por
+  // cada cierre de mes) con descarga del pre-cierre — ver view==="cierres".
+  const vistaCliente=esCliente||esFinanciero;
   // Distribución por Unidad de Negocio (donut AV/CRM/EP/HF/ANI): visible
-  // para admin, operador y cliente — no para chofer (que no llega a esta vista).
-  const verDonutUnidad=esAdmin||esOperador||esCliente;
+  // para admin, operador, cliente y financiero — no para chofer (que no
+  // llega a esta vista).
+  const verDonutUnidad=esAdmin||esOperador||vistaCliente;
   const fmt=d=>d.toLocaleDateString("es-CL",{day:"numeric",month:"long"});
   const [showCostosDesglose,setShowCostosDesglose]=useState(false);
   const [showMetasTendencia,setShowMetasTendencia]=useState(false);
@@ -4455,7 +4461,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </div>
       </div>
 
-      {esCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
+      {vistaCliente&&<div style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:12,padding:"14px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:12,color:C.textSecondary}}>📦 <strong style={{color:C.textPrimary}}>{solicitudesPeriodo.length}</strong> solicitudes en el período actual</div>
         <div style={{width:1,height:18,background:C.border}}/>
         {Object.entries(STATUS_META).map(([k,meta])=>{
@@ -4489,7 +4495,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
 
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Dashboard</div>
-        {solicitudes.length>0&&!esCliente&&<button title="Exporta solo las solicitudes del período activo" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte del período</span></button>}
+        {solicitudes.length>0&&!vistaCliente&&<button title="Exporta solo las solicitudes del período activo" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Reporte del período</span></button>}
       </div>
       <BuscadorDocumento solicitudes={solicitudes} setView={setView} setSelectedId={setSelectedId}/>
       {["admin","operador"].includes(sesion?.perfil)&&<VerificacionBitacoras sesion={sesion}/>}
@@ -4541,7 +4547,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
       </div>
       <TiempoGestion solicitudes={solicitudesPeriodo} metasMap={metasMap} nombrePeriodo={nombrePeriodo} onSaveMeta={onSaveMeta} esAdmin={esAdmin}/>
       {esAdmin&&<ClientesVisitados solicitudes={solicitudes} inicio={inicio} fin={fin}/>}
-      {!esCliente&&(
+      {!vistaCliente&&(
       <div style={S.statsGrid}>
         {[["Total","total",stats.total,C.cyan],["Pendientes","pendiente",stats.pendiente,C.warning],["En Tránsito","en_proceso",stats.en_proceso,C.info],["Completadas","completada",stats.completada+stats.devolucion,C.success],
           ...(stats.no_entregado>0?[["No Entregado","no_entregado",stats.no_entregado,"#F97316"]]:[]),
@@ -4571,7 +4577,7 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         })}
       </div>
       )}
-      {esCliente&&<MapaTrazabilidadHoy/>}
+      {vistaCliente&&<MapaTrazabilidadHoy/>}
       {(()=>{
         const sinObs=solicitudesPeriodo.filter(s=>s.status==="no_entregado"&&!(s.observacionChofer||"").trim()).length;
         if(sinObs<1) return null;
@@ -4645,8 +4651,8 @@ function Dashboard({stats,solicitudes,solicitudesPeriodo,nombrePeriodo,inicio,fi
         </>)}
       </>)}
 
-      {esCliente&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
-      {!esCliente&&<>
+      {vistaCliente&&<ResumenCO2 solicitudes={solicitudesPeriodo} rutas={rutas}/>}
+      {!vistaCliente&&<>
       <div style={S.sectionTitle}>Solicitudes recientes</div>
       {solicitudes.length===0?<EmptyState msg="Sin solicitudes aún." action={()=>setView("nueva")}/>
         :[...solicitudes].sort((a,b)=>{
@@ -4703,7 +4709,7 @@ function Lista({solicitudes,filterTipo,setFilterTipo,filterStatus,setFilterStatu
     <div style={S.section}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={S.pageTitle}>Solicitudes Abbott Laboratories de Chile</div>
-        {total>0&&sesion?.perfil!=="cliente"&&<button title="Exporta TODAS las solicitudes de la historia, no solo el período actual" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Exportar historial completo ({total})</span></button>}
+        {total>0&&!["cliente","financiero"].includes(sesion?.perfil)&&<button title="Exporta TODAS las solicitudes de la historia, no solo el período actual" style={{...S.exportBtn,display:"flex",alignItems:"center",gap:6}} onClick={onExport}><span>📥</span><span>Exportar historial completo ({total})</span></button>}
       </div>
       {filterFecha&&(
         <div style={{display:"flex",alignItems:"center",gap:8,background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:8,padding:"6px 12px",fontSize:12,color:C.cyan,width:"fit-content"}}>
@@ -6697,6 +6703,7 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
                   <select style={S.input} value={formU.perfil} onChange={e=>setFormU(p=>({...p,perfil:e.target.value}))}>
                     <option value="operador">Operador</option>
                     <option value="cliente">Cliente (solo lectura)</option>
+                    <option value="financiero">Financiero (cliente + Cierres/pre-cierre)</option>
                   </select></div>
               </div>
               <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
