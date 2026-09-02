@@ -1816,9 +1816,10 @@ async function loadIncidencias() {
     fotos:[], // se carga bajo demanda — ver loadIncidenciaFotos
     notificado:!!i.notificado, fechaNotificacion:i.fecha_notificacion||"",
     estado:i.estado||"abierta", autor:i.autor||"", origen:i.origen||"manual",
+    gestionLog:i.gestion_log||[],
     createdAt:i.created_at||"", updatedAt:i.updated_at||"",
   }));
-  const COLUMNAS_LIGERAS="id,folio,fecha,tipo,contraparte,ubicacion,descripcion,notificado,fecha_notificacion,estado,autor,origen,created_at,updated_at";
+  const COLUMNAS_LIGERAS="id,folio,fecha,tipo,contraparte,ubicacion,descripcion,notificado,fecha_notificacion,estado,autor,origen,gestion_log,created_at,updated_at";
   try {
     let data = await sbFetch("GET","incidencias","",`?order=fecha.desc&select=${COLUMNAS_LIGERAS}`);
     if(!data){
@@ -1847,6 +1848,7 @@ async function saveIncidencia(i) {
       contraparte:i.contraparte||null, ubicacion:i.ubicacion||null, descripcion:i.descripcion||null,
       fotos:i.fotos||[], notificado:!!i.notificado, fecha_notificacion:i.fechaNotificacion||null,
       estado:i.estado||"abierta", autor:i.autor||null, origen:i.origen||"manual",
+      gestion_log:i.gestionLog||[],
       updated_at:new Date().toISOString(),
     };
     const body = JSON.stringify([payload]);
@@ -2853,12 +2855,15 @@ export default function QuantrexAbbott() {
     showToast(existe?"Incidencia actualizada.":"Incidencia registrada.");
     return true;
   }
-  async function handleDeleteIncidencia(id){
+  async function handleDeleteIncidencia(id, motivo=""){
     const prev=incidencias;
+    const item=incidencias.find(x=>x.id===id);
     setIncidencias(incidencias.filter(x=>x.id!==id));
     const ok=await deleteIncidencia(id);
     if(!ok){ setIncidencias(prev); showToast("No se pudo eliminar la incidencia.","danger"); return; }
-    logActividad("eliminar_incidencia", `Eliminó incidencia ${id}`, {entidad:"incidencias",entidadId:id});
+    logActividad("eliminar_incidencia",
+      `Eliminó incidencia ${item?.folio||id}${item?` (${metaTipoIncidencia(item.tipo).label}${item.contraparte?" · "+item.contraparte:""})`:""} · Motivo: ${motivo||"—"}`,
+      {entidad:"incidencias",entidadId:id});
     showToast("Incidencia eliminada.","danger");
   }
   // Genera un ticket de cumplimiento a partir de una alerta (vencimiento automático
@@ -8550,6 +8555,16 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
   const [vista,setVista]=useState("lista"); // "lista" | "dashboard"
   const [fotosCache,setFotosCache]=useState({}); // id -> fotos[], cargado bajo demanda
   const [cargandoFotos,setCargandoFotos]=useState({}); // id -> bool
+  // Gestor de casos: cambiar estado y eliminar ya NO son acciones de un clic.
+  // Cambiar estado exige un comentario (queda en el historial de gestión de la
+  // incidencia); eliminar exige un motivo (queda en el log de actividad, ya
+  // que la fila desaparece de la tabla de incidencias).
+  const [gestionandoId,setGestionandoId]=useState(null);
+  const [gestionEstado,setGestionEstado]=useState("");
+  const [gestionComentario,setGestionComentario]=useState("");
+  const [guardandoGestion,setGuardandoGestion]=useState(false);
+  const [eliminandoId,setEliminandoId]=useState(null);
+  const [motivoEliminar,setMotivoEliminar]=useState("");
   const EMPTY={fecha:new Date().toISOString().slice(0,10),tipo:"anden_incompatible",contraparte:"",ubicacion:"",descripcion:"",fotos:[],notificado:false,fechaNotificacion:"",estado:"abierta"};
   const [form,setForm]=useState(EMPTY);
   const [subiendo,setSubiendo]=useState(false);
@@ -8624,6 +8639,39 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
     setForm({fecha:i.fecha,tipo:i.tipo,contraparte:i.contraparte,ubicacion:i.ubicacion,descripcion:i.descripcion,fotos,notificado:i.notificado,fechaNotificacion:i.fechaNotificacion,estado:i.estado});
     setEditId(i.id); setNuevo(true); setExpandId(null);
   }
+  // Abre el panel de gestión: cambiar el estado (o dejarlo igual) SIEMPRE
+  // dejando un comentario en el historial de la incidencia. Reemplaza los
+  // botones sueltos "Marcar Abierta/Cerrada/etc." de antes.
+  function iniciarGestion(i){
+    setGestionandoId(i.id); setGestionEstado(i.estado); setGestionComentario("");
+    setEliminandoId(null); setEditId(null); setNuevo(false);
+  }
+  async function guardarGestion(i){
+    const comentario=gestionComentario.trim();
+    if(!comentario){ window.alert("Escribe un comentario o detalle de la gestión (obligatorio, queda en el historial)."); return; }
+    setGuardandoGestion(true);
+    const entry={
+      id:Date.now().toString(), fecha:new Date().toISOString(),
+      autor:sesion?.nombre||sesion?.email||"—",
+      estadoAnterior:i.estado, estadoNuevo:gestionEstado, comentario,
+    };
+    const ok=await onSave({...i, estado:gestionEstado, gestionLog:[...(i.gestionLog||[]),entry]});
+    setGuardandoGestion(false);
+    if(ok){ setGestionandoId(null); setGestionComentario(""); }
+  }
+  // Eliminar exige motivo: como la fila desaparece de la tabla de incidencias,
+  // el único rastro que queda es el log de actividad — por eso el motivo va
+  // completo ahí (folio, tipo, contraparte incluidos) antes de borrar.
+  function iniciarEliminar(i){
+    setEliminandoId(i.id); setMotivoEliminar("");
+    setGestionandoId(null); setEditId(null); setNuevo(false);
+  }
+  function confirmarEliminar(i){
+    const motivo=motivoEliminar.trim();
+    if(!motivo){ window.alert("Debes indicar el motivo de la eliminación (queda registrado en el log de actividad)."); return; }
+    onDelete(i.id, motivo);
+    setEliminandoId(null); setMotivoEliminar("");
+  }
   async function alternarExpand(id){
     if(expandId===id){ setExpandId(null); return; }
     setExpandId(id);
@@ -8656,8 +8704,17 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
       fecha:form.fecha, tipo:form.tipo, contraparte:form.contraparte||"",
       ubicacion:form.ubicacion||"", descripcion:form.descripcion.trim(),
       fotos:form.fotos||[], notificado:!!form.notificado, fechaNotificacion:form.fechaNotificacion||"",
-      estado:form.estado||"abierta", autor: base?.autor || (sesion?.nombre||sesion?.email||"—"),
+      estado:base?.estado||form.estado||"abierta", autor: base?.autor || (sesion?.nombre||sesion?.email||"—"),
       origen: base?.origen || "manual",
+      // El estado NUNCA se toca desde este formulario (ver iniciarGestion):
+      // aquí solo se editan los datos base. El historial de gestión se
+      // conserva y se anota que hubo una edición, para que quede trazado.
+      gestionLog: editId?[...(base?.gestionLog||[]),{
+        id:Date.now().toString(), fecha:new Date().toISOString(),
+        autor:sesion?.nombre||sesion?.email||"—",
+        estadoAnterior:base?.estado, estadoNuevo:base?.estado,
+        comentario:"Editó los datos de la incidencia (tipo/contraparte/ubicación/descripción/evidencia).",
+      }]:(base?.gestionLog||[]),
     };
     const ok=await onSave(i);
     if(ok){ setNuevo(false); setEditId(null); setForm(EMPTY); }
@@ -8684,7 +8741,8 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
         <div style={{...S.statCard,borderTop:`3px solid ${C.danger}`}}><div style={{...S.statNum,color:C.danger}}>{abiertas}</div><div style={S.statLabel}>Abiertas</div></div>
         <div style={{...S.statCard,borderTop:`3px solid ${C.warning}`}}><div style={{...S.statNum,color:C.warning}}>{incidencias.filter(i=>i.estado==="en_revision").length}</div><div style={S.statLabel}>En revisión</div></div>
         <div style={{...S.statCard,borderTop:`3px solid ${C.success}`}}><div style={{...S.statNum,color:C.success}}>{incidencias.filter(i=>i.estado==="cerrada").length}</div><div style={S.statLabel}>Cerradas</div></div>
-        <div style={{...S.statCard,borderTop:`3px solid ${C.cyan}`}}><div style={{...S.statNum,color:C.cyan}}>{incidencias.length}</div><div style={S.statLabel}>Total</div></div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.cyan}`}}><div style={{...S.statNum,color:C.cyan}}>{incidencias.filter(i=>i.estado!=="no_operativa").length}</div><div style={S.statLabel}>Total operativas</div></div>
+        <div style={{...S.statCard,borderTop:`3px solid ${C.muted}`}}><div style={{...S.statNum,color:C.muted}}>{incidencias.filter(i=>i.estado==="no_operativa").length}</div><div style={S.statLabel}>No operativas (pruebas)</div></div>
       </div>
 
       {vista==="dashboard"&&<IncidenciasDashboard incidencias={incidencias} clientes={clientes}/>}
@@ -8712,11 +8770,7 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
               Se notificó a la contraparte
             </label>
             {form.notificado&&<input style={{...S.input,maxWidth:180}} type="date" value={form.fechaNotificacion} onChange={e=>setForm(p=>({...p,fechaNotificacion:e.target.value}))}/>}
-            {editId&&(
-              <select style={{...S.input,maxWidth:180}} value={form.estado} onChange={e=>setForm(p=>({...p,estado:e.target.value}))}>
-                {Object.entries(ESTADO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.label}</option>)}
-              </select>
-            )}
+            {editId&&<div style={{fontSize:11.5,color:C.muted}}>El estado se cambia desde "📋 Gestionar", no aquí — así queda siempre con un comentario en el historial.</div>}
           </div>
           <div>
             <label style={S.label}>Evidencia (fotos, PDF, Word, Excel, capturas)</label>
@@ -8791,13 +8845,70 @@ function Incidencias({incidencias=[],onSave,onDelete,sesion,vehiculos=[],cliente
                     ))}
                   </div>
                 )}
+
+                {/* Historial de gestión: cada cambio de estado (con su comentario
+                    obligatorio) queda aquí, más el registro automático de ediciones. */}
+                <div style={{background:C.navy,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={S.fieldLabel}>Historial de gestión</div>
+                  {(!i.gestionLog||i.gestionLog.length===0)?(
+                    <div style={{fontSize:12,color:C.muted}}>Sin gestiones registradas todavía.</div>
+                  ):[...i.gestionLog].reverse().map(g=>(
+                    <div key={g.id} style={{fontSize:12,color:C.textSecondary,display:"flex",flexDirection:"column",gap:2,paddingBottom:6,borderBottom:"1px solid "+C.border}}>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                        {g.estadoAnterior!==g.estadoNuevo?(
+                          <span style={{color:C.textPrimary,fontWeight:700}}>
+                            {(ESTADO_INCIDENCIA[g.estadoAnterior]||{}).label||g.estadoAnterior} → {(ESTADO_INCIDENCIA[g.estadoNuevo]||{}).label||g.estadoNuevo}
+                          </span>
+                        ):<span style={{color:C.textPrimary,fontWeight:700}}>Seguimiento</span>}
+                        <span style={{color:C.muted}}>· {formatUltimoAcceso({ultimoAcceso:g.fecha})||g.fecha}</span>
+                        <span style={{color:C.muted,fontStyle:"italic"}}>· {g.autor}</span>
+                      </div>
+                      <div>{g.comentario}</div>
+                    </div>
+                  ))}
+                </div>
+
                 {puedeEditar&&(
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {Object.entries(ESTADO_INCIDENCIA).filter(([k])=>k!==i.estado).map(([k,m])=>(
-                      <button key={k} style={{...S.statusBtn,border:"1px solid "+m.color,color:m.color}} onClick={()=>onSave({...i,estado:k})}>Marcar {m.label}</button>
-                    ))}
-                    <button style={{...S.exportBtn,fontSize:12}} onClick={()=>iniciarEdicion(i)}>✎ Editar</button>
-                    {puedeEliminar&&<button style={{...S.exportBtn,fontSize:12,borderColor:C.danger,color:C.danger}} onClick={()=>{if(window.confirm("¿Eliminar esta incidencia?"))onDelete(i.id);}}>Eliminar</button>}
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      <button style={{...S.exportBtn,fontSize:12}} onClick={()=>{if(gestionandoId===i.id){setGestionandoId(null);}else{iniciarGestion(i);}}}>📋 {gestionandoId===i.id?"Cancelar gestión":"Gestionar"}</button>
+                      <button style={{...S.exportBtn,fontSize:12}} onClick={()=>iniciarEdicion(i)}>✎ Editar datos</button>
+                      {puedeEliminar&&<button style={{...S.exportBtn,fontSize:12,borderColor:C.danger,color:C.danger}} onClick={()=>{if(eliminandoId===i.id){setEliminandoId(null);}else{iniciarEliminar(i);}}}>🗑 {eliminandoId===i.id?"Cancelar":"Eliminar"}</button>}
+                    </div>
+
+                    {gestionandoId===i.id&&(
+                      <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:8,padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+                        <div style={S.fGroup}><label style={S.label}>Nuevo estado</label>
+                          <select style={S.input} value={gestionEstado} onChange={e=>setGestionEstado(e.target.value)}>
+                            {Object.entries(ESTADO_INCIDENCIA).map(([k,m])=><option key={k} value={k}>{m.label}</option>)}
+                          </select>
+                        </div>
+                        <div style={S.fGroup}><label style={S.label}>Comentario / detalle de la gestión (obligatorio)</label>
+                          <textarea style={{...S.input,minHeight:70,fontFamily:"inherit",resize:"vertical"}}
+                            placeholder='Ej: "Prueba de sistema interno, no informado al cliente." o el detalle de la gestión realizada.'
+                            value={gestionComentario} onChange={e=>setGestionComentario(e.target.value)}/>
+                        </div>
+                        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                          <button style={S.btnSec} onClick={()=>setGestionandoId(null)}>Cancelar</button>
+                          <button style={S.btnPri} disabled={guardandoGestion} onClick={()=>guardarGestion(i)}>{guardandoGestion?"Guardando...":"Guardar gestión"}</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {eliminandoId===i.id&&(
+                      <div style={{background:C.danger+"11",border:"1px solid "+C.danger,borderRadius:8,padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+                        <div style={{fontSize:12.5,color:C.danger,fontWeight:700}}>⚠ Esta acción es irreversible. La incidencia se elimina de la lista — el único rastro que queda es el log de actividad, por eso el motivo es obligatorio.</div>
+                        <div style={S.fGroup}><label style={S.label}>Motivo de la eliminación (obligatorio)</label>
+                          <textarea style={{...S.input,minHeight:60,fontFamily:"inherit",resize:"vertical"}}
+                            placeholder="Ej: Duplicada de INC-020 / Cargada por error / etc."
+                            value={motivoEliminar} onChange={e=>setMotivoEliminar(e.target.value)}/>
+                        </div>
+                        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                          <button style={S.btnSec} onClick={()=>setEliminandoId(null)}>Cancelar</button>
+                          <button style={{...S.btnPri,background:C.danger}} onClick={()=>confirmarEliminar(i)}>Confirmar eliminación</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -8938,19 +9049,23 @@ function MiniTendenciaIncidencias({puntos}){
 }
 
 function IncidenciasDashboard({incidencias=[],clientes=[]}){
-  const total=incidencias.length;
+  // El dashboard es de análisis operativo (SLA, tendencia, contraparte), así
+  // que las incidencias marcadas "no operativa" (pruebas/datos inválidos) se
+  // excluyen para no distorsionar los indicadores reales.
+  const reales = incidencias.filter(i=>i.estado!=="no_operativa");
+  const total=reales.length;
   const porTipo=Object.entries(TIPO_INCIDENCIA).map(([k,m])=>({
     key:k, label:m.label, icon:m.icon, color:m.color,
-    n:incidencias.filter(i=>i.tipo===k).length,
+    n:reales.filter(i=>i.tipo===k).length,
   })).filter(t=>t.n>0).sort((a,b)=>b.n-a.n);
 
-  const porEstado=Object.entries(ESTADO_INCIDENCIA).map(([k,m])=>({
+  const porEstado=Object.entries(ESTADO_INCIDENCIA).filter(([k])=>k!=="no_operativa").map(([k,m])=>({
     key:k, label:m.label, color:m.color,
-    n:incidencias.filter(i=>i.estado===k).length,
+    n:reales.filter(i=>i.estado===k).length,
   }));
 
   const contraparteMap={};
-  incidencias.forEach(i=>{
+  reales.forEach(i=>{
     const cat=categorizarContraparte(i.contraparte);
     contraparteMap[cat]=(contraparteMap[cat]||0)+1;
   });
@@ -8959,7 +9074,7 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
     .sort((a,b)=>b.n-a.n);
 
   const mesMap={};
-  incidencias.forEach(i=>{
+  reales.forEach(i=>{
     const mes=(i.fecha||"").slice(0,7); // YYYY-MM
     if(!mes)return;
     mesMap[mes]=(mesMap[mes]||0)+1;
@@ -8967,8 +9082,8 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
   const porMes=Object.entries(mesMap).sort((a,b)=>a[0].localeCompare(b[0])).slice(-6)
     .map(([mes,n])=>({mes,n,label:new Date(mes+"-01T12:00:00").toLocaleDateString("es-CL",{month:"short",year:"2-digit"})}));
 
-  const notificadas=incidencias.filter(i=>i.notificado).length;
-  const cerradas=incidencias.filter(i=>i.estado==="cerrada").length;
+  const notificadas=reales.filter(i=>i.notificado).length;
+  const cerradas=reales.filter(i=>i.estado==="cerrada").length;
   const tasaCierre = total?Math.round((cerradas/total)*100):0;
 
   return(
@@ -9017,14 +9132,18 @@ function IncidenciasDashboard({incidencias=[],clientes=[]}){
 // Exportador de resumen de incidencias — genera un Excel con hoja ejecutiva
 // (para compartir con el cliente/Abbott) y hoja de detalle completo.
 function exportarResumenIncidencias(incidencias=[]){
-  const total=incidencias.length;
-  const abiertas=incidencias.filter(i=>i.estado==="abierta").length;
-  const enRevision=incidencias.filter(i=>i.estado==="en_revision").length;
-  const cerradas=incidencias.filter(i=>i.estado==="cerrada").length;
-  const notificadas=incidencias.filter(i=>i.notificado).length;
+  // Las marcadas "no operativa" (pruebas/datos inválidos) se excluyen por
+  // completo de este resumen: es un reporte pensado para compartir con
+  // Abbott/DHL y no debe mezclar registros de prueba con hallazgos reales.
+  const reales = incidencias.filter(i=>i.estado!=="no_operativa");
+  const total=reales.length;
+  const abiertas=reales.filter(i=>i.estado==="abierta").length;
+  const enRevision=reales.filter(i=>i.estado==="en_revision").length;
+  const cerradas=reales.filter(i=>i.estado==="cerrada").length;
+  const notificadas=reales.filter(i=>i.notificado).length;
 
   const porTipoMap={};
-  incidencias.forEach(i=>{
+  reales.forEach(i=>{
     const label=metaTipoIncidencia(i.tipo).label;
     porTipoMap[label]=(porTipoMap[label]||0)+1;
   });
@@ -9049,7 +9168,7 @@ function exportarResumenIncidencias(incidencias=[]){
 
   const detalle=[
     ["Folio","Fecha","Tipo","Estado","Contraparte","Ubicación","Notificado","Fecha notificación","Descripción","Registrado por"],
-    ...incidencias
+    ...reales
       .slice()
       .sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""))
       .map(i=>[
@@ -9644,6 +9763,7 @@ const ESTADO_INCIDENCIA = {
   abierta:     { label:"Abierta",      color:"#EF4444" },
   en_revision: { label:"En revisión",  color:"#F59E0B" },
   cerrada:     { label:"Cerrada",      color:"#22C55E" },
+  no_operativa:{ label:"No operativa (prueba)", color:"#8BAFD4" },
 };
 function generarFolioIncidencia(incidencias){
   let max=0;
