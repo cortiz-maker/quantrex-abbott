@@ -1567,7 +1567,8 @@ async function loadUsuarios() {
     return data.map(u=>({email:u.email,password:u.password,perfil:u.perfil,nombre:u.nombre,
       ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado, pwChangedAt:u.pw_changed_at||null,
       dispositivoId:u.dispositivo_id||null, dispositivoInfo:u.dispositivo_info||null,
-      dispositivoIP:u.dispositivo_ip||null, dispositivoDesde:u.dispositivo_desde||null}));
+      dispositivoIP:u.dispositivo_ip||null, dispositivoDesde:u.dispositivo_desde||null,
+      forzarRelogin:u.forzar_relogin||null}));
   } catch(e) { console.error("loadUsuarios excepción:",e); return {error:true}; }
 }
 async function saveUsuarios(data) {
@@ -1577,6 +1578,7 @@ async function saveUsuarios(data) {
       ultimo_acceso:u.ultimoAcceso||null, bloqueado:!!u.bloqueado, pw_changed_at:u.pwChangedAt||null,
       dispositivo_id:u.dispositivoId||null, dispositivo_info:u.dispositivoInfo||null,
       dispositivo_ip:u.dispositivoIP||null, dispositivo_desde:u.dispositivoDesde||null,
+      forzar_relogin:u.forzarRelogin||null,
       updated_at:new Date().toISOString(),
     }));
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
@@ -2723,12 +2725,17 @@ export default function QuantrexAbbott() {
   // Registra el acceso del usuario en Supabase (no en localStorage) para que el
   // conteo de días de inactividad sea real y visible desde cualquier dispositivo.
   async function handleLoginExitoso(u){
-    setSesion(u);
-    SESION_LOG_ACTUAL = u; // disponible de inmediato, sin esperar al useEffect
-    logActividad("login", `Inicio de sesión (${u.perfil||"—"})`);
-    try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}
-    if(u.perfil==="chofer") setPerfilChofer(u);
-    if(u.perfil==="cliente"){
+    // loginEn marca el instante de ESTE login: es lo que se compara contra
+    // forzarRelogin (fijado por un admin) para decidir, en el chequeo
+    // periódico, si esta sesión es anterior a un cierre forzado y por lo
+    // tanto debe cerrarse aunque siga "abierta" en el navegador del cliente.
+    const uConLogin = {...u, loginEn:new Date().toISOString()};
+    setSesion(uConLogin);
+    SESION_LOG_ACTUAL = uConLogin; // disponible de inmediato, sin esperar al useEffect
+    logActividad("login", `Inicio de sesión (${uConLogin.perfil||"—"})`);
+    try{localStorage.setItem("qx:sesion",JSON.stringify(uConLogin));}catch{}
+    if(uConLogin.perfil==="chofer") setPerfilChofer(uConLogin);
+    if(uConLogin.perfil==="cliente"){
       // Importante: se aplica "u" (el usuario recién autenticado, fuente de
       // verdad más reciente) SOBRE la fila existente, no al revés. Si "u"
       // viene de un cambio de contraseña recién guardado, el closure local
@@ -2736,11 +2743,48 @@ export default function QuantrexAbbott() {
       // entre el guardado de la contraseña y este guardado de ultimoAcceso).
       // Guardar {...x,...u,...} en vez de {...x,...} evita pisar la
       // contraseña/pwChangedAt recién persistidos con datos obsoletos.
-      const actualizados=usuarios.map(x=>x&&x.email===u.email?{...x,...u,ultimoAcceso:new Date().toISOString(),bloqueado:false}:x);
+      const actualizados=usuarios.map(x=>x&&x.email===uConLogin.email?{...x,...uConLogin,ultimoAcceso:new Date().toISOString(),bloqueado:false,forzarRelogin:null}:x);
       setUsuarios(actualizados);
       await saveUsuarios(actualizados);
     }
   }
+  // Fuerza que un cliente (o todos) tengan que volver a iniciar sesión, incluso
+  // si ya tienen una pestaña abierta con sesión activa en su navegador. Sirve
+  // para casos como: se activó el control de dispositivo único y hay clientes
+  // que ya estaban logueados desde antes (por lo tanto sin dispositivo
+  // registrado aún) — al forzar el reingreso, su próximo login queda
+  // correctamente validado/registrado. El cierre real de la pestaña abierta
+  // ocurre en el chequeo periódico (ver useEffect más abajo), no es instantáneo.
+  async function handleForzarRelogin(email=null){
+    const ahora=new Date().toISOString();
+    const actualizados = usuarios.map(x=>x&&x.perfil==="cliente"&&(email===null||x.email===email)?{...x,forzarRelogin:ahora}:x);
+    setUsuarios(actualizados);
+    const ok = await saveUsuarios(actualizados);
+    if(!ok){ setUsuarios(usuarios); showToast("No se pudo forzar el reingreso. Reintenta.","danger"); return; }
+    logActividad("forzar_relogin", email?`Forzó reingreso de: ${email}`:"Forzó reingreso de todos los clientes", {entidad:"usuarios",entidadId:email||"todos"});
+    showToast(email?`Se forzó el reingreso de ${email}. La sesión se cerrará en los próximos minutos si sigue abierta.`:"Se forzó el reingreso de todos los clientes.");
+  }
+  // Revisa cada 90s si un admin marcó forzarRelogin DESPUÉS de que esta pestaña
+  // inició sesión. De ser así, cierra la sesión local (aunque siga "abierta")
+  // para obligar a pasar de nuevo por PantallaLogin y validar el dispositivo.
+  useEffect(()=>{
+    if(!sesion || sesion.perfil!=="cliente") return;
+    let cancelado=false;
+    async function chequear(){
+      try{
+        const rows = await sbFetch("GET","usuarios","",`?email=eq.${encodeURIComponent(sesion.email)}&select=forzar_relogin`);
+        const forzado = rows?.[0]?.forzar_relogin;
+        if(cancelado || !forzado) return;
+        if(!sesion.loginEn || new Date(forzado) > new Date(sesion.loginEn)){
+          logActividad("logout_forzado","Sesión cerrada automáticamente por reingreso forzado");
+          setSesion(null); setPerfilChofer(null);
+          try{localStorage.removeItem("qx:sesion");}catch{}
+        }
+      }catch(e){ console.error("Chequeo de reingreso forzado falló:",e); }
+    }
+    const id=setInterval(chequear,90000);
+    return ()=>{cancelado=true; clearInterval(id);};
+  },[sesion]);
   // Control de dispositivo único para perfil cliente: compara el dispositivo/
   // navegador que intenta ingresar contra el registrado como autorizado en
   // Supabase (campo dispositivoId). Primer acceso -> se registra como
@@ -3024,7 +3068,7 @@ export default function QuantrexAbbott() {
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} onRefrescar={refrescarSolicitud} onEnviarDT={handleEnviarDT} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
-        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);logActividad("gestion_usuarios","Guardó cambios en usuarios",{entidad:"usuarios"});}if(c){setChoferes(c);await saveChoferes(c);logActividad("gestion_choferes","Guardó cambios en choferes",{entidad:"choferes"});}if(v){setVehiculos(v);await saveVehiculos(v);logActividad("gestion_vehiculos","Guardó cambios en vehículos",{entidad:"vehiculos"});}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}
+        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);logActividad("gestion_usuarios","Guardó cambios en usuarios",{entidad:"usuarios"});}if(c){setChoferes(c);await saveChoferes(c);logActividad("gestion_choferes","Guardó cambios en choferes",{entidad:"choferes"});}if(v){setVehiculos(v);await saveVehiculos(v);logActividad("gestion_vehiculos","Guardó cambios en vehículos",{entidad:"vehiculos"});}}} onDesbloquearUsuario={handleDesbloquearUsuario} onForzarRelogin={handleForzarRelogin} setView={setView}
             tarifas={tarifas} feriados={feriados}
             onSaveTarifa={async(t)=>{const ok=await saveTarifa(t);if(ok){const tar=await loadTarifas();setTarifas(tar);setTarifasCache(tar);}return ok;}}
             onEliminarTarifa={async(id)=>{const ok=await eliminarTarifa(id);if(ok){const tar=await loadTarifas();setTarifas(tar);setTarifasCache(tar);}return ok;}}
@@ -6775,7 +6819,7 @@ function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDe
 
 
 // ── Admin Usuarios ─────────────────────────────────────────────────────────
-function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuario,setView,tarifas=[],feriados=[],onSaveTarifa,onEliminarTarifa,onSaveFeriado,onEliminarFeriado}){
+function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuario,onForzarRelogin,setView,tarifas=[],feriados=[],onSaveTarifa,onEliminarTarifa,onSaveFeriado,onEliminarFeriado}){
   const [listaU,setListaU]=useState(usuarios.filter(u=>u.perfil!=="admin"));
   useEffect(()=>{setListaU(usuarios.filter(u=>u.perfil!=="admin"));},[usuarios]);
   const [listaC,setListaC]=useState(choferes);
@@ -6899,7 +6943,11 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
 
       {tab==="clientes_acc"&&(
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          <div style={{display:"flex",justifyContent:"flex-end"}}>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+            {onForzarRelogin&&<button style={{...S.exportBtn,fontSize:12,borderColor:C.warning,color:C.warning}}
+              onClick={()=>{if(confirm("¿Forzar el reingreso de TODOS los clientes? Las sesiones abiertas se cerrarán en los próximos minutos y deberán volver a iniciar sesión."))onForzarRelogin(null);}}>
+              🔁 Forzar reingreso a todos
+            </button>}
             <button style={S.btnPri} onClick={()=>{setNuevoU(true);setEditU(null);setFormU({email:"",password:"",nombre:"",perfil:"cliente"});}}>+ Nuevo cliente</button>
           </div>
           {(nuevoU&&formU.perfil==="cliente"||editU!==null&&listaU[editU]?.perfil==="cliente")&&(
@@ -6931,6 +6979,8 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
                   </div>
                   <div style={{display:"flex",gap:6}}>
                     {u.bloqueado&&<button style={{...S.exportBtn,fontSize:11,borderColor:C.success,color:C.success}} onClick={()=>onDesbloquearUsuario?.(u.email)}>🔓 Desbloquear</button>}
+                    {onForzarRelogin&&<button title="Cierra su sesión activa (si tiene una abierta) y lo obliga a validar el dispositivo en el próximo ingreso." style={{...S.exportBtn,fontSize:11,borderColor:C.warning,color:C.warning}}
+                      onClick={()=>{if(confirm(`¿Forzar el reingreso de ${u.nombre||u.email}? Su sesión se cerrará en los próximos minutos si sigue abierta.`))onForzarRelogin(u.email);}}>🔁 Forzar reingreso</button>}
                     <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{
                       const idx=listaU.findIndex(lu=>lu.email===u.email);
                       if(idx>=0){setEditU(idx);setNuevoU(false);setFormU({...u});}
