@@ -478,6 +478,42 @@ async function sbInsertTracking(row) {
   } catch(e){ console.error("sbInsertTracking excepción:",e); return false; }
 }
 
+// ── Log de actividad ────────────────────────────────────────────────────────
+// Registro de auditoría: quién hizo qué y cuándo. Se guarda en la tabla
+// "log_actividad" (ver SQL de creación en las notas del proyecto). Como no
+// todos los componentes reciben la sesión como prop (ej. exportadores de
+// Excel que viven dentro de sub-pantallas), se mantiene un espejo en memoria
+// de la sesión actual (SESION_LOG_ACTUAL), actualizado desde el componente
+// raíz cada vez que cambia "sesion". logActividad() nunca debe romper el
+// flujo de la app: cualquier error de red/Supabase queda solo en consola.
+let SESION_LOG_ACTUAL = null;
+async function logActividad(accion, detalle="", extra={}){
+  try{
+    const s = SESION_LOG_ACTUAL;
+    const row = {
+      usuario_email: s?.email || (extra.choferNombre?null:"—"),
+      usuario_nombre: s?.nombre || extra.choferNombre || "—",
+      perfil: s?.perfil || (extra.choferNombre?"chofer":"—"),
+      accion,
+      detalle,
+      entidad: extra.entidad || null,
+      entidad_id: extra.entidadId!=null?String(extra.entidadId):null,
+      created_at: new Date().toISOString(),
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/log_actividad`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`,
+        "Prefer":"return=minimal",
+      },
+      body:JSON.stringify(row),
+    });
+    if(!res.ok){ const e=await res.text(); console.error("logActividad error:",e); }
+  } catch(e){ console.error("logActividad excepción:",e); }
+}
+
 // Elimina de la tabla solo los IDs que ya no están en la lista actual.
 // Nunca borra todo: si no hay IDs vigentes, no hace nada (evita vaciar la tabla).
 async function sbDeleteFaltantes(table, idsVigentes) {
@@ -1529,7 +1565,9 @@ async function loadUsuarios() {
     if(data===null) { console.error("loadUsuarios: fallo de red/Supabase, NO se sembrará ni se borrará nada (protege ultimoAcceso)."); return {error:true}; }
     if(!data.length) return {empty:true};
     return data.map(u=>({email:u.email,password:u.password,perfil:u.perfil,nombre:u.nombre,
-      ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado, pwChangedAt:u.pw_changed_at||null}));
+      ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado, pwChangedAt:u.pw_changed_at||null,
+      dispositivoId:u.dispositivo_id||null, dispositivoInfo:u.dispositivo_info||null,
+      dispositivoIP:u.dispositivo_ip||null, dispositivoDesde:u.dispositivo_desde||null}));
   } catch(e) { console.error("loadUsuarios excepción:",e); return {error:true}; }
 }
 async function saveUsuarios(data) {
@@ -1537,6 +1575,8 @@ async function saveUsuarios(data) {
     const rows=(data||[]).filter(Boolean).map(u=>({
       id:u.email, email:u.email, password:u.password, perfil:u.perfil, nombre:u.nombre,
       ultimo_acceso:u.ultimoAcceso||null, bloqueado:!!u.bloqueado, pw_changed_at:u.pwChangedAt||null,
+      dispositivo_id:u.dispositivoId||null, dispositivo_info:u.dispositivoInfo||null,
+      dispositivo_ip:u.dispositivoIP||null, dispositivo_desde:u.dispositivoDesde||null,
       updated_at:new Date().toISOString(),
     }));
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
@@ -1882,6 +1922,48 @@ function diasInactividadUsuario(u) {
   const ua = new Date(u.ultimoAcceso);
   if (isNaN(ua.getTime())) return null;
   return Math.floor((new Date() - ua) / (1000 * 60 * 60 * 24));
+}
+// Fecha y hora exacta del último acceso, para mostrar junto al badge de
+// "hace N días" en Gestión de Usuarios (clientes).
+function formatUltimoAcceso(u) {
+  if (!u || !u.ultimoAcceso) return null;
+  const ua = new Date(u.ultimoAcceso);
+  if (isNaN(ua.getTime())) return null;
+  const p = n => String(n).padStart(2, "0");
+  return `${p(ua.getDate())}-${p(ua.getMonth() + 1)}-${ua.getFullYear()} ${p(ua.getHours())}:${p(ua.getMinutes())}`;
+}
+
+// ── Control de dispositivo único para perfil cliente ────────────────────────
+// Abbott (y clientes en general) deben acceder siempre desde el mismo equipo
+// autorizado. No existe forma 100% confiable de identificar hardware desde el
+// navegador, así que se usa un identificador persistente por NAVEGADOR
+// (localStorage, sobrevive a cierres de pestaña/recargas pero NO viaja entre
+// dispositivos ni navegadores distintos), reforzado con la IP pública y el
+// user-agent como señales adicionales para la incidencia/auditoría. Esto es
+// una barrera razonable, no una identificación forense: un usuario que borre
+// el localStorage o use otro navegador en el MISMO equipo generará un nuevo ID.
+function obtenerDispositivoId() {
+  try {
+    const key = "qx:deviceId";
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = (crypto?.randomUUID?.() ) ||
+        ("dev-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10));
+      localStorage.setItem(key, id);
+    }
+    return id;
+  } catch { return "sin-localstorage"; }
+}
+// Best-effort: si falla (sin red, bloqueado por el navegador, etc.) no debe
+// impedir el login — la IP queda como null y el resto del control sigue
+// funcionando igual con el deviceId.
+async function obtenerIPPublica() {
+  try {
+    const res = await fetch("https://api.ipify.org?format=json");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.ip || null;
+  } catch { return null; }
 }
 // Antes esto se controlaba con localStorage, que es por-dispositivo: un usuario
 // que cambiaba su clave desde su PC seguía viendo el aviso en su celular, porque
@@ -2230,7 +2312,12 @@ export default function QuantrexAbbott() {
   const [solicitudes,setSolicitudes]=useState([]);
   const [cierres,setCierres]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [view,setView]=useState("dashboard");
+  const [view,_setView]=useState("dashboard");
+  // Envuelve setView para dejar registro de navegación en el log de actividad,
+  // sin tener que tocar cada uno de los ~20 puntos del árbol de componentes
+  // que ya llaman a "setView" (props). Todos siguen apuntando a esta misma
+  // función porque el nombre "setView" no cambia fuera de este bloque.
+  const setView = (v)=>{ logActividad("navegacion", `Fue a: ${v}`); _setView(v); };
   const [selectedId,setSelectedId]=useState(null);
   const [cierreDetalle,setCierreDetalle]=useState(null);
   const [filterTipo,setFilterTipo]=useState("todos");
@@ -2286,6 +2373,11 @@ export default function QuantrexAbbott() {
     setGastos(ga||[]);setRecordatorios(re||[]);setMetas(me||[]);setIncidencias(inc||[]);if(c.length>0&&!p)setAbrirPeriodo(true);setLoading(false);
   });},[]);
 
+  // Mantiene SESION_LOG_ACTUAL (fuera de React) sincronizado con la sesión
+  // real, para que logActividad() sepa quién está actuando incluso desde
+  // componentes que no reciben "sesion" como prop (ej. exportadores locales).
+  useEffect(()=>{ SESION_LOG_ACTUAL = sesion; }, [sesion]);
+
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
     toastRef.current=setTimeout(()=>setToast(null),3500);
@@ -2313,6 +2405,7 @@ export default function QuantrexAbbott() {
       total:solicitudesPeriodo.length,completadas:solicitudesPeriodo.filter(s=>s.status==="completada").length,
       cerradoEn:new Date().toISOString(),solicitudes:solicitudesPeriodo};
     const upd=[cierre,...cierres]; setCierres(upd); await saveCierres(upd);
+    logActividad("cierre_periodo", `Cerró período ${nombrePeriodo}`, {entidad:"cierres",entidadId:cierre.id});
     // Respaldo completo descargable (guárdalo en tu carpeta de Google Drive)
     const stamp=new Date().toISOString().split("T")[0];
     const respaldoOk=descargarRespaldo({
@@ -2340,6 +2433,7 @@ export default function QuantrexAbbott() {
     };
     setPeriodo(nuevo); await savePeriodo(nuevo);
     setAbrirPeriodo(false); setNuevaFechaInicio("");
+    logActividad("apertura_periodo", `Abrió período ${nuevo.nombre}`, {entidad:"periodo"});
     showToast("✓ Nuevo período abierto: "+nuevo.nombre);
   }
 
@@ -2377,6 +2471,7 @@ export default function QuantrexAbbott() {
     setSaving(false); setForm({...EMPTY_FORM,
       fecha:new Date().toISOString().split("T")[0],
       hora:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false})});
+    logActividad("crear_solicitud", `Creó solicitud OT ${nueva.ot||"—"} · ${nueva.titulo||""}`, {entidad:"solicitudes",entidadId:nueva.id});
     showToast("Solicitud creada correctamente."); setView("lista");
 
     // Geocodificación en segundo plano (frente 4.2) — SOLO como respaldo.
@@ -2434,6 +2529,7 @@ export default function QuantrexAbbott() {
     const cambiada=upd.find(s=>s.id===id);
     setSolicitudes(upd); if(cambiada) await saveSolicitud(cambiada);
     await sincronizarRutas(upd);
+    logActividad("cambio_estado", `OT ${cambiada?.ot||id} → ${STATUS_META[newStatus]?.label||newStatus}${motivoCancelacion?` (motivo: ${motivoCancelacion})`:""}`, {entidad:"solicitudes",entidadId:id});
     showToast(newStatus==="cancelada"?`Cancelada por ${canceladoPor}.`:"Estado actualizado.");
   }
 
@@ -2509,6 +2605,7 @@ export default function QuantrexAbbott() {
     const upd=solicitudes.map(s=>s.id===updatedSol.id?solActualizada:s);
     setSolicitudes(upd); await saveSolicitud(solActualizada); 
     await sincronizarRutas(upd);
+    logActividad("editar_solicitud", `Editó solicitud OT ${solActualizada.ot||updatedSol.id}`, {entidad:"solicitudes",entidadId:updatedSol.id});
     showToast("Solicitud actualizada.");
 
     // Geocodificación en segundo plano (frente 4.2) — SOLO como respaldo,
@@ -2577,11 +2674,14 @@ export default function QuantrexAbbott() {
     const solUpd=upd.find(s=>s.id===id);
     if(solUpd) await saveSolicitud(solUpd);
     await sincronizarRutas(upd);
+    logActividad("gestion_chofer", `${statusLabel} · OT ${solUpd?.ot||id}`, {entidad:"solicitudes",entidadId:id,choferNombre:perfilChofer?.nombre||sesion?.nombre});
     showToast(statusLabel+" registrado.");
   }
 
   async function handleDelete(id){
+    const sol=solicitudes.find(s=>s.id===id);
     const upd=solicitudes.filter(s=>s.id!==id); setSolicitudes(upd); await deleteSolicitud(id);
+    logActividad("eliminar_solicitud", `Eliminó solicitud OT ${sol?.ot||id}`, {entidad:"solicitudes",entidadId:id});
     showToast("Solicitud eliminada.","danger"); setView("lista");
   }
 
@@ -2591,6 +2691,7 @@ export default function QuantrexAbbott() {
     setGastos(upd);
     const ok=await saveGasto(g);
     if(!ok){ setGastos(gastos); showToast("No se pudo guardar el gasto. Reintenta.","danger"); return false; }
+    logActividad(existe?"editar_gasto":"crear_gasto", `${existe?"Editó":"Registró"} gasto ${g.ppu||""}`.trim(), {entidad:"gastos",entidadId:g.id});
     showToast(existe?"Gasto actualizado.":"Gasto registrado.");
     return true;
   }
@@ -2599,6 +2700,7 @@ export default function QuantrexAbbott() {
     setGastos(gastos.filter(x=>x.id!==id));
     const ok=await deleteGasto(id);
     if(!ok){ setGastos(prev); showToast("No se pudo eliminar el gasto.","danger"); return; }
+    logActividad("eliminar_gasto", `Eliminó gasto ${id}`, {entidad:"gastos",entidadId:id});
     showToast("Gasto eliminado.","danger");
   }
 
@@ -2622,6 +2724,8 @@ export default function QuantrexAbbott() {
   // conteo de días de inactividad sea real y visible desde cualquier dispositivo.
   async function handleLoginExitoso(u){
     setSesion(u);
+    SESION_LOG_ACTUAL = u; // disponible de inmediato, sin esperar al useEffect
+    logActividad("login", `Inicio de sesión (${u.perfil||"—"})`);
     try{localStorage.setItem("qx:sesion",JSON.stringify(u));}catch{}
     if(u.perfil==="chofer") setPerfilChofer(u);
     if(u.perfil==="cliente"){
@@ -2637,6 +2741,51 @@ export default function QuantrexAbbott() {
       await saveUsuarios(actualizados);
     }
   }
+  // Control de dispositivo único para perfil cliente: compara el dispositivo/
+  // navegador que intenta ingresar contra el registrado como autorizado en
+  // Supabase (campo dispositivoId). Primer acceso -> se registra como
+  // autorizado. Mismo dispositivo -> pasa. Dispositivo distinto -> bloquea la
+  // cuenta, genera una incidencia de seguridad (visible en el módulo de
+  // Incidencias y en el badge de alertas) y rechaza el login. Ver notas junto
+  // a obtenerDispositivoId() sobre los límites de esta identificación.
+  async function handleValidarDispositivoCliente(u){
+    if(u.perfil!=="cliente") return {ok:true};
+    const deviceId = obtenerDispositivoId();
+    const ip = await obtenerIPPublica();
+    const infoNavegador = (navigator.userAgent||"").slice(0,180);
+    if(!u.dispositivoId){
+      const desde = new Date().toISOString();
+      const actualizados = usuarios.map(x=>x&&x.email===u.email?{...x,
+        dispositivoId:deviceId, dispositivoInfo:infoNavegador, dispositivoIP:ip||null, dispositivoDesde:desde}:x);
+      setUsuarios(actualizados);
+      await saveUsuarios(actualizados);
+      logActividad("dispositivo_registrado", `Registró dispositivo autorizado (${ip||"IP desconocida"})`, {entidad:"usuarios",entidadId:u.email});
+      return {ok:true, extra:{dispositivoId:deviceId, dispositivoInfo:infoNavegador, dispositivoIP:ip, dispositivoDesde:desde}};
+    }
+    if(u.dispositivoId===deviceId){
+      if(ip && ip!==u.dispositivoIP){
+        const actualizados = usuarios.map(x=>x&&x.email===u.email?{...x,dispositivoIP:ip}:x);
+        setUsuarios(actualizados);
+        await saveUsuarios(actualizados);
+      }
+      return {ok:true};
+    }
+    // Dispositivo distinto al autorizado: bloquear + incidencia + log.
+    const actualizados = usuarios.map(x=>x&&x.email===u.email?{...x,bloqueado:true}:x);
+    setUsuarios(actualizados);
+    await saveUsuarios(actualizados);
+    const folio = generarFolioIncidencia(incidencias);
+    await handleSaveIncidencia({
+      id:"inc_"+Date.now().toString(), folio, fecha:new Date().toISOString().slice(0,10),
+      tipo:"seguridad_dispositivo", contraparte:u.nombre||u.email,
+      ubicacion:ip||"IP desconocida",
+      descripcion:`Intento de acceso bloqueado: ${u.nombre||u.email} intentó ingresar desde un dispositivo/navegador distinto al autorizado.\nDispositivo autorizado desde ${formatUltimoAcceso({ultimoAcceso:u.dispositivoDesde})||"—"} (IP ${u.dispositivoIP||"—"}).\nIntento nuevo: IP ${ip||"—"} · ${infoNavegador}.`,
+      fotos:[], notificado:false, fechaNotificacion:"", estado:"abierta",
+      autor:"Sistema (control de dispositivo)", origen:"sistema",
+    });
+    logActividad("bloqueo_dispositivo", `Bloqueó a ${u.email}: acceso desde dispositivo no autorizado (IP ${ip||"—"})`, {entidad:"usuarios",entidadId:u.email});
+    return {ok:false, motivo:`Acceso bloqueado: esta cuenta ya tiene un dispositivo autorizado registrado. Se generó la incidencia ${folio} y quedó notificado en el sistema. Contacta a Quantrex para reactivar el acceso.`};
+  }
   // Persiste la contraseña nueva (y la marca de fecha de cambio) en Supabase.
   // Antes el cambio de contraseña forzado solo vivía en la sesión en memoria
   // y nunca se guardaba, por lo que la clave original seguía siendo la única
@@ -2647,6 +2796,7 @@ export default function QuantrexAbbott() {
     const actualizados=usuarios.map(x=>x&&x.email===usuarioOriginal.email?{...x,password:nuevaPassword,pwChangedAt:ahora}:x);
     setUsuarios(actualizados);
     await saveUsuarios(actualizados);
+    logActividad("cambio_password", `Cambio de contraseña: ${usuarioOriginal.email}`, {entidad:"usuarios",entidadId:usuarioOriginal.email});
     return actualizados.find(x=>x.email===usuarioOriginal.email)||{...usuarioOriginal,password:nuevaPassword,pwChangedAt:ahora};
   }
   async function handleSaveIncidencia(i){
@@ -2655,6 +2805,7 @@ export default function QuantrexAbbott() {
     setIncidencias(upd);
     const ok=await saveIncidencia(i);
     if(!ok){ setIncidencias(incidencias); showToast("No se pudo guardar la incidencia.","danger"); return false; }
+    logActividad(existe?"editar_incidencia":"crear_incidencia", `${existe?"Editó":"Registró"} incidencia ${i.folio||""}`.trim(), {entidad:"incidencias",entidadId:i.id});
     showToast(existe?"Incidencia actualizada.":"Incidencia registrada.");
     return true;
   }
@@ -2663,6 +2814,7 @@ export default function QuantrexAbbott() {
     setIncidencias(incidencias.filter(x=>x.id!==id));
     const ok=await deleteIncidencia(id);
     if(!ok){ setIncidencias(prev); showToast("No se pudo eliminar la incidencia.","danger"); return; }
+    logActividad("eliminar_incidencia", `Eliminó incidencia ${id}`, {entidad:"incidencias",entidadId:id});
     showToast("Incidencia eliminada.","danger");
   }
   // Genera un ticket de cumplimiento a partir de una alerta (vencimiento automático
@@ -2720,11 +2872,17 @@ export default function QuantrexAbbott() {
     }
   }
   // Reactiva a un usuario bloqueado y reinicia su contador de inactividad.
+  // También limpia el dispositivo autorizado: si el bloqueo fue por acceso
+  // desde un equipo distinto, el próximo login exitoso (ya autorizado
+  // manualmente por el admin) queda registrado como el nuevo dispositivo
+  // válido. Si el bloqueo fue por inactividad, esto no tiene efecto negativo.
   async function handleDesbloquearUsuario(email){
-    const actualizados=usuarios.map(x=>x&&x.email===email?{...x,bloqueado:false,ultimoAcceso:new Date().toISOString()}:x);
+    const actualizados=usuarios.map(x=>x&&x.email===email?{...x,bloqueado:false,ultimoAcceso:new Date().toISOString(),
+      dispositivoId:null,dispositivoInfo:null,dispositivoIP:null,dispositivoDesde:null}:x);
     setUsuarios(actualizados);
     const ok=await saveUsuarios(actualizados);
     if(!ok){ setUsuarios(usuarios); showToast("No se pudo desbloquear al usuario.","danger"); return; }
+    logActividad("desbloqueo_usuario", `Desbloqueó usuario: ${email}`, {entidad:"usuarios",entidadId:email});
     showToast("Usuario desbloqueado. Ya puede ingresar nuevamente.");
   }
   useEffect(()=>{
@@ -2804,7 +2962,7 @@ export default function QuantrexAbbott() {
               );
             })()}
             <span style={{fontSize:11,color:C.muted}}>{sesion?.nombre}</span>
-            <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{setSesion(null);try{localStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
+            <button style={{...S.exportBtn,fontSize:11,borderColor:C.danger,color:C.danger}} onClick={()=>{logActividad("logout","Cierre de sesión");setSesion(null);try{localStorage.removeItem("qx:sesion");}catch{}}}>Salir</button>
           </div>
         </nav>
       </header>}
@@ -2850,9 +3008,9 @@ export default function QuantrexAbbott() {
       {sesion?.perfil==="admin"&&sidebarOpen&&<div style={{position:"fixed",inset:0,background:"#0006",zIndex:199}} onClick={()=>setSidebarOpen(false)}/>}
       <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
         {loading?(<div style={S.loadingWrap}><img src={LOGO_QUANTREX_LOADER} alt="" style={S.logoSpinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
-        :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={handleLoginExitoso} onCambiarPassword={handleCambiarPassword}/>)
-        :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{setPerfilChofer(null);setSesion(null);}}/>)
-        :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
+        :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={handleLoginExitoso} onCambiarPassword={handleCambiarPassword} onValidarDispositivo={handleValidarDispositivoCliente}/>)
+        :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{logActividad("logout","Cierre de sesión",{choferNombre:(perfilChofer||sesion)?.nombre});setPerfilChofer(null);setSesion(null);}}/>)
+        :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);logActividad("login",`Inicio de sesión (chofer)`,{choferNombre:c.nombre});setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
             setView={setView} setSelectedId={setSelectedId} gastos={gastos} vehiculos={vehiculos}
@@ -2862,11 +3020,11 @@ export default function QuantrexAbbott() {
             abrirPeriodo={abrirPeriodo} setAbrirPeriodo={setAbrirPeriodo}
             nuevaFechaInicio={nuevaFechaInicio} setNuevaFechaInicio={setNuevaFechaInicio}
             onAbrirPeriodo={handleAbrirPeriodo} sesion={sesion} setFilterStatus={setFilterStatus} setFilterFecha={setFilterFecha}
-            onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
+            onExport={()=>{const now=new Date();const ts=now.toLocaleDateString("es-CL").replace(/\//g,"-")+"_"+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","h");logActividad("exportar_excel",`Exportó Excel del período ${nombrePeriodo}`,{entidad:"solicitudes"});exportToExcel(solicitudesPeriodo,`Quantrex_Abbott_${nombrePeriodo.replace(" ","_")}_${ts}.xlsx`);}}/>)
         :view==="nueva"?(<FormNueva form={form} setForm={setForm} onSave={handleSave} saving={saving} error={formError} setView={setView} clientes={clientes} solicitudes={solicitudes} rutas={rutas} choferes={choferes} vehiculos={vehiculos}/>)
         :view==="detalle"&&selected?(<Detalle sol={selected} onStatusChange={handleStatusChange}
             onDelete={handleDelete} onEdit={handleEdit} onEditLog={handleEditLog} onRefrescar={refrescarSolicitud} onEnviarDT={handleEnviarDT} setView={setView} clientes={clientes} sesion={sesion} solicitudes={solicitudes} choferes={choferes} vehiculos={vehiculos}/>)
-        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);}if(c){setChoferes(c);await saveChoferes(c);}if(v){setVehiculos(v);await saveVehiculos(v);}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}
+        :view==="usuarios"?(<AdminUsuarios usuarios={usuarios} choferes={choferes} vehiculos={vehiculos} onSave={async (u,c,v)=>{if(u){setUsuarios(u);await saveUsuarios(u);logActividad("gestion_usuarios","Guardó cambios en usuarios",{entidad:"usuarios"});}if(c){setChoferes(c);await saveChoferes(c);logActividad("gestion_choferes","Guardó cambios en choferes",{entidad:"choferes"});}if(v){setVehiculos(v);await saveVehiculos(v);logActividad("gestion_vehiculos","Guardó cambios en vehículos",{entidad:"vehiculos"});}}} onDesbloquearUsuario={handleDesbloquearUsuario} setView={setView}
             tarifas={tarifas} feriados={feriados}
             onSaveTarifa={async(t)=>{const ok=await saveTarifa(t);if(ok){const tar=await loadTarifas();setTarifas(tar);setTarifasCache(tar);}return ok;}}
             onEliminarTarifa={async(id)=>{const ok=await eliminarTarifa(id);if(ok){const tar=await loadTarifas();setTarifas(tar);setTarifasCache(tar);}return ok;}}
@@ -2875,20 +3033,20 @@ export default function QuantrexAbbott() {
           />)
         :view==="gastos"?(<GastosVehiculos gastos={gastos} vehiculos={vehiculos} choferes={choferes} onSaveGasto={handleSaveGasto} onDeleteGasto={handleDeleteGasto} setView={setView} sesion={sesion}/>)
         :view==="certificado_aseo"?(<CertificadoAseo gastos={gastos} vehiculos={vehiculos} choferes={choferes} setView={setView} sesion={sesion}/>)
-        :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);}} setView={setView}/>)
+        :view==="clientes"?(<AdminClientes clientes={clientes} onSave={async (cl)=>{setClientes(cl);await saveClientes(cl);logActividad("gestion_clientes","Guardó cambios en clientes",{entidad:"clientes"});}} setView={setView}/>)
         :view==="rutas"?(<GestionRutas rutas={rutas} setRutas={setRutas} solicitudes={solicitudes} setSolicitudes={setSolicitudes} onSaveRuta={saveRuta} onDeleteRuta={deleteRuta} onSaveSolicitud={saveSolicitud} setView={setView} sesion={sesion} vehiculos={vehiculos} choferes={choferes}/>)
         :view==="trazabilidad"?(<VistaTrazabilidad vehiculos={vehiculos} choferes={choferes}/>)
         :view==="incidencias"?(<Incidencias incidencias={incidencias} onSave={handleSaveIncidencia} onDelete={handleDeleteIncidencia} sesion={sesion} vehiculos={vehiculos} clientes={clientes}/>)
         :view==="cierres"?(<Cierres cierres={cierres} onDetalle={c=>{setCierreDetalle(c);setView("cierre_detalle");}}
-            onExport={c=>exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`)}/>)
+            onExport={c=>{logActividad("exportar_excel",`Exportó Excel del cierre ${c.nombre}`,{entidad:"cierres",entidadId:c.id});exportToExcel(c.solicitudes,`Quantrex_Abbott_${c.nombre.replace(" ","_")}.xlsx`);}}/>)
         :view==="cierre_detalle"&&cierreDetalle?(<CierreDetalle cierre={cierreDetalle} setView={setView}
-            onExport={()=>exportToExcel(cierreDetalle.solicitudes,`Quantrex_Abbott_${cierreDetalle.nombre.replace(" ","_")}.xlsx`)}/>)
+            onExport={()=>{logActividad("exportar_excel",`Exportó Excel del cierre ${cierreDetalle.nombre}`,{entidad:"cierres",entidadId:cierreDetalle.id});exportToExcel(cierreDetalle.solicitudes,`Quantrex_Abbott_${cierreDetalle.nombre.replace(" ","_")}.xlsx`);}}/>)
         :(<Lista solicitudes={filtered} filterTipo={filterTipo} setFilterTipo={setFilterTipo}
             filterStatus={filterStatus} setFilterStatus={setFilterStatus}
             filterFecha={filterFecha} setFilterFecha={setFilterFecha}
             filterQ={filterQ} setFilterQ={setFilterQ}
             onSelect={id=>{setSelectedId(id);setView("detalle");}} sesion={sesion}
-            onExport={()=>exportToExcel(solicitudes,excelNombre)} total={solicitudes.length}/>)
+            onExport={()=>{logActividad("exportar_excel","Exportó Excel de la lista de solicitudes",{entidad:"solicitudes"});exportToExcel(solicitudes,excelNombre);}} total={solicitudes.length}/>)
         }
       </main>
     </div>
@@ -6138,7 +6296,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
 
 
 // ── Pantalla Login ─────────────────────────────────────────────────────────
-function PantallaLogin({onLogin,onCambiarPassword,usuarios=USUARIOS,choferes=CHOFERES}){
+function PantallaLogin({onLogin,onCambiarPassword,onValidarDispositivo,usuarios=USUARIOS,choferes=CHOFERES}){
   const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [error,setError]=useState("");
@@ -6147,18 +6305,29 @@ function PantallaLogin({onLogin,onCambiarPassword,usuarios=USUARIOS,choferes=CHO
   const [nuevaPassword,setNuevaPassword]=useState("");
   const [guardandoPassword,setGuardandoPassword]=useState(false);
   const [pinChofer,setPinChofer]=useState("");
+  const [verificando,setVerificando]=useState(false);
 
-  function handleLogin(){
+  async function handleLogin(){
     const u=usuarios.find(u=>u.email===email&&u.password===password);
     if(u){
       if(u.bloqueado){
         setError(`Cuenta bloqueada por inactividad (${DIAS_INACTIVIDAD_BLOQUEO}+ días sin acceder). Contacta a Quantrex para reactivarla.`);
         return;
       }
-      if(debeCambiarPassword(u)){
-        setCambioRequerido(u);
+      setError(""); setVerificando(true);
+      // Solo aplica a perfil cliente (control de dispositivo único). Para
+      // admin/operador, onValidarDispositivo resuelve {ok:true} de inmediato.
+      const chk = (await onValidarDispositivo?.(u)) || {ok:true};
+      setVerificando(false);
+      if(!chk.ok){
+        setError(chk.motivo||"Acceso bloqueado.");
+        return;
+      }
+      const uListo = chk.extra?{...u,...chk.extra}:u;
+      if(debeCambiarPassword(uListo)){
+        setCambioRequerido(uListo);
       } else {
-        onLogin(u);
+        onLogin(uListo);
       }
     }
     else{setError("Email o contraseña incorrectos.");}
@@ -6208,8 +6377,8 @@ function PantallaLogin({onLogin,onCambiarPassword,usuarios=USUARIOS,choferes=CHO
                 onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
             </div>
             {error&&<div style={{color:C.danger,fontSize:13,fontWeight:600,textAlign:"center"}}>{error}</div>}
-            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15}} onClick={handleLogin}>
-              Ingresar
+            <button style={{...S.btnPri,width:"100%",padding:"13px",fontSize:15,opacity:verificando?0.6:1}} disabled={verificando} onClick={handleLogin}>
+              {verificando?"Verificando...":"Ingresar"}
             </button>
             <button style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:12.5,textAlign:"center"}}
               onClick={()=>{setModo("verificar");setError("");}}>
@@ -6776,9 +6945,13 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
                   </div>}
                   <div style={{background:dias===null?"#333":dias>7?C.danger+"22":C.success+"22",border:"1px solid "+(dias===null?"#555":dias>7?C.danger:C.success),borderRadius:6,padding:"4px 10px",fontSize:11,color:dias===null?C.muted:dias>7?C.danger:C.success,fontWeight:700}}>
                     {dias===null?"Sin accesos registrados":dias===0?"Accedió hoy":dias===1?"Hace 1 día":dias+" días sin acceder"}
+                    {formatUltimoAcceso(u)?` · ${formatUltimoAcceso(u)}`:""}
                   </div>
                   {cambio&&<div style={{background:C.warning+"22",border:"1px solid "+C.warning,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.warning,fontWeight:700}}>
                     ⚠ Debe cambiar contraseña este mes
+                  </div>}
+                  {u.dispositivoId&&<div title={u.dispositivoInfo||""} style={{background:C.navy,border:"1px solid "+C.border,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.textSecondary,fontWeight:600}}>
+                    🖥 Dispositivo autorizado{u.dispositivoIP?` · IP ${u.dispositivoIP}`:""}{u.dispositivoDesde?` · desde ${formatUltimoAcceso({ultimoAcceso:u.dispositivoDesde})}`:""}
                   </div>}
                 </div>
               </div>
@@ -8243,6 +8416,7 @@ function VistaTrazabilidad({vehiculos=[],choferes=[]}){
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(hojaPuntos),"Puntos GPS");
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(hojaParadas),"Paradas");
     const ts=new Date().toISOString().split("T")[0];
+    logActividad("exportar_excel", `Exportó Excel de trazabilidad (${filtroVehiculo||"Flota"})`, {entidad:"tracking_puntos"});
     XLSX.writeFile(wb,`Trazabilidad_${filtroVehiculo||"Flota"}_${ts}.xlsx`);
   }
 
@@ -8840,6 +9014,7 @@ function exportarResumenIncidencias(incidencias=[]){
   const wsDetalle=XLSX.utils.aoa_to_sheet(detalle);
   wsDetalle["!cols"]=[{wch:12},{wch:12},{wch:26},{wch:14},{wch:22},{wch:22},{wch:10},{wch:16},{wch:50},{wch:18}];
   XLSX.utils.book_append_sheet(wb,wsDetalle,"Detalle");
+  logActividad("exportar_excel", "Exportó Excel resumen de incidencias", {entidad:"incidencias"});
   XLSX.writeFile(wb,`Quantrex_Incidencias_Resumen_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
@@ -8980,6 +9155,7 @@ function GastosVehiculos({gastos=[],vehiculos=[],choferes=[],onSaveGasto,onDelet
     wsResumen["!cols"]=[{wch:10},{wch:24},...mesesOrdenados.map(()=>({wch:13})),{wch:14}];
     XLSX.utils.book_append_sheet(wb,wsResumen,"Resumen Ejecutivo");
     XLSX.utils.book_append_sheet(wb,ws,"Bitácora");
+    logActividad("exportar_excel", "Exportó Excel de bitácora de vehículos", {entidad:"gastos"});
     XLSX.writeFile(wb,`Quantrex_Bitacora_Vehiculos_${new Date().toISOString().slice(0,10)}.xlsx`);
   }
 
@@ -9408,6 +9584,7 @@ const TIPO_INCIDENCIA = {
   precierre_facturacion: { label:"Pre-Cierre / Facturación",   icon:"🧾", color:"#22C55E" },
   cumplimiento_flota: { label:"Cumplimiento de flota",         icon:"🔧", color:"#00AEEF" },
   inactividad_usuario:{ label:"Inactividad de usuario",        icon:"🔒", color:"#EF4444" },
+  seguridad_dispositivo:{ label:"Seguridad · Dispositivo no autorizado", icon:"🛡", color:"#EF4444" },
   otro:               { label:"Otro",                          icon:"•",  color:"#8BAFD4" },
 };
 function metaTipoIncidencia(t){ return TIPO_INCIDENCIA[t] || TIPO_INCIDENCIA.otro; }
