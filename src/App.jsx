@@ -1568,7 +1568,7 @@ async function loadUsuarios() {
       ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado, pwChangedAt:u.pw_changed_at||null,
       dispositivoId:u.dispositivo_id||null, dispositivoInfo:u.dispositivo_info||null,
       dispositivoIP:u.dispositivo_ip||null, dispositivoDesde:u.dispositivo_desde||null,
-      forzarRelogin:u.forzar_relogin||null}));
+      forzarRelogin:u.forzar_relogin||null, motivoBloqueo:u.motivo_bloqueo||null}));
   } catch(e) { console.error("loadUsuarios excepción:",e); return {error:true}; }
 }
 async function saveUsuarios(data) {
@@ -1578,7 +1578,7 @@ async function saveUsuarios(data) {
       ultimo_acceso:u.ultimoAcceso||null, bloqueado:!!u.bloqueado, pw_changed_at:u.pwChangedAt||null,
       dispositivo_id:u.dispositivoId||null, dispositivo_info:u.dispositivoInfo||null,
       dispositivo_ip:u.dispositivoIP||null, dispositivo_desde:u.dispositivoDesde||null,
-      forzar_relogin:u.forzarRelogin||null,
+      forzar_relogin:u.forzarRelogin||null, motivo_bloqueo:u.motivoBloqueo||null,
       updated_at:new Date().toISOString(),
     }));
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
@@ -2815,7 +2815,7 @@ export default function QuantrexAbbott() {
       return {ok:true};
     }
     // Dispositivo distinto al autorizado: bloquear + incidencia + log.
-    const actualizados = usuarios.map(x=>x&&x.email===u.email?{...x,bloqueado:true}:x);
+    const actualizados = usuarios.map(x=>x&&x.email===u.email?{...x,bloqueado:true,motivoBloqueo:"dispositivo"}:x);
     setUsuarios(actualizados);
     await saveUsuarios(actualizados);
     const folio = generarFolioIncidencia(incidencias);
@@ -2899,7 +2899,7 @@ export default function QuantrexAbbott() {
       const dias=diasInactividadUsuario(u);
       if(dias===null || dias<DIAS_INACTIVIDAD_BLOQUEO) continue;
       const idx=usuariosActualizados.findIndex(x=>x&&x.email===u.email);
-      if(idx>=0) usuariosActualizados[idx]={...usuariosActualizados[idx],bloqueado:true};
+      if(idx>=0) usuariosActualizados[idx]={...usuariosActualizados[idx],bloqueado:true,motivoBloqueo:"inactividad"};
       huboCambios=true;
       const folio=generarFolioIncidencia(incidencias);
       await handleSaveIncidencia({
@@ -2922,7 +2922,7 @@ export default function QuantrexAbbott() {
   // válido. Si el bloqueo fue por inactividad, esto no tiene efecto negativo.
   async function handleDesbloquearUsuario(email){
     const actualizados=usuarios.map(x=>x&&x.email===email?{...x,bloqueado:false,ultimoAcceso:new Date().toISOString(),
-      dispositivoId:null,dispositivoInfo:null,dispositivoIP:null,dispositivoDesde:null}:x);
+      dispositivoId:null,dispositivoInfo:null,dispositivoIP:null,dispositivoDesde:null,motivoBloqueo:null}:x);
     setUsuarios(actualizados);
     const ok=await saveUsuarios(actualizados);
     if(!ok){ setUsuarios(usuarios); showToast("No se pudo desbloquear al usuario.","danger"); return; }
@@ -6991,7 +6991,9 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
                 </div>
                 <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                   {u.bloqueado&&<div style={{background:C.danger+"22",border:"1px solid "+C.danger,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.danger,fontWeight:700}}>
-                    🔒 Bloqueado por inactividad ({DIAS_INACTIVIDAD_BLOQUEO}+ días sin acceder)
+                    {u.motivoBloqueo==="dispositivo"?"🛡 Bloqueado por dispositivo no autorizado"
+                      :u.motivoBloqueo==="inactividad"?`🔒 Bloqueado por inactividad (${DIAS_INACTIVIDAD_BLOQUEO}+ días sin acceder)`
+                      :"🔒 Bloqueado"}
                   </div>}
                   <div style={{background:dias===null?"#333":dias>7?C.danger+"22":C.success+"22",border:"1px solid "+(dias===null?"#555":dias>7?C.danger:C.success),borderRadius:6,padding:"4px 10px",fontSize:11,color:dias===null?C.muted:dias>7?C.danger:C.success,fontWeight:700}}>
                     {dias===null?"Sin accesos registrados":dias===0?"Accedió hoy":dias===1?"Hace 1 día":dias+" días sin acceder"}
