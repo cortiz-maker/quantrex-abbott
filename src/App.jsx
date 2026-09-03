@@ -1921,11 +1921,18 @@ function diasSinAcceso(email) {
 // Supabase (usuario.ultimoAcceso), no de localStorage. Así el admin ve el dato
 // real sin importar desde qué dispositivo/navegador consulta el panel.
 const DIAS_INACTIVIDAD_BLOQUEO = 10;
+// Días transcurridos por CALENDARIO (no horas corridas). Con horas corridas,
+// alguien que entró ayer a las 15:00 y se consulta hoy a las 11:00 (solo 20h)
+// mostraba "Accedió hoy" siendo en realidad un día distinto — este cálculo
+// compara la fecha (medianoche a medianoche), que es lo que la gente espera
+// leer en un badge de "hace N días".
 function diasInactividadUsuario(u) {
   if (!u || !u.ultimoAcceso) return null;
   const ua = new Date(u.ultimoAcceso);
   if (isNaN(ua.getTime())) return null;
-  return Math.floor((new Date() - ua) / (1000 * 60 * 60 * 24));
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const diaAcceso = new Date(ua); diaAcceso.setHours(0,0,0,0);
+  return Math.round((hoy - diaAcceso) / (1000 * 60 * 60 * 24));
 }
 // Fecha y hora exacta del último acceso, para mostrar junto al badge de
 // "hace N días" en Gestión de Usuarios (clientes).
@@ -2381,6 +2388,35 @@ export default function QuantrexAbbott() {
   // real, para que logActividad() sepa quién está actuando incluso desde
   // componentes que no reciben "sesion" como prop (ej. exportadores locales).
   useEffect(()=>{ SESION_LOG_ACTUAL = sesion; }, [sesion]);
+
+  // "Último acceso" real, no solo al momento del login: mientras la pestaña
+  // siga abierta con una sesión válida, se refresca cada 5 min (y de
+  // inmediato al abrir/recuperar sesión). Antes, ultimoAcceso solo se movía
+  // en handleLoginExitoso — si la sesión del navegador nunca expiraba, el
+  // campo quedaba "congelado" en el último login real aunque la persona
+  // siguiera usando el sistema a diario. Esto también evita que el bloqueo
+  // automático por inactividad (DIAS_INACTIVIDAD_BLOQUEO) dispare por error
+  // sobre alguien que en realidad sí ha estado activo.
+  useEffect(()=>{
+    if(!sesion?.email) return;
+    let cancelado=false;
+    async function heartbeat(){
+      const ahora=new Date().toISOString();
+      try{
+        const res=await fetch(`${SUPABASE_URL}/rest/v1/usuarios?email=eq.${encodeURIComponent(sesion.email)}`,{
+          method:"PATCH",
+          headers:{"Content-Type":"application/json","apikey":SUPABASE_KEY,"Authorization":`Bearer ${SUPABASE_KEY}`,"Prefer":"return=minimal"},
+          body:JSON.stringify({ultimo_acceso:ahora}),
+        });
+        if(!res.ok){ console.error("heartbeat ultimoAcceso:",await res.text()); return; }
+        if(cancelado) return;
+        setUsuarios(prev=>prev.map(x=>x&&x.email===sesion.email?{...x,ultimoAcceso:ahora}:x));
+      }catch(e){ console.error("heartbeat ultimoAcceso excepción:",e); }
+    }
+    heartbeat();
+    const id=setInterval(heartbeat, 5*60*1000);
+    return ()=>{cancelado=true; clearInterval(id);};
+  },[sesion?.email]);
 
   function showToast(msg,type="success"){
     setToast({msg,type}); clearTimeout(toastRef.current);
