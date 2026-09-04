@@ -1639,7 +1639,18 @@ async function saveUsuarios(data) {
     }));
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
     if(rows.length){
-      const ok = await sbUpsert("usuarios",rows);
+      let ok = await sbUpsert("usuarios",rows);
+      if(!ok){
+        // Red de seguridad: si "notif_alerta_anden" todavía no existe en
+        // Supabase (falta correr la migración), el upsert completo fallaba
+        // y bloqueaba TODO — incluso acciones sin relación como desbloquear
+        // un usuario o forzar reingreso. Se reintenta sin esa columna para
+        // que el resto de la gestión de usuarios siga funcionando mientras
+        // se corre la migración pendiente.
+        console.error("saveUsuarios: upsert falló, reintentando sin notif_alerta_anden (¿falta correr la migración en Supabase?).");
+        const rowsSinNotif = rows.map(({notif_alerta_anden, ...resto}) => resto);
+        ok = await sbUpsert("usuarios", rowsSinNotif);
+      }
       if(!ok){ console.error("saveUsuarios: upsert falló, se aborta para no perder datos."); return false; }
     }
     // 2) Eliminar solo los IDs que ya no están en la lista.
