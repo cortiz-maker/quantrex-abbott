@@ -41,3 +41,12 @@ ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS llegada_ts timestamptz;
 --    );
 --
 -- Para desactivarlo más adelante: select cron.unschedule('alerta-anden-cada-5-min');
+
+-- 5) Columna administrable de destinatarios: qué usuarios (tabla "usuarios",
+--    los mismos operadores que ya usan la app) reciben el correo de "carga
+--    no preparada en andén". Se administra desde la app: Gestión de
+--    Usuarios -> Operadores -> casilla "Recibe email de carga no preparada
+--    en andén" al crear/editar cada operador. No requiere tocar Supabase
+--    para agregar o quitar destinatarios.
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS notif_alerta_anden boolean DEFAULT false;
+

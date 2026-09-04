@@ -25,8 +25,14 @@
 //   RESEND_API_KEY              -> API key de https://resend.com
 //   ALERTA_ANDEN_REMITENTE      -> ej. "Quantrex Abbott <alertas@quantrex.cl>"
 //                                   (el dominio debe estar verificado en Resend)
-//   ALERTA_ANDEN_DESTINATARIOS  -> correos separados por coma, ej.
-//                                   "operaciones@quantrex.cl,cortiz@quantrex.cl"
+//   ALERTA_ANDEN_DESTINATARIOS  -> correos separados por coma, SOLO como
+//                                   respaldo si la tabla "usuarios" no
+//                                   devuelve ningún destinatario marcado
+//                                   (ver obtenerDestinatarios más abajo). El
+//                                   listado real y administrable vive en la
+//                                   app: Gestión de Usuarios -> Operadores ->
+//                                   casilla "Recibe email de carga no
+//                                   preparada en andén" por cada operador.
 //   APP_BASE_URL                -> URL pública donde vive la app Quantrex
 //                                   (para armar el botón "Ver solicitud"),
 //                                   ej. "https://app.quantrex.cl"
@@ -40,7 +46,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
 const REMITENTE = Deno.env.get("ALERTA_ANDEN_REMITENTE") || "Quantrex Abbott <alertas@quantrex.cl>";
-const DESTINATARIOS = (Deno.env.get("ALERTA_ANDEN_DESTINATARIOS") || "")
+const DESTINATARIOS_FALLBACK = (Deno.env.get("ALERTA_ANDEN_DESTINATARIOS") || "")
   .split(",").map((s) => s.trim()).filter(Boolean);
 const APP_BASE_URL = (Deno.env.get("APP_BASE_URL") || "").replace(/\/$/, "");
 
@@ -137,7 +143,7 @@ function buildEmailHtml(sol: any, minutos: number) {
       <tr><td colspan="2">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#1E3A6E;border-radius:8px;">
           <tr>
-            <td width="${pct}%" bgcolor="#F97316" style="background:#F97316;height:10px;font-size:0;line-height:0;border-radius:10px 0 0 8px;">&nbsp;</td>
+            <td width="${pct}%" bgcolor="#F97316" style="background:#F97316;height:10px;font-size:0;line-height:0;border-radius:8px 0 0 8px;">&nbsp;</td>
             <td bgcolor="#1E3A6E" style="height:10px;font-size:0;line-height:0;">&nbsp;</td>
           </tr>
         </table>
@@ -213,8 +219,8 @@ async function sbPatch(id: string, body: Record<string, unknown>) {
   if (!res.ok) throw new Error(`Supabase PATCH ${id} -> ${res.status}: ${await res.text()}`);
 }
 
-async function enviarResend(asunto: string, html: string) {
-  if (DESTINATARIOS.length === 0) throw new Error("ALERTA_ANDEN_DESTINATARIOS no configurado.");
+async function enviarResend(asunto: string, html: string, destinatarios: string[]) {
+  if (destinatarios.length === 0) throw new Error("No hay destinatarios configurados (ni en usuarios ni en ALERTA_ANDEN_DESTINATARIOS).");
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -223,13 +229,29 @@ async function enviarResend(asunto: string, html: string) {
     },
     body: JSON.stringify({
       from: REMITENTE,
-      to: DESTINATARIOS,
+      to: destinatarios,
       subject: asunto,
       html,
     }),
   });
   if (!res.ok) throw new Error(`Resend -> ${res.status}: ${await res.text()}`);
   return res.json();
+}
+
+// El destinatario real y administrable vive en la tabla "usuarios" (columna
+// notif_alerta_anden), editable desde Gestión de Usuarios en la app -- así
+// César u otro admin puede sumar o sacar gente sin tocar código ni secrets
+// de Supabase. ALERTA_ANDEN_DESTINATARIOS queda solo como red de seguridad
+// por si todavía nadie fue marcado en la tabla.
+async function obtenerDestinatarios(): Promise<string[]> {
+  try {
+    const usuarios = await sbGet(`usuarios?notif_alerta_anden=eq.true&bloqueado=eq.false&select=email`);
+    const emails = (usuarios || []).map((u: any) => u.email).filter(Boolean);
+    if (emails.length > 0) return emails;
+  } catch (e) {
+    console.error("obtenerDestinatarios: no se pudo leer la tabla usuarios, se usa el respaldo.", e);
+  }
+  return DESTINATARIOS_FALLBACK;
 }
 
 Deno.serve(async (_req) => {
@@ -239,6 +261,17 @@ Deno.serve(async (_req) => {
       `solicitudes?tipo=eq.carga_ol&status=eq.en_punto_cliente&alerta_anden_enviada=eq.false&select=${cols}`,
     );
 
+    // Si no hay ninguna solicitud vencida, ni siquiera vale la pena consultar
+    // destinatarios -- evita una llamada de más en la mayoría de las corridas
+    // (la función se llama cada 5 minutos, la mayor parte del tiempo sin nada
+    // que notificar).
+    if (candidatas.length === 0) {
+      return new Response(JSON.stringify({ ok: true, revisadas: 0, notificadas: 0, detalle: [] }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const destinatarios = await obtenerDestinatarios();
     const ahora = Date.now();
     const resultados: any[] = [];
 
@@ -249,9 +282,9 @@ Deno.serve(async (_req) => {
 
       const html = buildEmailHtml(sol, minutos);
       const asunto = `🚨 Carga no preparada en andén — Solicitud ${sol.ot || sol.id} (${minutos} min)`;
-      await enviarResend(asunto, html);
+      await enviarResend(asunto, html, destinatarios);
       await sbPatch(sol.id, { alerta_anden_enviada: true, alerta_anden_enviada_en: new Date().toISOString() });
-      resultados.push({ id: sol.id, ot: sol.ot, minutos, notificado: true });
+      resultados.push({ id: sol.id, ot: sol.ot, minutos, destinatarios, notificado: true });
     }
 
     return new Response(JSON.stringify({ ok: true, revisadas: candidatas.length, notificadas: resultados.length, detalle: resultados }), {
