@@ -1622,7 +1622,8 @@ async function loadUsuarios() {
       ultimoAcceso:u.ultimo_acceso||null, bloqueado:!!u.bloqueado, pwChangedAt:u.pw_changed_at||null,
       dispositivoId:u.dispositivo_id||null, dispositivoInfo:u.dispositivo_info||null,
       dispositivoIP:u.dispositivo_ip||null, dispositivoDesde:u.dispositivo_desde||null,
-      forzarRelogin:u.forzar_relogin||null, motivoBloqueo:u.motivo_bloqueo||null}));
+      forzarRelogin:u.forzar_relogin||null, motivoBloqueo:u.motivo_bloqueo||null,
+      notifAlertaAnden:!!u.notif_alerta_anden}));
   } catch(e) { console.error("loadUsuarios excepción:",e); return {error:true}; }
 }
 async function saveUsuarios(data) {
@@ -1633,6 +1634,7 @@ async function saveUsuarios(data) {
       dispositivo_id:u.dispositivoId||null, dispositivo_info:u.dispositivoInfo||null,
       dispositivo_ip:u.dispositivoIP||null, dispositivo_desde:u.dispositivoDesde||null,
       forzar_relogin:u.forzarRelogin||null, motivo_bloqueo:u.motivoBloqueo||null,
+      notif_alerta_anden:!!u.notifAlertaAnden,
       updated_at:new Date().toISOString(),
     }));
     // 1) UPSERT primero. Si falla, NO se borra nada (evita pérdida de datos).
@@ -7083,7 +7085,7 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
       {tab==="operadores"&&(
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",justifyContent:"flex-end"}}>
-            <button style={S.btnPri} onClick={()=>{setNuevoU(true);setEditU(null);setFormU({email:"",password:"",nombre:"",perfil:"operador"});}}>+ Nuevo operador</button>
+            <button style={S.btnPri} onClick={()=>{setNuevoU(true);setEditU(null);setFormU({email:"",password:"",nombre:"",perfil:"operador",notifAlertaAnden:false});}}>+ Nuevo operador</button>
           </div>
           {(nuevoU||editU!==null)&&(
             <div style={{background:C.navySurface,border:"1px solid "+C.cyan,borderRadius:12,padding:"16px"}}>
@@ -7102,6 +7104,10 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
                     <option value="financiero">Financiero (cliente + Cierres/pre-cierre)</option>
                   </select></div>
               </div>
+              <label style={{display:"flex",alignItems:"center",gap:8,marginTop:12,fontSize:13,color:C.textSecondary,cursor:"pointer"}}>
+                <input type="checkbox" checked={!!formU.notifAlertaAnden} onChange={e=>setFormU(p=>({...p,notifAlertaAnden:e.target.checked}))}/>
+                🚨 Recibe email de "carga no preparada en andén"
+              </label>
               <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
                 <button style={S.btnSec} onClick={()=>{setNuevoU(false);setEditU(null);}}>Cancelar</button>
                 <button style={S.btnPri} onClick={guardarOperador}>Guardar</button>
@@ -7112,7 +7118,7 @@ function AdminUsuarios({usuarios,choferes,vehiculos=[],onSave,onDesbloquearUsuar
             <div key={i} style={{background:C.navySurface,border:"1px solid "+C.border,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,fontSize:13}}>{u.nombre}</div>
-                <div style={{fontSize:12,color:C.muted}}>{u.email} · <span style={{color:C.cyan}}>{u.perfil}</span></div>
+                <div style={{fontSize:12,color:C.muted}}>{u.email} · <span style={{color:C.cyan}}>{u.perfil}</span>{u.notifAlertaAnden&&<span style={{color:C.warning}}> · 🚨 alerta andén</span>}</div>
               </div>
               <div style={{display:"flex",gap:6}}>
                 <button style={{...S.exportBtn,fontSize:11}} onClick={()=>{setEditU(i);setNuevoU(false);setFormU({...u});}}>✎ Editar</button>
