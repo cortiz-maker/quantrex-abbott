@@ -1533,12 +1533,13 @@ async function saveSolicitud(s) {
     if(!res.ok) {
       const e = await res.text();
       // Reintento sin columnas opcionales recientes (por si falta la migración en Supabase)
-      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|sin_cobro|devolucion_urgente|destino_lat|destino_lng|guias_negocio|respaldo_ani|motivo_cancelacion/i.test(e)) {
+      if(/column|schema|PGRST|fotos_manifiesto|fotos_entrega|observacion_chofer|observacion_autor|observacion_fecha|observacion_cobro|facturar_en_periodo|sin_cobro|devolucion_urgente|destino_lat|destino_lng|guias_negocio|respaldo_ani|motivo_cancelacion|llegada_ts|alerta_anden_enviada/i.test(e)) {
         console.warn("saveSolicitud: reintentando sin columnas nuevas. Falta correr la migración SQL en Supabase.", e);
         const fallback = {...row};
         delete fallback.fotos_manifiesto; delete fallback.fotos_entrega; delete fallback.observacion_chofer;
         delete fallback.observacion_autor; delete fallback.observacion_fecha; delete fallback.observacion_cobro; delete fallback.facturar_en_periodo; delete fallback.sin_cobro; delete fallback.devolucion_urgente;
         delete fallback.destino_lat; delete fallback.destino_lng; delete fallback.guias_negocio; delete fallback.respaldo_ani; delete fallback.motivo_cancelacion;
+        delete fallback.llegada_ts; delete fallback.alerta_anden_enviada; delete fallback.alerta_anden_enviada_en;
         res = await doUpsert(fallback);
       }
       if(!res.ok) { const e2 = await res.text(); console.error("saveSolicitud error:", e2);
