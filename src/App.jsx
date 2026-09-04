@@ -4111,16 +4111,14 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
         (s.documentos||"").toLowerCase().includes(nLower) ||
         (s.items||[]).some(it=>(it.nombre||"").toLowerCase().includes(nLower))
       );
-      // Orden cronológico (fecha+hora) para poder leer el flujo/bitácora de
+      // Orden cronológico REAL (por hora de cierre efectiva, no por cuándo
+      // se creó/agendó la solicitud) para poder leer el flujo/bitácora de
       // la guía de principio a fin: Carga OL -> Entrega -> Logística
       // Inversa (retiro/devolución), tal como corresponde a la trazabilidad
       // exigida por la NT226 del Minsal para distribución de dispositivos
       // médicos/insumos, que exige poder reconstruir cada movimiento de un
       // mismo documento en orden y con hora de gestión.
-      matches.sort((a,b)=>{
-        const ka=`${a.fecha||""} ${a.hora||""}`, kb=`${b.fecha||""} ${b.hora||""}`;
-        return ka.localeCompare(kb) || String(a.createdAt||"").localeCompare(String(b.createdAt||""));
-      });
+      matches.sort((a,b)=>claveOrdenFlujo(a)-claveOrdenFlujo(b));
       porNumero[n]=matches;
     }
     return porNumero;
@@ -4128,6 +4126,28 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
   // Extrae "HH:MM" desde el texto de horaEntrega ("dd-mm-aaaa hh:mm") que
   // guarda handleChoferEstado al cerrar la solicitud.
   const horaCorta=(txt)=>{ const p=(txt||"").split(" "); return p[1]||txt||""; };
+  // "dd-mm-aaaa hh:mm" (horaEntrega, hora local Chile) -> Date, para poder
+  // ordenar por el momento REAL en que ocurrió cada gestión, no por cuándo
+  // se creó/agendó la solicitud (que no necesariamente sigue el mismo orden
+  // — ej. una Entrega puede cerrarse antes que un Retiro creado primero).
+  const parseHoraEntrega=(txt)=>{
+    const m=/^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})/.exec(txt||"");
+    if(!m) return null;
+    const [,dd,mm,yyyy,hh,mi]=m;
+    const d=new Date(`${yyyy}-${mm}-${dd}T${hh}:${mi}:00`);
+    return isNaN(d.getTime())?null:d;
+  };
+  // Clave de orden para el flujo/bitácora: prioriza el cierre real
+  // (horaEntrega) — así el flujo queda en el orden en que efectivamente
+  // ocurrieron los movimientos del día. Si aún no se cierra, cae a la
+  // fecha/hora agendada, para que igual aparezca ubicada razonablemente
+  // dentro de la secuencia.
+  const claveOrdenFlujo=(s)=>{
+    const cierre=parseHoraEntrega(s.horaEntrega);
+    if(cierre) return cierre.getTime();
+    const agendada=new Date(`${s.fecha||"9999-12-31"}T${(s.hora||"00:00")}:00`);
+    return isNaN(agendada.getTime())?Number.MAX_SAFE_INTEGER:agendada.getTime();
+  };
 
   const buscar=()=>{
     const numeros=Array.from(new Set(q.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean)));
@@ -4143,8 +4163,8 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     buscarDT(numeros);
   };
 
-  const resultCard = (contenido)=>(
-    <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:8,flex:1,minWidth:180}}>{contenido}</div>
+  const resultCard = (contenido,weight=1)=>(
+    <div style={{...S.detailBlock,display:"flex",flexDirection:"column",gap:8,flex:weight,minWidth:180}}>{contenido}</div>
   );
 
   // Mapeo de estados propios de DispatchTrack (distintos de los STATUS_META de Quantrex).
@@ -4292,7 +4312,7 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
                 })}
               </div>
             ):null}
-          </>)}
+          </>,1.6)}
           {resultCard(<>
             <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>📄 Documento escaneado</div>
             {!driveConfigurado?(
@@ -4332,7 +4352,7 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
               </div>
               {drive.carpetasConError>0&&<div style={{fontSize:11,color:C.warning,marginTop:2}}>⚠ {drive.carpetasConError} carpeta(s) no se pudieron revisar por permisos — si algún documento no aparece, puede estar ahí. Revisa que estén compartidas como "Cualquiera con el enlace".</div>}
             </>):null}
-          </>)}
+          </>,0.8)}
         </div>
       )}
     </div>
