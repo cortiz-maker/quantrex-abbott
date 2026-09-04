@@ -5848,6 +5848,7 @@ async function abrirEdicion(){
         <div style={S.fGroup}><label style={S.label}>Solicitante *</label>
           <select style={S.input} value={editForm.solicitante} onChange={fe("solicitante")}>
             <option value="">-- Seleccionar --</option>
+            <option value="Automatico">Automático</option>
             <option value="Jorge Monsalve">Jorge Monsalve</option>
             <option value="Yeneidi Rodriguez">Yeneidi Rodriguez</option>
             <option value="Andres Barrios">Andres Barrios</option>
@@ -6448,6 +6449,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
         <div style={S.fGroup}><label style={S.label}>Solicitante *</label>
           <select style={S.input} value={form.solicitante} onChange={f("solicitante")}>
             <option value="">-- Seleccionar --</option>
+            <option value="Automatico">Automático</option>
             <option value="Jorge Monsalve">Jorge Monsalve</option>
             <option value="Yeneidi Rodriguez">Yeneidi Rodriguez</option>
             <option value="Andres Barrios">Andres Barrios</option>
