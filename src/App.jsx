@@ -4204,6 +4204,9 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
           <div style={{fontWeight:700,fontSize:12,color:C.textPrimary}}>{d.identifier}</div>
           <div style={{fontSize:11,fontWeight:700,color}}>{etiqueta}</div>
         </div>
+        <div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>
+          Último movimiento registrado{d.arrived_at?` · ${fmtFechaDT(d.arrived_at)}`:""}
+        </div>
         {d.contact_name&&<div style={{fontSize:11,color:C.textSecondary}}>Nombre: {d.contact_name}</div>}
         {d.contact_address&&<div style={{fontSize:11,color:C.muted}}>Dirección: {d.contact_address}</div>}
         {d.number_of_retries!=null&&<div style={{fontSize:11,color:C.muted}}>Intentos de entrega: {d.number_of_retries}</div>}
@@ -4286,19 +4289,19 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
                         ?<div style={{fontSize:12,color:C.muted,paddingLeft:6}}>— no encontrada</div>
                         :<div style={{display:"flex",flexDirection:"column",gap:2,marginTop:2}}>
                           {matches.map((s,i)=>{
-                            const tm=TYPE_META[s.tipo]||{label:s.tipo,color:C.muted};
+                            const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:C.muted};
                             const sm=STATUS_META[s.status]||{label:s.status,color:C.muted};
                             const cerrada=ESTADOS_TERMINALES.includes(s.status);
                             return (
                               <button key={s.id} onClick={()=>{setSelectedId(s.id);setView("detalle");}}
                                 style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",cursor:"pointer",fontSize:12,color:C.textPrimary,fontWeight:600,paddingLeft:6,paddingTop:3,paddingBottom:3,borderLeft:`2px solid ${tm.color}`}}>
+                                <span style={{marginRight:4}}>{tm.icon}</span>
                                 <span style={{color:C.cyan,fontWeight:800}}>Solicitud {s.ot||s.id}</span>
                                 {" "}<span style={{color:tm.color}}>({tm.label})</span>
                                 {" --> "}
                                 {cerrada?(
                                   <span style={{color:sm.color}}>
                                     Cierre {horaCorta(s.horaEntrega)||"—"}
-                                    {s.tiempoEnPunto&&<span style={{color:C.muted}}> (Tiempo Gestión {s.tiempoEnPunto})</span>}
                                   </span>
                                 ):(
                                   <span style={{color:sm.color}}>{sm.label}{s.status==="en_punto_cliente"&&s.llegadaTs&&<> · <CronometroEnPunto sol={s} compact/></>}</span>
