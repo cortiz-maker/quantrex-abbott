@@ -40,19 +40,23 @@ const TYPE_META = {
 };
 
 const STATUS_META = {
-  pendiente:       { label:"Pendiente",      color:"#F59E0B" },
-  en_proceso:      { label:"En Tránsito",    color:"#00AEEF" },
-  completada:      { label:"Completada",     color:"#22C55E" },
-  no_entregado:    { label:"No Entregado",   color:"#F97316" },
-  devolucion:      { label:"Devolución",     color:"#14B8A6" },
-  cancelada:       { label:"Cancelada",      color:"#EF4444" },
+  pendiente:         { label:"Pendiente",         color:"#F59E0B" },
+  en_proceso:        { label:"En Tránsito",       color:"#00AEEF" },
+  // Se activa automáticamente (sin intervención manual) cuando el chofer
+  // presiona "Llegué al punto de entrega" en la app chofer y arranca el
+  // cronómetro del GPS — ver VistaChofer.registrarLlegada / handleChoferLlegada.
+  en_punto_cliente:  { label:"En Punto Cliente",  color:"#8B5CF6" },
+  completada:        { label:"Completada",        color:"#22C55E" },
+  no_entregado:      { label:"No Entregado",      color:"#F97316" },
+  devolucion:        { label:"Devolución",        color:"#14B8A6" },
+  cancelada:         { label:"Cancelada",         color:"#EF4444" },
 };
 // Forma plural de cada estado, para usar cuando el conteo es mayor a 1 en
 // textos tipo "110 Completadas" (STATUS_META.label se mantiene singular
 // porque también se usa como badge de una solicitud individual).
 const STATUS_META_PLURAL = {
-  pendiente:"Pendientes", en_proceso:"En Tránsito", completada:"Completadas",
-  no_entregado:"No Entregados", devolucion:"Devoluciones", cancelada:"Canceladas",
+  pendiente:"Pendientes", en_proceso:"En Tránsito", en_punto_cliente:"En Punto Cliente",
+  completada:"Completadas", no_entregado:"No Entregados", devolucion:"Devoluciones", cancelada:"Canceladas",
 };
 function statusLabelConteo(k,n){
   return n===1 ? STATUS_META[k]?.label : (STATUS_META_PLURAL[k]||STATUS_META[k]?.label);
@@ -64,7 +68,7 @@ function statusLabelConteo(k,n){
 // (completada, devolución, no entregado o cancelada) se considera 100%,
 // porque ya salió de la cola de gestión activa.
 const AVANCE_STATUS = {
-  pendiente:0.25, en_proceso:0.5, completada:1, devolucion:1, no_entregado:1, cancelada:1,
+  pendiente:0.25, en_proceso:0.5, en_punto_cliente:0.75, completada:1, devolucion:1, no_entregado:1, cancelada:1,
 };
 
 const PRIORIDAD_DEFAULT = {
@@ -94,6 +98,42 @@ function fmtSegundos(seg) {
   const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+function formatTiempoCorto(seg){
+  if(seg==null||isNaN(seg)) return null;
+  const h=Math.floor(seg/3600),m=Math.floor((seg%3600)/60),s=Math.floor(seg%60);
+  if(h>0)return `${h}h ${m}m ${s}s`;
+  if(m>0)return `${m}m ${s}s`;
+  return `${s}s`;
+}
+// Hook que tickea cada segundo mientras haya un "llegadaTs" (timestamp ISO
+// real, guardado por handleChoferLlegada). Se usa para mostrar en vivo, en
+// cualquier pantalla (no solo el celular del chofer), cuánto tiempo lleva
+// una solicitud "En Punto Cliente".
+function useCronometroEnVivo(llegadaTs){
+  const [ahora,setAhora]=useState(()=>Date.now());
+  useEffect(()=>{
+    if(!llegadaTs) return;
+    const id=setInterval(()=>setAhora(Date.now()),1000);
+    return ()=>clearInterval(id);
+  },[llegadaTs]);
+  if(!llegadaTs) return null;
+  const t=new Date(llegadaTs).getTime();
+  if(isNaN(t)) return null;
+  return Math.max(0,Math.floor((ahora-t)/1000));
+}
+// Chip compacto con el avance real del cronómetro "En Punto Cliente".
+// Se renderiza solo si la solicitud está en ese estado y tiene llegadaTs.
+function CronometroEnPunto({sol,compact=false}){
+  const seg=useCronometroEnVivo(sol?.status==="en_punto_cliente"?sol.llegadaTs:null);
+  if(seg==null) return null;
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:4,fontFamily:"monospace",
+      fontWeight:900,color:"#8B5CF6",fontSize:compact?11:14,
+      ...(compact?{}:{background:"#8B5CF618",border:"1px solid #8B5CF644",borderRadius:8,padding:"6px 12px"})}}>
+      ⏱ {formatTiempoCorto(seg)}
+    </span>
+  );
 }
 
 // ── Unidad de negocio por guía (módulo 3 — retomado tras standby) ──────────
@@ -1310,20 +1350,29 @@ const COLS_LISTA = [
   "guia","prioridad","notas","solicitante","canal_solicitud","usuario_dt",
   "ppu_asignada","destino","chofer_asignado","documentos","status","status_log",
   "no_presentacion","vehiculo_np","motivo_np","geo_entrega","hora_entrega",
-  "hora_llegada","tiempo_en_punto","coords_entrega","nombre_receptor",
+  "hora_llegada","llegada_ts","tiempo_en_punto","coords_entrega","nombre_receptor",
   "rechazo_firma","cancelado_por","motivo_cancelacion","km_desde_pudahuel","devolucion_urgente",
   "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro","traslado_equipo_medico",
   "dt_dispatch_id","dt_enviado_en","items","destino_lat","destino_lng","guias_negocio",
   "updated_at","created_at"
 ].join(",");
 // Respaldo SIN las columnas más recientes (destino_lat/destino_lng/guias_negocio/
-// motivo_cancelacion). Si la migración SQL correspondiente todavía no se corrió
-// en Supabase, el SELECT con COLS_LISTA completo falla entero y (sin este
-// respaldo) el listado se vería vacío como si no hubiera solicitudes. Con esto,
-// en cambio, el listado sigue funcionando con datos reales mientras se corre
-// la migración (motivoCancelacion queda undefined hasta que se corra).
+// motivo_cancelacion/llegada_ts). Si la migración SQL correspondiente todavía
+// no se corrió en Supabase, el SELECT con COLS_LISTA completo falla entero y
+// (sin este respaldo) el listado se vería vacío como si no hubiera
+// solicitudes. Con esto, en cambio, el listado sigue funcionando con datos
+// reales mientras se corre la migración (motivoCancelacion/llegadaTs quedan
+// undefined hasta que se corra).
+//
+// MIGRACIÓN PENDIENTE (correr una sola vez en el SQL editor de Supabase):
+//   ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS llegada_ts timestamptz;
+// "llegada_ts" guarda el instante exacto (timestamp real, no el texto de
+// hora_llegada) en que el chofer marcó "Llegué al punto de entrega". Con eso
+// cualquier vista (Lista, Detalle, Dashboard) puede calcular en vivo cuánto
+// tiempo lleva la solicitud "En Punto Cliente", sin depender de que el
+// celular del chofer siga con la pantalla abierta.
 const COLS_LISTA_SEGURA = COLS_LISTA
-  .split(",").filter(c=>!["destino_lat","destino_lng","guias_negocio","motivo_cancelacion"].includes(c)).join(",");
+  .split(",").filter(c=>!["destino_lat","destino_lng","guias_negocio","motivo_cancelacion","llegada_ts"].includes(c)).join(",");
 
 function _mapSolicitudLigera(s){
   return {
@@ -1335,6 +1384,7 @@ function _mapSolicitudLigera(s){
     status:s.status, statusLog:s.status_log||[],
     noPresentacion:s.no_presentacion, vehiculoNP:s.vehiculo_np, motivoNP:s.motivo_np,
     geoEntrega:s.geo_entrega, horaEntrega:s.hora_entrega, horaLlegada:s.hora_llegada,
+    llegadaTs:s.llegada_ts||null,
     tiempoEnPunto:s.tiempo_en_punto, coordsEntrega:s.coords_entrega,
     nombreReceptor:s.nombre_receptor, rechazoFirma:s.rechazo_firma,
     canceladoPor:s.cancelado_por, motivoCancelacion:s.motivo_cancelacion, kmDesdePudahuel:s.km_desde_pudahuel,
@@ -1428,6 +1478,7 @@ async function saveSolicitud(s) {
       no_presentacion:s.noPresentacion||false, vehiculo_np:s.vehiculoNP||null,
       motivo_np:s.motivoNP||null, geo_entrega:s.geoEntrega||null,
       hora_entrega:s.horaEntrega||null, hora_llegada:s.horaLlegada||null,
+      llegada_ts:s.llegadaTs||null,
       tiempo_en_punto:s.tiempoEnPunto||null, coords_entrega:s.coordsEntrega||null,
       nombre_receptor:s.nombreReceptor||null, rechazo_firma:s.rechazoFirma||false,
       cancelado_por:s.canceladoPor||null, motivo_cancelacion:s.motivoCancelacion||null, km_desde_pudahuel:s.kmDesdePudahuel||null,
@@ -2039,9 +2090,9 @@ async function deleteRuta(id) {
 // Una ruta se cierra cuando tiene paradas y todas sus solicitudes asignadas
 // están en estado terminal (entregadas/completadas, no entregadas o canceladas).
 const ESTADOS_TERMINALES = ["completada","no_entregado","devolucion","cancelada"];
-// Estados elegibles para asignar a una ruta: solo Pendiente y En Tránsito.
-// (en_proceso es la clave interna de "En Tránsito"). Excluye terminales.
-const ESTADOS_RUTABLES = ["pendiente","en_proceso"];
+// Estados elegibles para asignar a una ruta: Pendiente, En Tránsito y En
+// Punto Cliente (en_proceso es la clave interna de "En Tránsito"). Excluye terminales.
+const ESTADOS_RUTABLES = ["pendiente","en_proceso","en_punto_cliente"];
 function solRutable(s){ return !!s && ESTADOS_RUTABLES.includes(s.status); }
 // True si la solicitud está (o estuvo) completada: estado actual o registro en su log.
 function solCompletada(s){
@@ -2718,6 +2769,32 @@ export default function QuantrexAbbott() {
     showToast(statusLabel+" registrado.");
   }
 
+  // Marca automáticamente el estado "En Punto Cliente" apenas el chofer
+  // presiona "Llegué al punto de entrega" en la app chofer (VistaChofer.
+  // registrarLlegada), sin esperar al cierre de la solicitud. Guarda
+  // horaLlegada (texto, para mostrar) y llegadaTs (timestamp real ISO), que
+  // es lo que permite calcular el avance del cronómetro en vivo desde
+  // cualquier otra pantalla (Lista/Detalle/Dashboard), no solo en el celular
+  // del chofer. No pisa fotos/firma/observación — esos solo se completan al
+  // cerrar (cerrar -> onEstado/handleChoferEstado).
+  async function handleChoferLlegada(id, horaLlegada, geo, llegadaTsISO){
+    const now = new Date();
+    const upd = solicitudes.map(s => {
+      if (s.id !== id) return s;
+      if (ESTADOS_TERMINALES.includes(s.status)) return s; // ya cerrada, no retroceder el estado
+      const entry = {id:Date.now().toString(), de:STATUS_META[s.status]?.label||s.status,
+        a:STATUS_META.en_punto_cliente.label, fechaHora:horaLlegada, canceladoPor:null, geo:geo||null,
+        usuario:perfilChofer?.nombre||sesion?.nombre||s.choferAsignado||"Chofer"};
+      return {...s, status:"en_punto_cliente", updatedAt:now.toISOString(),
+        statusLog:[...(s.statusLog||[]),entry],
+        horaLlegada:horaLlegada||s.horaLlegada||null, llegadaTs:llegadaTsISO||now.toISOString()};
+    });
+    setSolicitudes(upd);
+    const solUpd=upd.find(s=>s.id===id);
+    if(solUpd) await saveSolicitud(solUpd);
+    logActividad("gestion_chofer", `En Punto Cliente · OT ${solUpd?.ot||id}`, {entidad:"solicitudes",entidadId:id,choferNombre:perfilChofer?.nombre||sesion?.nombre});
+  }
+
   async function handleDelete(id){
     const sol=solicitudes.find(s=>s.id===id);
     const upd=solicitudes.filter(s=>s.id!==id); setSolicitudes(upd); await deleteSolicitud(id);
@@ -3094,7 +3171,7 @@ export default function QuantrexAbbott() {
       <main style={{...S.main,...(esEscritorio&&!esChofer?{maxWidth:1400,margin:"0 auto",padding:"24px 40px"}:{})}}>
         {loading?(<div style={S.loadingWrap}><img src={LOGO_QUANTREX_LOADER} alt="" style={S.logoSpinner}/><p style={{color:C.muted}}>Cargando...</p></div>)
         :!sesion?(<PantallaLogin usuarios={usuarios} choferes={choferes} onLogin={handleLoginExitoso} onCambiarPassword={handleCambiarPassword} onValidarDispositivo={handleValidarDispositivoCliente}/>)
-        :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onSalir={()=>{logActividad("logout","Cierre de sesión",{choferNombre:(perfilChofer||sesion)?.nombre});setPerfilChofer(null);setSesion(null);}}/>)
+        :perfilChofer||sesion?.perfil==="chofer"?(<VistaChofer chofer={perfilChofer||sesion} solicitudes={solicitudes} onEstado={handleChoferEstado} onLlegada={handleChoferLlegada} onSalir={()=>{logActividad("logout","Cierre de sesión",{choferNombre:(perfilChofer||sesion)?.nombre});setPerfilChofer(null);setSesion(null);}}/>)
         :view==="chofer_login"?(<LoginChofer choferes={choferes} selChofer={selChofer} setSelChofer={setSelChofer} onAcceder={()=>{const c=choferes.find(ch=>ch.nombre===selChofer);if(c){setPerfilChofer(c);logActividad("login",`Inicio de sesión (chofer)`,{choferNombre:c.nombre});setView("dashboard");}}} onVolver={()=>setView("dashboard")}/>)
         :view==="dashboard"?(<Dashboard stats={stats} solicitudes={solicitudes} solicitudesPeriodo={solicitudesPeriodo}
             nombrePeriodo={nombrePeriodo} inicio={inicioPeriodo} fin={finPeriodo} yaCerrado={yaCerrado}
@@ -4028,15 +4105,29 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     const porNumero={};
     for(const n of numeros){
       const nLower=n.trim().toLowerCase();
-      porNumero[n]=(solicitudes||[]).filter(s=>
+      const matches=(solicitudes||[]).filter(s=>
         (s.ot||"").toLowerCase()===nLower ||
         (s.guia||"").toLowerCase().includes(nLower) ||
         (s.documentos||"").toLowerCase().includes(nLower) ||
         (s.items||[]).some(it=>(it.nombre||"").toLowerCase().includes(nLower))
       );
+      // Orden cronológico (fecha+hora) para poder leer el flujo/bitácora de
+      // la guía de principio a fin: Carga OL -> Entrega -> Logística
+      // Inversa (retiro/devolución), tal como corresponde a la trazabilidad
+      // exigida por la NT226 del Minsal para distribución de dispositivos
+      // médicos/insumos, que exige poder reconstruir cada movimiento de un
+      // mismo documento en orden y con hora de gestión.
+      matches.sort((a,b)=>{
+        const ka=`${a.fecha||""} ${a.hora||""}`, kb=`${b.fecha||""} ${b.hora||""}`;
+        return ka.localeCompare(kb) || String(a.createdAt||"").localeCompare(String(b.createdAt||""));
+      });
+      porNumero[n]=matches;
     }
     return porNumero;
   };
+  // Extrae "HH:MM" desde el texto de horaEntrega ("dd-mm-aaaa hh:mm") que
+  // guarda handleChoferEstado al cerrar la solicitud.
+  const horaCorta=(txt)=>{ const p=(txt||"").split(" "); return p[1]||txt||""; };
 
   const buscar=()=>{
     const numeros=Array.from(new Set(q.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean)));
@@ -4162,9 +4253,10 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
             ):null}
           </>)}
           {resultCard(<>
-            <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>📋 Solicitud Quantrex</div>
+            <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>📋 Bitácora / Flujo Quantrex</div>
+            <div style={{fontSize:10,color:C.muted,marginTop:-4}}>Trazabilidad por documento, alineada a NT226 (Minsal)</div>
             {quantrexResultados?(
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 {numerosBuscados.map(n=>{
                   const matches=quantrexResultados[n]||[];
                   return (
@@ -4172,12 +4264,29 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
                       <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{n}</div>
                       {matches.length===0
                         ?<div style={{fontSize:12,color:C.muted,paddingLeft:6}}>— no encontrada</div>
-                        :matches.map(s=>(
-                          <button key={s.id} onClick={()=>{setSelectedId(s.id);setView("detalle");}}
-                            style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",cursor:"pointer",fontSize:12,color:C.cyan,fontWeight:600,paddingLeft:6,paddingTop:2,paddingBottom:2}}>
-                            📋 {s.ot} — {s.titulo||"Sin título"} →
-                          </button>
-                        ))}
+                        :<div style={{display:"flex",flexDirection:"column",gap:2,marginTop:2}}>
+                          {matches.map((s,i)=>{
+                            const tm=TYPE_META[s.tipo]||{label:s.tipo,color:C.muted};
+                            const sm=STATUS_META[s.status]||{label:s.status,color:C.muted};
+                            const cerrada=ESTADOS_TERMINALES.includes(s.status);
+                            return (
+                              <button key={s.id} onClick={()=>{setSelectedId(s.id);setView("detalle");}}
+                                style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",cursor:"pointer",fontSize:12,color:C.textPrimary,fontWeight:600,paddingLeft:6,paddingTop:3,paddingBottom:3,borderLeft:`2px solid ${tm.color}`}}>
+                                <span style={{color:C.cyan,fontWeight:800}}>Solicitud {s.ot||s.id}</span>
+                                {" "}<span style={{color:tm.color}}>({tm.label})</span>
+                                {" --> "}
+                                {cerrada?(
+                                  <span style={{color:sm.color}}>
+                                    Cierre {horaCorta(s.horaEntrega)||"—"}
+                                    {s.tiempoEnPunto&&<span style={{color:C.muted}}> (Tiempo Gestión {s.tiempoEnPunto})</span>}
+                                  </span>
+                                ):(
+                                  <span style={{color:sm.color}}>{sm.label}{s.status==="en_punto_cliente"&&s.llegadaTs&&<> · <CronometroEnPunto sol={s} compact/></>}</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>}
                     </div>
                   );
                 })}
@@ -4995,6 +5104,7 @@ function SolicitudRow({sol,onSelect}){
           {sol.noPresentacion&&<span style={{color:C.danger}}> · NP</span>}
         </div>
       </div>
+      {sol.status==="en_punto_cliente"&&<CronometroEnPunto sol={sol} compact/>}
       <div style={{...S.badge,background:sm.color+"22",color:sm.color}}>{sm.label}</div>
     </div>
   );
@@ -5876,6 +5986,7 @@ async function abrirEdicion(){
           <div style={S.fieldLabel}>Registro de entrega</div>
           {sol.horaLlegada&&<div style={{fontSize:12,color:C.muted,marginBottom:4}}>📍 Llegada al punto: {sol.horaLlegada}</div>}
           <div style={S.fieldValue}>🕐 Entrega registrada: {sol.horaEntrega}</div>
+          {sol.status==="en_punto_cliente"&&sol.llegadaTs&&<div style={{marginTop:6}}><CronometroEnPunto sol={sol}/></div>}
           {sol.tiempoEnPunto&&<div style={{marginTop:6,background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:8,padding:"6px 12px",display:"inline-flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:C.cyan,fontWeight:700}}>⏱ Tiempo en punto:</span><span style={{fontSize:14,fontWeight:900,color:C.cyan}}>{sol.tiempoEnPunto}</span></div>}
           {sol.geoEntrega&&sol.geoEntrega!=="Sin geolocalización"?(
             <>
@@ -7692,7 +7803,7 @@ function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver,choferes=CHOFERE
 }
 
 // ── Vista Chofer ───────────────────────────────────────────────────────────
-function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
+function VistaChofer({chofer,solicitudes,onEstado,onLlegada,onSalir}){
   const hoy = new Date().toISOString().split("T")[0];
   const misSols = solicitudes.filter(s =>
     (s.ppuAsignada === chofer.ppu || s.choferAsignado === chofer.nombre) &&
@@ -7768,15 +7879,23 @@ function VistaChofer({chofer,solicitudes,onEstado,onSalir}){
   function registrarLlegada(solId){
     const now=new Date();
     const hora=now.toLocaleDateString("es-CL")+" "+now.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false});
+    const llegadaTsISO=now.toISOString();
     navigator.geolocation.getCurrentPosition(
       pos=>{
         const geo=pos.coords.latitude.toFixed(6)+","+pos.coords.longitude.toFixed(6);
         setLlegadas(p=>({...p,[solId]:{hora,timestamp:now.getTime(),geo}}));
+        onLlegada&&onLlegada(solId,hora,geo,llegadaTsISO);
       },
-      ()=>{setLlegadas(p=>({...p,[solId]:{hora,timestamp:now.getTime(),geo:null}}));},
+      ()=>{
+        setLlegadas(p=>({...p,[solId]:{hora,timestamp:now.getTime(),geo:null}}));
+        onLlegada&&onLlegada(solId,hora,null,llegadaTsISO);
+      },
       {enableHighAccuracy:true, maximumAge:10000, timeout:15000}
     );
-    // Iniciar cronómetro
+    // Iniciar cronómetro local (feedback inmediato en este celular). El
+    // estado "En Punto Cliente" y el timestamp real (llegadaTs) quedan
+    // además persistidos vía onLlegada, para que el avance del cronómetro
+    // se pueda mostrar en vivo desde otras pantallas (admin/dashboard).
     timerRef.current[solId]=setInterval(()=>{
       setTiempos(p=>({...p,[solId]:Math.floor((Date.now()-now.getTime())/1000)}));
     },1000);
