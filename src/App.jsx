@@ -1354,6 +1354,7 @@ const COLS_LISTA = [
   "rechazo_firma","cancelado_por","motivo_cancelacion","km_desde_pudahuel","devolucion_urgente",
   "observacion_chofer","observacion_autor","observacion_fecha","observacion_cobro","facturar_en_periodo","sin_cobro","traslado_equipo_medico",
   "dt_dispatch_id","dt_enviado_en","items","destino_lat","destino_lng","guias_negocio",
+  "alerta_anden_enviada","alerta_anden_enviada_en",
   "updated_at","created_at"
 ].join(",");
 // Respaldo SIN las columnas más recientes (destino_lat/destino_lng/guias_negocio/
@@ -1372,7 +1373,7 @@ const COLS_LISTA = [
 // tiempo lleva la solicitud "En Punto Cliente", sin depender de que el
 // celular del chofer siga con la pantalla abierta.
 const COLS_LISTA_SEGURA = COLS_LISTA
-  .split(",").filter(c=>!["destino_lat","destino_lng","guias_negocio","motivo_cancelacion","llegada_ts"].includes(c)).join(",");
+  .split(",").filter(c=>!["destino_lat","destino_lng","guias_negocio","motivo_cancelacion","llegada_ts","alerta_anden_enviada","alerta_anden_enviada_en"].includes(c)).join(",");
 
 function _mapSolicitudLigera(s){
   return {
@@ -1401,6 +1402,7 @@ function _mapSolicitudLigera(s){
     items:s.items||[],
     destinoLat:s.destino_lat??null, destinoLng:s.destino_lng??null,
     guiasNegocio:s.guias_negocio||[],
+    alertaAndenEnviada:!!s.alerta_anden_enviada, alertaAndenEnviadaEn:s.alerta_anden_enviada_en||null,
     updatedAt:s.updated_at, createdAt:s.created_at,
     // Campos pesados vacíos hasta que se abra el detalle:
     fotoEntrega:null, fotosEntrega:[], firmaReceptor:null,
@@ -1494,6 +1496,7 @@ async function saveSolicitud(s) {
       dt_enviado_en:s.dtEnviadoEn||null,
       items:s.items||[],
       destino_lat:s.destinoLat??null, destino_lng:s.destinoLng??null,
+      alerta_anden_enviada:!!s.alertaAndenEnviada, alerta_anden_enviada_en:s.alertaAndenEnviadaEn||null,
       updated_at:new Date().toISOString(),
     };
     // Campos pesados (foto/firma/manifiesto/respaldo ANI): SOLO se incluyen en
@@ -2787,7 +2790,11 @@ export default function QuantrexAbbott() {
         usuario:perfilChofer?.nombre||sesion?.nombre||s.choferAsignado||"Chofer"};
       return {...s, status:"en_punto_cliente", updatedAt:now.toISOString(),
         statusLog:[...(s.statusLog||[]),entry],
-        horaLlegada:horaLlegada||s.horaLlegada||null, llegadaTs:llegadaTsISO||now.toISOString()};
+        horaLlegada:horaLlegada||s.horaLlegada||null, llegadaTs:llegadaTsISO||now.toISOString(),
+        // Reinicia el aviso de "carga no preparada en andén" para que, si
+        // esta guía vuelve a marcar llegada más adelante (nueva gestión),
+        // la Edge Function alerta-anden pueda avisar de nuevo si corresponde.
+        alertaAndenEnviada:false, alertaAndenEnviadaEn:null};
     });
     setSolicitudes(upd);
     const solUpd=upd.find(s=>s.id===id);
@@ -6010,6 +6017,7 @@ async function abrirEdicion(){
           {sol.horaLlegada&&<div style={{fontSize:12,color:C.muted,marginBottom:4}}>📍 Llegada al punto: {sol.horaLlegada}</div>}
           <div style={S.fieldValue}>🕐 Entrega registrada: {sol.horaEntrega}</div>
           {sol.status==="en_punto_cliente"&&sol.llegadaTs&&<div style={{marginTop:6}}><CronometroEnPunto sol={sol}/></div>}
+          {sol.status==="en_punto_cliente"&&sol.tipo==="carga_ol"&&sol.alertaAndenEnviada&&<div style={{marginTop:6,fontSize:12,color:C.danger,fontWeight:700}}>🚨 Se envió alerta de "carga no preparada en andén"{sol.alertaAndenEnviadaEn?` · ${new Date(sol.alertaAndenEnviadaEn).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})}`:""}</div>}
           {sol.tiempoEnPunto&&<div style={{marginTop:6,background:C.cyan+"18",border:"1px solid "+C.cyan+"44",borderRadius:8,padding:"6px 12px",display:"inline-flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:C.cyan,fontWeight:700}}>⏱ Tiempo en punto:</span><span style={{fontSize:14,fontWeight:900,color:C.cyan}}>{sol.tiempoEnPunto}</span></div>}
           {sol.geoEntrega&&sol.geoEntrega!=="Sin geolocalización"?(
             <>
