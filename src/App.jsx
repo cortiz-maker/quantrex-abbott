@@ -286,7 +286,7 @@ function resolverDestino(value, clientes){
 
 const EMPTY_FORM = {
   tipo:"entrega", titulo:"", descripcion:"", direccion:"",
-  fecha: new Date().toISOString().split("T")[0],
+  fecha: new Date().toLocaleDateString("en-CA"), // fecha local, evita salto UTC
   hora: new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false}),
   contacto:"", guia:"", prioridad:"urgente", notas:"",
   solicitante:"", canalSolicitud:"", usuarioDT:"", ppuAsignada:"",
@@ -2577,7 +2577,7 @@ export default function QuantrexAbbott() {
     }
     const upd=[nueva,...solicitudes]; setSolicitudes(upd);
     setSaving(false); setForm({...EMPTY_FORM,
-      fecha:new Date().toISOString().split("T")[0],
+      fecha:new Date().toLocaleDateString("en-CA"), // fecha local, evita salto UTC
       hora:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit",hour12:false})});
     logActividad("crear_solicitud", `Creó solicitud OT ${nueva.ot||"—"} · ${nueva.titulo||""}`, {entidad:"solicitudes",entidadId:nueva.id});
     showToast("Solicitud creada correctamente."); setView("lista");
@@ -6395,7 +6395,7 @@ function FormNueva({form,setForm,onSave,saving,error,setView,clientes=CLIENTES_D
           )}</div>
         {/* Alerta cliente con solicitudes activas hoy */}
         {form.titulo&&(()=>{
-          const hoy=new Date().toISOString().split("T")[0];
+          const hoy=new Date().toLocaleDateString("en-CA"); // fecha local, evita salto UTC
           const activas=solicitudes.filter(s=>s.titulo===form.titulo&&s.fecha===hoy&&s.status!=="cancelada"&&s.status!=="completada");
           return activas.length>0?(<div style={{...S.fGroup,gridColumn:"1/-1"}}>
             <div style={{background:C.warning+"22",border:"1px solid "+C.warning,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.warning,fontWeight:600}}>
@@ -6683,7 +6683,7 @@ const VEHICULOS = [
 ];
 
 function GestionRutas({rutas,setRutas,solicitudes,setSolicitudes,onSaveRuta,onDeleteRuta,onSaveSolicitud,setView,sesion,vehiculos=[],choferes=[]}){
-  const hoy=new Date().toISOString().split("T")[0];
+  const hoy=new Date().toLocaleDateString("en-CA"); // fecha local, evita salto UTC
   // ── Vehículos alineados con el mantenedor (Gestión de Usuarios) ───────────
   // Opciones derivadas del estado sincronizado con Supabase. La identidad es la
   // PPU; se enriquece con el chofer asignado (match por PPU en `choferes`).
@@ -7855,7 +7855,14 @@ function LoginChofer({selChofer,setSelChofer,onAcceder,onVolver,choferes=CHOFERE
 
 // ── Vista Chofer ───────────────────────────────────────────────────────────
 function VistaChofer({chofer,solicitudes,onEstado,onLlegada,onSalir}){
-  const hoy = new Date().toISOString().split("T")[0];
+  // Fecha LOCAL (Chile), no UTC: toISOString() usa UTC y en Chile (UTC-3/-4)
+  // eso hace que, desde aprox. las 20:00-21:00 hora local en adelante, "hoy"
+  // ya cuente como el día siguiente en UTC. Resultado: una solicitud creada
+  // en la tarde/noche con fecha de HOY (correcta) dejaba de aparecer en la
+  // app del chofer esa misma noche, porque "hoy" ya había saltado al día
+  // siguiente. Con toLocaleDateString("en-CA") se obtiene la fecha real del
+  // calendario local del dispositivo, en formato YYYY-MM-DD.
+  const hoy = new Date().toLocaleDateString("en-CA");
   const misSols = solicitudes.filter(s =>
     (s.ppuAsignada === chofer.ppu || s.choferAsignado === chofer.nombre) &&
     s.fecha === hoy &&
@@ -8453,7 +8460,8 @@ function ResumenRutasDia({ solicitudes }) {
   const [rutas, setRutas] = useState(null);
   const [calculando, setCalculando] = useState(false);
 
-  const hoy = new Date().toISOString().split("T")[0];
+  // Fecha local (Chile), evita el mismo salto UTC corregido en VistaChofer.
+  const hoy = new Date().toLocaleDateString("en-CA");
   const solsHoy = solicitudes
     .filter(s => s.fecha === hoy && s.direccion && s.status === "completada")
     .sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt));
