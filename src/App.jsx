@@ -2457,6 +2457,34 @@ export default function QuantrexAbbott() {
   // componentes que no reciben "sesion" como prop (ej. exportadores locales).
   useEffect(()=>{ SESION_LOG_ACTUAL = sesion; }, [sesion]);
 
+  // Deep link "Ver solicitud en Quantrex" del correo de alerta de andén:
+  // la URL viene como .../#/detalle/<id>. Antes esto no hacía nada porque
+  // la app no lee la URL en ningún lado (navega solo con estado de React,
+  // setView/setSelectedId) -- el link del correo abría la app normal e
+  // ignoraba el id. Este efecto corre una sola vez (deepLinkAplicadoRef),
+  // apenas hay sesión activa y las solicitudes ya cargaron, y si encuentra
+  // el id de la URL entre las solicitudes visibles para ese usuario, abre
+  // el Detalle directo. Si el id no aparece (ej. un cliente que no tiene
+  // acceso a esa solicitud, o ya se borró), no hace nada y la app se queda
+  // en la pantalla normal -- no se rompe nada por un link viejo o inválido.
+  const deepLinkAplicadoRef=useRef(false);
+  useEffect(()=>{
+    if(deepLinkAplicadoRef.current) return;
+    if(!sesion || loading) return;
+    const m=/#\/detalle\/([^/?#]+)/.exec(window.location.hash);
+    if(!m) { deepLinkAplicadoRef.current=true; return; }
+    const idBuscado=decodeURIComponent(m[1]);
+    const sol=solicitudes.find(s=>String(s.id)===idBuscado);
+    if(sol){
+      setSelectedId(sol.id);
+      setView("detalle");
+    }
+    deepLinkAplicadoRef.current=true;
+    // Limpia el hash para que un F5 posterior no vuelva a intentar abrir el
+    // mismo detalle (y para que la URL no quede pegada en el historial).
+    history.replaceState(null,"",window.location.pathname+window.location.search);
+  }, [sesion, loading, solicitudes]);
+
   // "Último acceso" real, no solo al momento del login: mientras la pestaña
   // siga abierta con una sesión válida, se refresca cada 5 min (y de
   // inmediato al abrir/recuperar sesión). Antes, ultimoAcceso solo se movía
@@ -2812,7 +2840,20 @@ export default function QuantrexAbbott() {
     });
     setSolicitudes(upd);
     const solUpd=upd.find(s=>s.id===id);
-    if(solUpd) await saveSolicitud(solUpd);
+    if(solUpd){
+      const result = await saveSolicitud(solUpd);
+      if(!result?.ok){
+        // No bloquea al chofer (el cronómetro y el botón "Marcar entregado"
+        // siguen funcionando con el estado local, ver cerrar()), pero SÍ
+        // hay que dejar rastro claro de que el estado "En Punto Cliente" no
+        // quedó guardado en el servidor -- si no, nadie se entera de que la
+        // Bitácora/Flujo, el cronómetro en el Detalle admin y la alerta de
+        // andén no van a funcionar para esta gestión en particular.
+        console.error("handleChoferLlegada: no se pudo persistir 'en_punto_cliente' en Supabase.", result);
+        logActividad("error_sistema", `⚠ No se pudo guardar "En Punto Cliente" en el servidor · OT ${solUpd?.ot||id}`, {entidad:"solicitudes",entidadId:id,choferNombre:perfilChofer?.nombre||sesion?.nombre});
+        return;
+      }
+    }
     logActividad("gestion_chofer", `En Punto Cliente · OT ${solUpd?.ot||id}`, {entidad:"solicitudes",entidadId:id,choferNombre:perfilChofer?.nombre||sesion?.nombre});
   }
 
