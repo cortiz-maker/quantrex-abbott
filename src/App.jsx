@@ -5383,13 +5383,24 @@ async function generarBitacoraPDF(sol, sesion){
   }
 
   // ── 8. Documentos escaneados (Drive) — fusión real de páginas ──
-  // Busca en Drive (mismo buscador del dashboard) los documentos escaneados
-  // asociados a las guías de esta solicitud. Si encuentra algo, agrega una
-  // página separadora con el listado y luego fusiona esos documentos como
-  // páginas reales al final de la bitácora (no como capturas de pantalla).
-  // Si Drive no encuentra nada, o algún archivo falla al descargar/leer, se
-  // omite sin interrumpir la descarga de la bitácora ya generada.
-  const anexos = await buscarDocumentosEscaneados(sol);
+  // Busca en Drive los documentos escaneados asociados a las guías de esta
+  // solicitud. Si encuentra algo, le pregunta al usuario si quiere
+  // incluirlos ANTES de descargarlos: son PDFs escaneados que pueden pesar
+  // varios MB cada uno, y sumados a la bitácora pueden hacerla superar los
+  // 20 MB — un tamaño poco práctico para enviar por correo. Si el usuario
+  // dice que no (o no hay nada que encontrar), la bitácora se genera igual,
+  // solo sin esa sección de anexos.
+  const metadatosAnexos = await buscarMetadatosDocumentosEscaneados(sol);
+  let anexos = [];
+  if(metadatosAnexos.length){
+    const nombres = metadatosAnexos.map(a=>`• ${a.name}`).join("\n");
+    const incluir = window.confirm(
+      `Se encontraron ${metadatosAnexos.length} documento(s) escaneado(s) en Drive para esta solicitud:\n\n${nombres}\n\n`+
+      `¿Deseas incluirlos en la Bitácora PDF?\n\n`+
+      `El archivo final será considerablemente más pesado (puede superar los 20 MB), lo que puede dificultar enviarlo por correo.`
+    );
+    if(incluir) anexos = await descargarBytesAnexos(metadatosAnexos);
+  }
   if(anexos.length){
     nuevaPagina();
     tituloSeccion("8. Documentos escaneados (Drive)");
@@ -5490,10 +5501,17 @@ async function urlAImagenBase64(url){
 }
 
 // Busca en Drive los documentos escaneados asociados a una solicitud (uno o
-// varios N° de guía) y descarga sus bytes. Reutiliza exactamente la misma
-// búsqueda del "🔍 Buscar documento" del dashboard, así que encuentra lo
-// mismo que aparecería ahí bajo "Documento escaneado".
-async function buscarDocumentosEscaneados(sol){
+// varios N° de guía) — SOLO metadatos (id, nombre, mimeType), sin descargar
+// bytes todavía. Reutiliza exactamente la misma búsqueda del "🔍 Buscar
+// documento" del dashboard, así que encuentra lo mismo que aparecería ahí
+// bajo "Documento escaneado".
+//
+// Se separó de la descarga de bytes (ver descargarBytesAnexos más abajo)
+// para poder preguntarle al usuario si quiere incluirlos ANTES de gastar
+// tiempo/datos bajándolos — adjuntar estos PDF escaneados puede hacer que
+// la bitácora final supere los 20 MB, lo que la vuelve poco práctica para
+// enviar por correo.
+async function buscarMetadatosDocumentosEscaneados(sol){
   const driveConfigurado = GOOGLE_DRIVE_API_KEY && !GOOGLE_DRIVE_API_KEY.startsWith("TU_") && GOOGLE_DRIVE_FOLDER_ID && !GOOGLE_DRIVE_FOLDER_ID.startsWith("TU_");
   if(!driveConfigurado) return [];
   const numeros = (sol.documentos||"").split(/[,\s]+/).map(d=>d.trim()).filter(Boolean);
@@ -5505,18 +5523,25 @@ async function buscarDocumentosEscaneados(sol){
       const {resultados} = await buscarTerminoEnCarpetasDrive(carpetas, GOOGLE_DRIVE_API_KEY, n);
       resultados.forEach(f=>{ if(!encontrados.has(f.id)) encontrados.set(f.id, f); });
     }));
-    const archivos = [...encontrados.values()];
-    const conBytes = await Promise.all(archivos.map(async f=>{
-      try{
-        const url = `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${GOOGLE_DRIVE_API_KEY}`;
-        const res = await fetch(url);
-        if(!res.ok) return null;
-        const bytes = await res.arrayBuffer();
-        return { ...f, bytes };
-      }catch{ return null; }
-    }));
-    return conBytes.filter(Boolean);
+    return [...encontrados.values()];
   }catch{ return []; } // si Drive falla completo, la bitácora se genera igual sin anexos
+}
+
+// Descarga los bytes de cada archivo ya encontrado por
+// buscarMetadatosDocumentosEscaneados. Separado a propósito: esta es la
+// parte pesada (red + memoria), así que solo se llama después de que el
+// usuario confirmó que sí quiere incluir los anexos.
+async function descargarBytesAnexos(archivos){
+  const conBytes = await Promise.all(archivos.map(async f=>{
+    try{
+      const url = `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${GOOGLE_DRIVE_API_KEY}`;
+      const res = await fetch(url);
+      if(!res.ok) return null;
+      const bytes = await res.arrayBuffer();
+      return { ...f, bytes };
+    }catch{ return null; }
+  }));
+  return conBytes.filter(Boolean);
 }
 
 // Registra en Supabase cada bitácora PDF generada (tabla bitacoras_generadas),
