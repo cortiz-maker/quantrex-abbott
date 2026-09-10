@@ -4219,9 +4219,16 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
     }
     return porNumero;
   };
-  // Extrae "HH:MM" desde el texto de horaEntrega ("dd-mm-aaaa hh:mm") que
-  // guarda handleChoferEstado al cerrar la solicitud.
-  const horaCorta=(txt)=>{ const p=(txt||"").split(" "); return p[1]||txt||""; };
+  // Extrae "DD-MM HH:MM" desde el texto de horaEntrega ("dd-mm-aaaa hh:mm")
+  // que guarda handleChoferEstado al cerrar la solicitud. Antes solo se
+  // mostraba la hora (ej. "08:34"), lo que hacía parecer que dos gestiones
+  // ocurrieron el mismo día cuando en realidad fueron en días distintos —
+  // ahora siempre se antepone día-mes para que no haya ambigüedad.
+  const horaCorta=(txt)=>{
+    const m=/^(\d{2})-(\d{2})-\d{4}\s+(\d{2}:\d{2})/.exec(txt||"");
+    if(m) return `${m[1]}-${m[2]} ${m[3]}`;
+    return txt||"";
+  };
   // "dd-mm-aaaa hh:mm" (horaEntrega, hora local Chile) -> Date, para poder
   // ordenar por el momento REAL en que ocurrió cada gestión, no por cuándo
   // se creó/agendó la solicitud (que no necesariamente sigue el mismo orden
