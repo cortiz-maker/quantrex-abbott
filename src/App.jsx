@@ -2163,8 +2163,16 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   }
 
   const cobros = calcularCobros(solicitudes, tarifas, feriados);
+  // Solo para la hoja de detalle (columnas por fila): se ordena por hora de
+  // cierre real, no por el orden en que vienen las solicitudes (que suele
+  // ser por OT/creación). Sin este orden, el N° de gestión y el "Xª gestión
+  // de carga OL del día" -- ambos calculados en orden cronológico de cierre
+  // -- aparecían salteados al leer la planilla de arriba a abajo, aunque el
+  // cálculo en sí fuera correcto. El resto de la función (totales, resumen)
+  // sigue usando "solicitudes" tal cual, sin reordenar.
+  const solicitudesOrdenadas = [...solicitudes].sort((a,b)=>_ordenCierre(a)-_ordenCierre(b));
   const montoPorSolicitud = {}; // id -> monto extras (SPOT+OH+Regional+Traslado), reutilizado en el prorrateo por unidad
-  const rows = solicitudes.map((s,i) => {
+  const rows = solicitudesOrdenadas.map((s,i) => {
     const r = cobros.perId[s.id] || {esSpot:false,ohEarly:false,ohLate:false,nro:0};
     const esSpot = r.esSpot;
     const ohEarly = r.ohEarly, ohLate = r.ohLate, ohCharge = ohEarly||ohLate;
