@@ -2189,6 +2189,13 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
       // "Motivo SPOT" separada — es el lugar donde ya se revisan alertas.
       (s.tipo==="carga_ol" && r._cuenta && r.nroCargaOL) ? `${_ordinalFem(r.nroCargaOL)} gestión de carga OL del día — cuenta para el contador y eventual Spot Extra` : null,
     ].filter(Boolean).join(" / ");
+    // Ítem(s) de la carga, SOLO para Carga OL — mismo formato "nombre × cant."
+    // que ya se usa en el bloque "Ítems" del Detalle (App.jsx) y en el correo
+    // de alerta de andén. Se pone al lado de Motivo OH para poder cruzar de
+    // un vistazo qué carga específica generó la Xª gestión del día.
+    const itemsCargaOL = (s.tipo==="carga_ol" && Array.isArray(s.items) && s.items.length)
+      ? s.items.map(it=>it?.cantidad>1?`${it.nombre} × ${it.cantidad}`:(it?.nombre||"")).filter(Boolean).join(", ")
+      : "";
     // Tiempo en punto solo para carga_ol, li_retiro, li_devol
     const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
     const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
@@ -2206,7 +2213,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
       s.prioridad==="urgente"?"Urgente":"Normal", s.solicitante||"", s.canalSolicitud||"",
       s.usuarioDT||"", s.ppuAsignada||"", nro,
       (() => { const log=s.statusLog||[]; if(!log.length) return ""; const ultima=log[log.length-1]; return (ultima.fechaHora||"").split(" ")[1]||""; })(),
-      esSpot?"Sí":"No", cSpot||"", ohCharge?"Sí":"No", motivoOH, cOH||"",
+      esSpot?"Sí":"No", cSpot||"", ohCharge?"Sí":"No", itemsCargaOL, motivoOH, cOH||"",
       esSpotRegional?(regionSol?.label||""):"", cSpotRegional||"",
       cTraslado>0?"Sí":"No", cTraslado||"",
       (cSpot+cOH+cSpotRegional+cTraslado)||"",
@@ -2221,8 +2228,8 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   const COBRO_M1 = tarifaVigente(tarifas,"m1_fijo",fechaRefTot), COBRO_M2 = tarifaVigente(tarifas,"m2_fijo",fechaRefTot);
   const totalSpot=cobros.spotCount;
   const totalOH=cobros.ohCount;
-  const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[24])||0),0);
-  const cantSpotRegional=rows.filter(r=>(Number(r[24])||0)>0).length;
+  const totalSpotRegional=rows.reduce((acc,r)=>acc+(Number(r[25])||0),0);
+  const cantSpotRegional=rows.filter(r=>(Number(r[25])||0)>0).length;
   const totalTraslado=cobros.montoTraslado;
   const cantTraslado=cobros.trasladoCount;
   const totalCobro=cobros.montoSpot+cobros.montoOH+totalSpotRegional+totalTraslado;
@@ -2233,7 +2240,7 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
   const headers=["N°","OT Quantrex","Fecha","Hora","Cliente","Destino","N° Guías / Documentos Cliente","División","Tipo","Estado",
     "Responsable Cancelación","Motivo Cancelación","Prioridad",
     "Solicitante","Canal","Usuario DT","PPU","N° día","Hora Cierre Completado",
-    "SPOT","Costo SPOT","Overnight","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
+    "SPOT","Costo SPOT","Overnight","Ítem(s) Carga OL","Motivo OH","Costo OH","SPOT Regional","Costo SPOT Regional",
     "Traslado Equipo Médico","Costo Traslado Equipo Médico",
     "Total Cobros","Chofer","Tiempo en Punto","Veh. NP","Motivo NP","Descuento NP","Observación","Observación Facturación / Pre-Cierre"];
 
