@@ -4224,10 +4224,32 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
   // mostraba la hora (ej. "08:34"), lo que hacía parecer que dos gestiones
   // ocurrieron el mismo día cuando en realidad fueron en días distintos —
   // ahora siempre se antepone día-mes para que no haya ambigüedad.
-  const horaCorta=(txt)=>{
-    const m=/^(\d{2})-(\d{2})-\d{4}\s+(\d{2}:\d{2})/.exec(txt||"");
-    if(m) return `${m[1]}-${m[2]} ${m[3]}`;
-    return txt||"";
+  const horaCorta=(txt)=>{ const p=(txt||"").split(" "); return p[1]||txt||""; };
+  // Día "clave" de una gestión para el agrupador de abajo: prioriza el
+  // cierre real (mismo criterio que claveOrdenFlujo); si aún no cerró, cae
+  // a la fecha agendada (s.fecha, formato YYYY-MM-DD) convertida a
+  // DD-MM-AAAA para que se vea igual que las cerradas.
+  const claveDiaFlujo=(s)=>{
+    const m=/^(\d{2}-\d{2}-\d{4})/.exec(s.horaEntrega||"");
+    if(m) return m[1];
+    if(s.fecha){ const [y,mo,d]=s.fecha.split("-"); if(y&&mo&&d) return `${d}-${mo}-${y}`; }
+    return "Sin fecha";
+  };
+  // Agrupa una lista de solicitudes (ya viene ordenada cronológicamente por
+  // claveOrdenFlujo) en bloques por día, preservando ese orden. Antes el
+  // flujo mostraba todas las gestiones de un documento seguidas sin
+  // separar por día -- si dos gestiones caían en días distintos, se veían
+  // una debajo de la otra sin ningún corte visual, dando la impresión
+  // errónea de que ocurrieron el mismo día.
+  const agruparPorDiaFlujo=(matches)=>{
+    const grupos=[];
+    matches.forEach(s=>{
+      const dia=claveDiaFlujo(s);
+      let g=grupos.find(x=>x.dia===dia);
+      if(!g){ g={dia,items:[]}; grupos.push(g); }
+      g.items.push(s);
+    });
+    return grupos;
   };
   // "dd-mm-aaaa hh:mm" (horaEntrega, hora local Chile) -> Date, para poder
   // ordenar por el momento REAL en que ocurrió cada gestión, no por cuándo
@@ -4385,34 +4407,40 @@ function BuscadorDocumento({solicitudes=[],setView,setSelectedId}){
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 {numerosBuscados.map(n=>{
                   const matches=quantrexResultados[n]||[];
+                  const gruposDia=agruparPorDiaFlujo(matches);
                   return (
                     <div key={n}>
                       <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{n}</div>
                       {matches.length===0
                         ?<div style={{fontSize:12,color:C.muted,paddingLeft:6}}>— no encontrada</div>
-                        :<div style={{display:"flex",flexDirection:"column",gap:2,marginTop:2}}>
-                          {matches.map((s,i)=>{
-                            const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:C.muted};
-                            const sm=STATUS_META[s.status]||{label:s.status,color:C.muted};
-                            const cerrada=ESTADOS_TERMINALES.includes(s.status);
-                            return (
-                              <button key={s.id} onClick={()=>{setSelectedId(s.id);setView("detalle");}}
-                                style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",cursor:"pointer",fontSize:12,color:C.textPrimary,fontWeight:600,paddingLeft:6,paddingTop:3,paddingBottom:3,borderLeft:`2px solid ${tm.color}`}}>
-                                <span style={{marginRight:4}}>{tm.icon}</span>
-                                <span style={{color:C.cyan,fontWeight:800}}>Solicitud {s.ot||s.id}</span>
-                                {" "}<span style={{color:tm.color}}>({tm.label})</span>
-                                {" --> "}
-                                {cerrada?(
-                                  <span style={{color:sm.color}}>
-                                    Cierre {horaCorta(s.horaEntrega)||"—"}
-                                  </span>
-                                ):(
-                                  <span style={{color:sm.color}}>{sm.label}{s.status==="en_punto_cliente"&&s.llegadaTs&&<> · <CronometroEnPunto sol={s} compact/></>}</span>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>}
+                        :gruposDia.map(grupo=>(
+                          <div key={grupo.dia} style={{marginTop:4}}>
+                            <div style={{fontSize:10,color:C.muted,fontWeight:700,paddingLeft:6}}>{grupo.dia}</div>
+                            <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:2}}>
+                              {grupo.items.map((s,i)=>{
+                                const tm=TYPE_META[s.tipo]||{label:s.tipo,icon:"·",color:C.muted};
+                                const sm=STATUS_META[s.status]||{label:s.status,color:C.muted};
+                                const cerrada=ESTADOS_TERMINALES.includes(s.status);
+                                return (
+                                  <button key={s.id} onClick={()=>{setSelectedId(s.id);setView("detalle");}}
+                                    style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",cursor:"pointer",fontSize:12,color:C.textPrimary,fontWeight:600,paddingLeft:6,paddingTop:3,paddingBottom:3,borderLeft:`2px solid ${tm.color}`}}>
+                                    <span style={{marginRight:4}}>{tm.icon}</span>
+                                    <span style={{color:C.cyan,fontWeight:800}}>Solicitud {s.ot||s.id}</span>
+                                    {" "}<span style={{color:tm.color}}>({tm.label})</span>
+                                    {" --> "}
+                                    {cerrada?(
+                                      <span style={{color:sm.color}}>
+                                        Cierre {horaCorta(s.horaEntrega)||"—"}
+                                      </span>
+                                    ):(
+                                      <span style={{color:sm.color}}>{sm.label}{s.status==="en_punto_cliente"&&s.llegadaTs&&<> · <CronometroEnPunto sol={s} compact/></>}</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
                     </div>
                   );
                 })}
