@@ -1192,7 +1192,6 @@ function calcularCobros(solicitudes, tarifas, feriados){
     // de su día, sin importar si termina contando o no — así el Excel puede
     // mostrar "3ª gestión de carga del día" en vez de solo "Sí/No".
     perId[s.id].nroCargaOL = contCargaOL[f];
-    contCargaOL[f] = (contCargaOL[f]||0) + 1;
     if(contCargaOL[f] > 2 && !EXCLUIR_CONTADOR_DIARIO.includes((s.ot||"").trim())) perId[s.id]._cuenta = true;
   }
   // SPOT: contador global por día, numerado en ORDEN DE CIERRE ascendente
