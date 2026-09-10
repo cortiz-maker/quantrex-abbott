@@ -1143,6 +1143,13 @@ function _momentoCancelacion(s){
   }
   return Date.parse(s.updatedAt||"")||0;
 }
+// Convierte 1,2,3... a "1ª","2ª","3ª"... para el aviso de "N-ésima gestión de
+// carga OL del día" (ver motivoOH en el exportador Excel). No hay casos
+// reales más allá de un puñado por día, pero se cubre hasta 10 igual y
+// se cae a "N°X" si algún día pasara de eso.
+const _ORDINALES_FEM = ["","1ª","2ª","3ª","4ª","5ª","6ª","7ª","8ª","9ª","10ª"];
+function _ordinalFem(n){ return _ORDINALES_FEM[n] || `N°${n}`; }
+
 function calcularCobros(solicitudes, tarifas, feriados){
   tarifas = tarifas || _tarifasCache;
   feriados = feriados || _feriadosCache;
@@ -1180,6 +1187,11 @@ function calcularCobros(solicitudes, tarifas, feriados){
   const contCargaOL = {};
   for(const s of ordenCargaOL){
     const f = s.fecha || "sin-fecha";
+    contCargaOL[f] = (contCargaOL[f]||0) + 1;
+    // Se guarda el número de orden (1ª, 2ª, 3ª...) de esta Carga OL dentro
+    // de su día, sin importar si termina contando o no — así el Excel puede
+    // mostrar "3ª gestión de carga del día" en vez de solo "Sí/No".
+    perId[s.id].nroCargaOL = contCargaOL[f];
     contCargaOL[f] = (contCargaOL[f]||0) + 1;
     if(contCargaOL[f] > 2 && !EXCLUIR_CONTADOR_DIARIO.includes((s.ot||"").trim())) perId[s.id]._cuenta = true;
   }
@@ -2161,7 +2173,14 @@ async function exportToExcel(solicitudes, nombreArchivo, tarifas, feriados) {
     const precioOHFila = r.ohFeriado ? tarifaVigente(tarifas,"overnight_feriado",s.fecha) : tarifaVigente(tarifas,"overnight",s.fecha);
     const cSpot = esSpot?precioSpotFila:0;
     const cOH = (ohEarly?precioOHFila:0)+(ohLate?precioOHFila:0);
-    const motivoOH = [ohEarly?"Antes 08:30":null, ohLate?"Cierre ≥17:00 (más tardío por PPU)":null, r.ohFeriado?"Día feriado":null].filter(Boolean).join(" / ");
+    const motivoOH = [ohEarly?"Antes 08:30":null, ohLate?"Cierre ≥17:00 (más tardío por PPU)":null, r.ohFeriado?"Día feriado":null,
+      // Aviso informativo (no es un cobro de Overnight en sí): cuando esta
+      // Carga OL es la 3ª o posterior del día, ya entra al contador global
+      // de gestiones y puede terminar generando Extra SPOT si el total del
+      // día pasa de 6. Se pone acá porque hoy no existe una columna
+      // "Motivo SPOT" separada — es el lugar donde ya se revisan alertas.
+      (s.tipo==="carga_ol" && r._cuenta && r.nroCargaOL) ? `${_ordinalFem(r.nroCargaOL)} gestión de carga OL del día — cuenta para el contador y eventual Spot Extra` : null,
+    ].filter(Boolean).join(" / ");
     // Tiempo en punto solo para carga_ol, li_retiro, li_devol
     const tipoConTiempo = ["carga_ol","li_retiro","li_devol"].includes(s.tipo);
     const tiempoEnPunto = tipoConTiempo ? (s.tiempoEnPunto||"") : "";
